@@ -7,6 +7,7 @@ import { authRoutes } from './auth/routes.js';
 import { z } from 'zod';
 import type { AppCtx } from './ctx.js';
 import { HttpError } from './lib/http-error.js';
+import { mediaRoutes } from './media/routes.js';
 import { realtimeRoutes } from './realtime/routes.js';
 import { registerWebhookRoutes } from './webhooks/routes.js';
 
@@ -48,6 +49,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   app.register(realtimeRoutes(ctx));
 
   registerWebhookRoutes(app, ctx);
+  await mediaRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
   // Later tasks register their routes here, passing `ctx`.
