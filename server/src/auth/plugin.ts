@@ -19,7 +19,13 @@ const authPluginImpl: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx })
   app.decorateRequest('user', null as unknown as AuthUser);
 
   app.addHook('onRequest', async (req) => {
-    const path = req.url.split('?')[0];
+    // Fastify routes on the DECODED path (/%61pi/x reaches /api/x), so classify on the decoded one.
+    let path: string;
+    try {
+      path = decodeURI(req.url.split('?')[0]);
+    } catch {
+      throw new HttpError(400, 'URL inválida');
+    }
     const isApi = path.startsWith('/api/');
     const isWs = path === '/ws';
     if (!isApi && !isWs) return;

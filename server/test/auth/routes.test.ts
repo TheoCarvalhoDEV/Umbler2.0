@@ -151,6 +151,11 @@ describe('session required on /api/*', () => {
     try {
       expect((await a.inject({ method: 'GET', url: '/api/test-user' })).statusCode).toBe(401);
       expect(ran).toBe(false);
+      // Percent-encoded path (Fastify routes on the decoded one) must not dodge auth or CSRF.
+      expect((await a.inject({ method: 'GET', url: '/%61pi/test-user' })).statusCode).toBe(401);
+      expect((await a.inject({ method: 'POST', url: '/%61pi/test-user' })).statusCode).toBe(403);
+      expect((await a.inject({ method: 'GET', url: '/api/%' })).statusCode).toBe(400);
+      expect(ran).toBe(false);
       expect((await a.inject({ method: 'GET', url: '/api/health' })).statusCode).toBe(200);
       const agent = await loginAs(a, s.agentA.email);
       const ok = await a.inject({ method: 'GET', url: '/api/test-user', headers: agent.headers });
