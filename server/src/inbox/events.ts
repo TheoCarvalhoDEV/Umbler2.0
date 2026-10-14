@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import type { Db, Tx } from '../db/client.js';
 import { chatEvents } from '../db/schema.js';
 
@@ -11,5 +12,6 @@ export async function addEvent(
   data: Record<string, unknown>,
   authorId: string | null,
 ): Promise<void> {
-  await db.insert(chatEvents).values({ id: randomUUID(), chatId, kind, data, authorId, createdAt: new Date() });
+  // clock_timestamp(), not now(): now() is frozen per transaction, so events written in one tx would tie.
+  await db.insert(chatEvents).values({ id: randomUUID(), chatId, kind, data, authorId, createdAt: sql`clock_timestamp()` });
 }

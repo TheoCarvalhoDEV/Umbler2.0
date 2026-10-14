@@ -47,7 +47,7 @@ export async function insertChat(
   return id;
 }
 
-/** Events in insertion order: created_at is DB now() (microseconds, one per transaction); id breaks exact ties deterministically. */
+/** Events in insertion order: created_at is DB clock_timestamp() (microseconds, set by addEvent); id only breaks exact ties. */
 export async function eventsOf(ctx: AppCtx, chatId: string) {
   return ctx.db
     .select()
