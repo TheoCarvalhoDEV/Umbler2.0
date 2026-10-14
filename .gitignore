@@ -1,0 +1,9 @@
+# Prints do Umbler Talk mostram nomes e telefones de clientes (LGPD) — nunca versionar
+screenshots/
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+data/
+*.log
