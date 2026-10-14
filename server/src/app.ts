@@ -1,10 +1,12 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
+import multipart from '@fastify/multipart';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
 import { authRoutes } from './auth/routes.js';
 import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
+import { registerQuickAnswerRoutes } from './catalog/quick-answers.js';
 import { registerSectorRoutes } from './catalog/sectors.js';
 import { registerTagRoutes } from './catalog/tags.js';
 import { registerUserRoutes } from './catalog/users.js';
@@ -64,6 +66,9 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerCustomFieldRoutes(app, ctx);
   registerContactRoutes(app, ctx);
   registerUserRoutes(app, ctx);
+  // Root-level so every route module (quick answers here, chats in Task 13) can read multipart bodies.
+  await app.register(multipart, { limits: { fileSize: 64 * 1024 * 1024, files: 1 } });
+  registerQuickAnswerRoutes(app, ctx);
 
   return app;
 }
