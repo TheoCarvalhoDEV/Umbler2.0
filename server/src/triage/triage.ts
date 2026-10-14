@@ -165,9 +165,13 @@ export async function startTriage(ctx: AppCtx, chat: ChatRow): Promise<void> {
   const sent = await sendSystemText(ctx, chat, text);
   // The contact never saw the options, so do not interpret their next message as an answer.
   if (!sent.ok) await ctx.db.update(chats).set({ triagePending: false }).where(eq(chats.id, chat.id));
-  // The dropped echo's ingest (fromMe → out) had cleared triage_pending: re-arm the menu.
+  // The dropped echo's ingest (fromMe → out) had cleared triage_pending and waiting: restore both
+  // (system messages never touch waiting; `chat` is the creation snapshot the caller passed).
   else if (sent.echoDropped) {
-    await ctx.db.update(chats).set({ triagePending: true }).where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
+    await ctx.db
+      .update(chats)
+      .set({ triagePending: true, waiting: chat.waiting })
+      .where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
   }
   await ctx.hub.publishChat(chat.id);
 }

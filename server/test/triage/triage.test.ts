@@ -215,7 +215,9 @@ describe('startTriage', () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0]).toMatchObject({ status: 'sent', error: null, authorId: null });
     expect(msgs[0].externalId).toMatch(/^fake-/);
-    expect((await reload(ctx, chat.id)).triagePending).toBe(true);
+    const after = await reload(ctx, chat.id);
+    expect(after.triagePending).toBe(true);
+    expect(after.waiting).toBe(true); // the echo's ingest cleared it; system messages must not
   });
 });
 
