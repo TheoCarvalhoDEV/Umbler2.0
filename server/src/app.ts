@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { AppCtx } from './ctx.js';
 import { HttpError } from './lib/http-error.js';
 import { realtimeRoutes } from './realtime/routes.js';
+import { registerWebhookRoutes } from './webhooks/routes.js';
 
 export type BuildAppOptions = Pick<FastifyServerOptions, 'logger' | 'trustProxy'>;
 
@@ -45,6 +46,8 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   app.register(authPlugin, { ctx });
   app.register(authRoutes, { ctx });
   app.register(realtimeRoutes(ctx));
+
+  registerWebhookRoutes(app, ctx);
 
   app.get('/api/health', async () => ({ ok: true }));
   // Later tasks register their routes here, passing `ctx`.
