@@ -7,6 +7,7 @@ import type { AppCtx } from '../src/ctx.js';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
+import { createRecordingHub } from '../src/realtime/hub.js';
 import { createFakeGateway } from '../src/whatsapp/fake.js';
 import { channels, sectors, userSectors, users } from '../src/db/schema.js';
 
@@ -91,9 +92,8 @@ export async function seedBasics(ctx: { db: Db | Tx }): Promise<Seeded> {
   };
 }
 
-// Fresh in-memory DB, fake gateway and test config per call. Task 7 adds `hub: createRecordingHub()`
-// and widens the return type to the contract signature.
-export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway> }> {
+// Fresh in-memory DB, fake gateway, recording hub and test config per call.
+export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway>; hub: ReturnType<typeof createRecordingHub> }> {
   const db = await createTestDb();
   const config: Config = {
     port: 0,
@@ -107,7 +107,7 @@ export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof cr
     evolution: { url: 'http://evolution.test', apiKey: 'test-key' },
     sessionDays: 30,
   };
-  return { db, wa: createFakeGateway(), config };
+  return { db, wa: createFakeGateway(), hub: createRecordingHub(), config };
 }
 
 export async function makeTestApp(ctx?: AppCtx): Promise<{ app: FastifyInstance; ctx: AppCtx }> {
