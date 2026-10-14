@@ -6,8 +6,8 @@ import { loadConfig } from '../src/config.js';
 import type { AppCtx } from '../src/ctx.js';
 import { notFound } from '../src/lib/http-error.js';
 
-// Task 1 stub: AppCtx only has `config` until Tasks 2/4/8 add db, wa and hub.
-const ctx: AppCtx = {
+// The app test never touches db, wa or hub, so a config-only cast is enough.
+const ctx = {
   config: loadConfig({
     DATABASE_URL: 'postgres://unused',
     APP_ORIGIN: 'http://localhost:5173',
@@ -15,7 +15,7 @@ const ctx: AppCtx = {
     EVOLUTION_URL: 'http://evolution:8080',
     EVOLUTION_API_KEY: 'evo-key',
   }),
-};
+} as AppCtx;
 
 let app: FastifyInstance;
 afterEach(async () => {
