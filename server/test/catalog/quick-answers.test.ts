@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
-type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
 let app: FastifyInstance;
 let ctx: Awaited<ReturnType<typeof makeTestCtx>>;
