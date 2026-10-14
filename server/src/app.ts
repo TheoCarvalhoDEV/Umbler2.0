@@ -6,6 +6,7 @@ import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
 import { authRoutes } from './auth/routes.js';
 import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
+import { chatRoutes } from './chats/routes.js';
 import { registerQuickAnswerRoutes } from './catalog/quick-answers.js';
 import { registerSectorRoutes } from './catalog/sectors.js';
 import { registerSettingsRoutes } from './catalog/settings.js';
@@ -71,6 +72,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   await app.register(multipart, { limits: { fileSize: 64 * 1024 * 1024, files: 1 } });
   registerQuickAnswerRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
+  await chatRoutes(app, ctx);
 
   return app;
 }
