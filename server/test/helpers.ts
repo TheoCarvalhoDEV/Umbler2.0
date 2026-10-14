@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Config } from '../src/config.js';
 import type { AppCtx } from '../src/ctx.js';
+import type { FastifyInstance } from 'fastify';
+import { buildApp } from '../src/app.js';
+import { hashPassword } from '../src/auth/password.js';
 import { createFakeGateway } from '../src/whatsapp/fake.js';
 import { channels, sectors, userSectors, users } from '../src/db/schema.js';
 
@@ -12,6 +15,15 @@ import { channels, sectors, userSectors, users } from '../src/db/schema.js';
 //   password hashes in seedBasics, makeTestApp() and loginAs(); Task 8 swaps in createRecordingHub().
 
 export const makeTestDb = createTestDb;
+
+export const TEST_PASSWORD = 'senha-teste-123';
+export const TEST_ORIGIN = 'http://localhost:5173';
+
+// Hashed once per test process: argon2 is deliberately slow.
+let testHash: Promise<string> | undefined;
+export function testPasswordHash(): Promise<string> {
+  return (testHash ??= hashPassword(TEST_PASSWORD));
+}
 
 // Same shape as AuthUser (inbox/visibility.ts, Task 7) — structurally assignable.
 export interface SeededUser {
@@ -37,6 +49,7 @@ export interface Seeded {
 // Accepts any AppCtx (only `db` is used).
 export async function seedBasics(ctx: { db: Db | Tx }): Promise<Seeded> {
   const { db } = ctx;
+  const passwordHash = await testPasswordHash();
   const [defaultSector, sectorA, sectorB] = await db
     .insert(sectors)
     .values([
@@ -46,13 +59,12 @@ export async function seedBasics(ctx: { db: Db | Tx }): Promise<Seeded> {
     ])
     .returning({ id: sectors.id });
 
-  // ponytail: 'not-set' hash until Task 6 seeds real argon2 hashes of TEST_PASSWORD.
   const [admin, agentA, agentB] = await db
     .insert(users)
     .values([
-      { name: 'Admin Teste', email: 'admin@teste.local', passwordHash: 'not-set', role: 'admin' },
-      { name: 'Ana Financeiro', email: 'ana@teste.local', passwordHash: 'not-set', role: 'agent' },
-      { name: 'Bruno Jurídico', email: 'bruno@teste.local', passwordHash: 'not-set', role: 'agent' },
+      { name: 'Admin Teste', email: 'admin@teste.local', passwordHash, role: 'admin' },
+      { name: 'Ana Financeiro', email: 'ana@teste.local', passwordHash, role: 'agent' },
+      { name: 'Bruno Jurídico', email: 'bruno@teste.local', passwordHash, role: 'agent' },
     ])
     .returning({ id: users.id, name: users.name, email: users.email, role: users.role, signature: users.signature });
 
@@ -86,7 +98,7 @@ export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof cr
   const config: Config = {
     port: 0,
     databaseUrl: 'pglite://memory',
-    appOrigin: 'http://localhost:5173', // same value as TEST_ORIGIN (Task 6)
+    appOrigin: TEST_ORIGIN,
     cookieSecure: false,
     webhookSecret: 'test-webhook-secret-0123456789abcdef',
     webhookBaseUrl: 'http://app:3000',
@@ -96,4 +108,29 @@ export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof cr
     sessionDays: 30,
   };
   return { db, wa: createFakeGateway(), config };
+}
+
+export async function makeTestApp(ctx?: AppCtx): Promise<{ app: FastifyInstance; ctx: AppCtx }> {
+  const c = ctx ?? (await makeTestCtx());
+  const app = await buildApp(c);
+  await app.ready();
+  return { app, ctx: c };
+}
+
+export async function loginAs(
+  app: FastifyInstance,
+  email: string,
+  password: string = TEST_PASSWORD,
+): Promise<{ cookie: string; headers: Record<string, string> }> {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/auth/login',
+    headers: { origin: TEST_ORIGIN },
+    payload: { email, password },
+  });
+  if (res.statusCode !== 200) throw new Error(`loginAs(${email}) falhou: ${res.statusCode} ${res.body}`);
+  const sid = res.cookies.find((c) => c.name === 'sid');
+  if (!sid) throw new Error('login não devolveu o cookie sid');
+  const cookie = `sid=${sid.value}`;
+  return { cookie, headers: { cookie, origin: TEST_ORIGIN } };
 }
