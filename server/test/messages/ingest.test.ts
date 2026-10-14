@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getChannelQr } from '../../src/channels/service.js';
 import { channels, chats, contacts, messages } from '../../src/db/schema.js';
 import { handleInbound, MEDIA_UNAVAILABLE, type IngestHooks } from '../../src/messages/ingest.js';
@@ -71,6 +71,7 @@ function stubHooks() {
 let ctx: Ctx;
 let seed: Awaited<ReturnType<typeof seedBasics>>;
 let triage: ReturnType<typeof stubHooks>;
+let logged: ReturnType<typeof vi.spyOn>;
 
 const ingest = (...events: InboundEvent[]) => handleInbound(ctx, events, triage.hooks);
 const allChats = () => ctx.db.select().from(chats);
@@ -86,6 +87,11 @@ beforeEach(async () => {
   seed = await seedBasics(ctx);
   ctx.config.mediaDir = await mkdtemp(join(tmpdir(), 'talk-media-'));
   triage = stubHooks();
+  logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  logged.mockRestore();
 });
 
 describe('handleInbound: messages', () => {
@@ -297,6 +303,24 @@ describe('handleInbound: messages', () => {
     const [m] = await allMessages();
     expect(m).toMatchObject({ kind: 'document', mediaPath: null, mediaName: 'contrato.pdf', error: MEDIA_UNAVAILABLE });
     expect(hubEvents('message.updated')).toEqual([expect.objectContaining({ messageId: m.id })]);
+    // the cause is reported (name and message only, never the body or base64), so a systemic failure is visible
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledWith('media download failed', { messageId: m.id, err: 'Error: Evolution fora do ar' });
+  });
+
+  it('also reports the cause when the file cannot be saved, and still keeps the message', async () => {
+    const blocker = join(ctx.config.mediaDir, 'ocupado');
+    await writeFile(blocker, 'x');
+    ctx.config.mediaDir = blocker; // mkdir under a regular file fails (ENOTDIR)
+    await ingest(msg({ kind: 'image', body: 'legenda secreta', hasMedia: true, mediaMime: 'image/png' }));
+    const [m] = await allMessages();
+    expect(m).toMatchObject({ mediaPath: null, error: MEDIA_UNAVAILABLE });
+    expect(logged).toHaveBeenCalledTimes(1);
+    const [label, detail] = logged.mock.calls[0] as [string, { messageId: string; err: string }];
+    expect(label).toBe('media download failed');
+    expect(detail.messageId).toBe(m.id);
+    expect(detail.err).toMatch(/ENOTDIR|EEXIST|ENOENT/);
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('legenda secreta');
   });
 
   it('skips events for an unknown instance', async () => {

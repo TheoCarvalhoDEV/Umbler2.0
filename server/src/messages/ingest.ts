@@ -213,7 +213,10 @@ async function fetchMedia(ctx: AppCtx, ev: MessageEvent, chatId: string, message
     const name = ev.mediaName ?? media.fileName ?? null;
     const saved = await saveMedia(ctx.config.mediaDir, Buffer.from(media.base64, 'base64'), media.mime, name);
     patch = { mediaPath: saved.path, mediaSize: saved.size, mediaMime: media.mime, mediaName: name };
-  } catch {
+  } catch (err) {
+    // Name and message only: never the body or the base64. A systemic failure (EACCES on mediaDir, disk full,
+    // wrong Evolution URL/key) would otherwise look like one flaky download. AppCtx has no logger.
+    console.error('media download failed', { messageId, err: err instanceof Error ? `${err.name}: ${err.message}` : String(err) });
     patch = { error: MEDIA_UNAVAILABLE };
   }
   await ctx.db.update(messages).set(patch).where(eq(messages.id, messageId));
