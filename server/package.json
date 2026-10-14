@@ -8,7 +8,8 @@
     "start": "node --import tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p .",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "seed:admin": "tsx src/auth/seed-admin.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",
