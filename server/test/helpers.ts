@@ -1,4 +1,10 @@
 import { createTestDb, type Db, type Tx } from '../src/db/client.js';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Config } from '../src/config.js';
+import type { AppCtx } from '../src/ctx.js';
+import { createFakeGateway } from '../src/whatsapp/fake.js';
 import { channels, sectors, userSectors, users } from '../src/db/schema.js';
 
 // Task 2 provides the DB part only. Later tasks extend this file (never rename):
@@ -71,4 +77,23 @@ export async function seedBasics(ctx: { db: Db | Tx }): Promise<Seeded> {
     channelId: channel.id,
     instance,
   };
+}
+
+// Fresh in-memory DB, fake gateway and test config per call. Task 7 adds `hub: createRecordingHub()`
+// and widens the return type to the contract signature.
+export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway> }> {
+  const db = await createTestDb();
+  const config: Config = {
+    port: 0,
+    databaseUrl: 'pglite://memory',
+    appOrigin: 'http://localhost:5173', // same value as TEST_ORIGIN (Task 6)
+    cookieSecure: false,
+    webhookSecret: 'test-webhook-secret-0123456789abcdef',
+    webhookBaseUrl: 'http://app:3000',
+    mediaDir: await mkdtemp(join(tmpdir(), 'talk-media-')),
+    webDistDir: null,
+    evolution: { url: 'http://evolution.test', apiKey: 'test-key' },
+    sessionDays: 30,
+  };
+  return { db, wa: createFakeGateway(), config };
 }
