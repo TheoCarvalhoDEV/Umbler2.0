@@ -1,11 +1,13 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
+import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
 import { authRoutes } from './auth/routes.js';
 import { z } from 'zod';
 import type { AppCtx } from './ctx.js';
 import { HttpError } from './lib/http-error.js';
+import { realtimeRoutes } from './realtime/routes.js';
 
 export type BuildAppOptions = Pick<FastifyServerOptions, 'logger' | 'trustProxy'>;
 
@@ -37,8 +39,12 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
 
   await app.register(cookie);
   app.register(rateLimit, { global: false });
+  // Before authPlugin on purpose: websocket's onRequest hook must run before authPlugin's, otherwise a
+  // 403 thrown there for a /ws upgrade skips it and the upgrade socket is never destroyed (leaks).
+  await app.register(websocket);
   app.register(authPlugin, { ctx });
   app.register(authRoutes, { ctx });
+  app.register(realtimeRoutes(ctx));
 
   app.get('/api/health', async () => ({ ok: true }));
   // Later tasks register their routes here, passing `ctx`.
