@@ -1,0 +1,31 @@
+{
+  "event": "messages.upsert",
+  "instance": "talk-test",
+  "data": {
+    "key": { "remoteJid": "556599999999@s.whatsapp.net", "fromMe": false, "id": "MSG-DOC-IN" },
+    "pushName": "Maria Teste",
+    "status": "DELIVERY_ACK",
+    "message": {
+      "documentWithCaptionMessage": {
+        "message": {
+          "documentMessage": {
+            "url": "https://mmg.whatsapp.net/v/t62.0-24/fake-doc.enc",
+            "mimetype": "application/pdf",
+            "fileName": "contrato.pdf",
+            "caption": "Segue o contrato",
+            "fileLength": "54321",
+            "mediaKey": "ZmFrZS1tZWRpYS1rZXk="
+          }
+        }
+      }
+    },
+    "messageType": "documentWithCaptionMessage",
+    "messageTimestamp": 1760440000,
+    "instanceId": "00000000-0000-4000-8000-000000000001",
+    "source": "android"
+  },
+  "date_time": "2025-10-14T11:06:40.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}

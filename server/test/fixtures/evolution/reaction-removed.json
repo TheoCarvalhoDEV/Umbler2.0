@@ -1,0 +1,24 @@
+{
+  "event": "messages.upsert",
+  "instance": "talk-test",
+  "data": {
+    "key": { "remoteJid": "556599999999@s.whatsapp.net", "fromMe": false, "id": "MSG-REACTION-OFF-IN" },
+    "pushName": "Maria Teste",
+    "status": "DELIVERY_ACK",
+    "message": {
+      "reactionMessage": {
+        "key": { "remoteJid": "556599999999@s.whatsapp.net", "fromMe": true, "id": "MSG-OUT-0001" },
+        "text": "",
+        "senderTimestampMs": "1760440060000"
+      }
+    },
+    "messageType": "reactionMessage",
+    "messageTimestamp": 1760440060,
+    "instanceId": "00000000-0000-4000-8000-000000000001",
+    "source": "android"
+  },
+  "date_time": "2025-10-14T11:07:40.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}

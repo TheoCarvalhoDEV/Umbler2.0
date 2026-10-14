@@ -1,0 +1,16 @@
+{
+  "event": "MESSAGES_UPDATE",
+  "instance": "talk-test",
+  "data": {
+    "messageId": "cm0000000000000000000002",
+    "keyId": "MSG-OUT-0001",
+    "remoteJid": "556599999999@s.whatsapp.net",
+    "fromMe": true,
+    "status": "READ",
+    "instanceId": "00000000-0000-4000-8000-000000000001"
+  },
+  "date_time": "2025-10-14T11:06:42.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}
