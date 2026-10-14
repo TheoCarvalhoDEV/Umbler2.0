@@ -166,7 +166,7 @@ export async function getTimeline(
   let evBefore: SQL | undefined;
   if (q.before) {
     const [m] = await db
-      .select({ t: sql<string>`${messages.sentAt}::text` })
+      .select({ t: sql<string>`${messages.sentAt}::text`, c: sql<string>`${messages.createdAt}::text` })
       .from(messages)
       .where(and(eq(messages.id, q.before), eq(messages.chatId, chatId)));
     const [e] = m
@@ -177,15 +177,17 @@ export async function getTimeline(
           .where(and(eq(chatEvents.id, q.before), eq(chatEvents.chatId, chatId)));
     const at = m?.t ?? e?.t;
     if (!at) throw badRequest('Cursor inválido');
-    msgBefore = sql`(${messages.sentAt}, ${messages.id}) < (${at}::timestamptz, ${q.before}::uuid)`;
-    evBefore = sql`(${chatEvents.createdAt}, ${chatEvents.id}) < (${at}::timestamptz, ${q.before}::uuid)`;
+    const created = m?.c ?? at;
+    // Timeline order is (time, createdAt, id): sentAt has 1 s resolution on inbound bursts, createdAt keeps arrival order.
+    msgBefore = sql`(${messages.sentAt}, ${messages.createdAt}, ${messages.id}) < (${at}::timestamptz, ${created}::timestamptz, ${q.before}::uuid)`;
+    evBefore = sql`(${chatEvents.createdAt}, ${chatEvents.createdAt}, ${chatEvents.id}) < (${at}::timestamptz, ${created}::timestamptz, ${q.before}::uuid)`;
   }
 
   const msgRows = await db
     .select()
     .from(messages)
     .where(and(eq(messages.chatId, chatId), msgBefore))
-    .orderBy(desc(messages.sentAt), desc(messages.id))
+    .orderBy(desc(messages.sentAt), desc(messages.createdAt), desc(messages.id))
     .limit(limit);
   const evRows = await db
     .select({ ev: chatEvents, authorName: users.name })
@@ -195,15 +197,17 @@ export async function getTimeline(
     .orderBy(desc(chatEvents.createdAt), desc(chatEvents.id))
     .limit(limit);
 
-  type Entry = { t: number; id: string; build: () => Promise<TimelineItem> };
+  type Entry = { t: number; c: number; id: string; build: () => Promise<TimelineItem> };
   const entries: Entry[] = [
     ...msgRows.map((row) => ({
       t: row.sentAt.getTime(),
+      c: row.createdAt.getTime(),
       id: row.id,
       build: async (): Promise<TimelineItem> => ({ type: 'message', ...(await toMessageDto(db, row)) }),
     })),
     ...evRows.map(({ ev, authorName }) => ({
       t: ev.createdAt.getTime(),
+      c: ev.createdAt.getTime(),
       id: ev.id,
       build: async (): Promise<TimelineItem> => ({
         type: 'event',
@@ -216,8 +220,9 @@ export async function getTimeline(
       }),
     })),
   ];
-  // Same (time, id) order as the SQL cursor: newest first, keep the page, then flip to ascending.
-  entries.sort((a, b) => b.t - a.t || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  // Same (time, createdAt, id) order as the SQL cursor: newest first, keep the page, then flip to ascending.
+  // ponytail: compares at ms, Postgres at µs; only rows inserted within the same ms can disagree. Fetch µs keys if that ever shows.
+  entries.sort((a, b) => b.t - a.t || b.c - a.c || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
   const pageEntries = entries.slice(0, limit).reverse();
   return Promise.all(pageEntries.map((e) => e.build()));
 }

@@ -173,4 +173,24 @@ describe('GET /api/chats/:id/timeline', () => {
     const bad = await app.inject({ method: 'GET', url: `/api/chats/${chat.chatId}/timeline?before=${randomUUID()}`, headers });
     expect(bad.statusCode).toBe(400);
   });
+
+  it('messages with the same sentAt keep arrival order (createdAt), not uuid order, across pages', async () => {
+    const chat = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    // WhatsApp timestamps have 1 s resolution, so a burst shares sentAt; ids are fixed so uuid order opposes arrival order.
+    const first = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const second = '00000000-0000-4000-8000-000000000000';
+    await seedMessage(ctx, chat.chatId, s.channelId, t(5), { id: first, createdAt: t(5) });
+    await seedMessage(ctx, chat.chatId, s.channelId, t(5), { id: second, createdAt: new Date(t(5).getTime() + 1000) });
+    const { headers } = await loginAs(app, s.agentA.email);
+    const get = async (q: string) => {
+      const res = await app.inject({ method: 'GET', url: `/api/chats/${chat.chatId}/timeline${q}`, headers });
+      expect(res.statusCode).toBe(200);
+      return (res.json() as TimelineItem[]).map((i) => i.id);
+    };
+
+    expect(await get('')).toEqual([first, second]);
+    expect(await get('?limit=1')).toEqual([second]);
+    expect(await get(`?limit=1&before=${second}`)).toEqual([first]);
+    expect(await get(`?before=${first}`)).toEqual([]);
+  });
 });
