@@ -49,7 +49,8 @@ scripts/backup.sh                 # pg_dumpall to /data/backup (atomic rename)
 README.md                         # install, update, backup/restore runbook, go-live checklist
 shared/
   package.json  tsconfig.json
-  src/index.ts                    # DTO + WS event types shared by server and web (types only)
+  src/index.ts                    # DTO + WS event types shared by server and web (types only) + palette re-export
+  src/palette.ts                  # TAG_COLORS + tagColorHex (Task 15): the single tag palette (web + importer)
 server/
   package.json  tsconfig.json  vitest.config.ts  drizzle.config.ts
   drizzle/                        # generated SQL migrations (drizzle-kit generate)
@@ -127,17 +128,18 @@ export const forbidden  = (m = 'Sem permissão') => new HttpError(403, m);
 export const notFound   = (m = 'Não encontrado') => new HttpError(404, m);
 export const conflict   = (m = 'Conflito') => new HttpError(409, m);
 ```
-`buildApp` installs an error handler: `HttpError` → `{ error: message }` with its status; zod errors → 400; anything else → 500 `{ error: 'Ocorreu um erro', correlationId }` (correlationId = request.id, logged with the error).
+`buildApp` installs an error handler: `HttpError` → `{ error: message }` with its status; zod errors → 400; anything else → 500 `{ error: 'Ocorreu um erro', correlationId }` (correlationId = request.id; the log line carries only `{ name, code, stack (frames only), correlationId }`, never `err.message`).
 
 ### `server/src/db/client.ts`
 ```ts
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core';
 import * as schema from './schema.js';
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 export function createPgDb(url: string): Db;           // drizzle-orm/postgres-js
 export async function createTestDb(): Promise<Db>;      // drizzle-orm/pglite, in-memory, migrations applied
 ```
-`Tx` = the transaction parameter type: `type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]`; functions that may run inside or outside a transaction take `db: Db | Tx`.
+`Tx` = the transaction parameter type, exported here; functions that may run inside or outside a transaction take `db: Db | Tx`. Every module writes `import type { Db, Tx } from '…/db/client.js'` — never redeclare `Tx` locally.
 
 ### `server/src/db/schema.ts` — written verbatim in Task 2
 Tables and TS export names: `users`, `sessions`, `sectors`, `userSectors`, `channels`, `contacts`, `customFields`, `contactFieldValues`, `contactNotes`, `tags`, `contactTags`, `chats`, `chatPins`, `messages`, `chatEvents`, `quickAnswers`, `settings`. Columns are camelCase in TS and snake_case in SQL, exactly as listed in spec §4. Enums are `text` columns with TS union types (`$type<…>()`), not pg enums.
@@ -169,7 +171,7 @@ export type InboundEvent =
       replyToExternalId: string | null; sentAt: Date; raw: unknown }
   | { type: 'reaction'; instance: string; targetExternalId: string; emoji: string | null }
   | { type: 'status'; instance: string; externalId: string; status: 'sent' | 'delivered' | 'read' | 'failed' }
-  | { type: 'connection'; instance: string; status: ChannelStatus }
+  | { type: 'connection'; instance: string; status: ChannelStatus; phone: string | null } // phone from `wuid` (owner JID) via phoneFromJid, null when absent
   | { type: 'qrcode'; instance: string; qrBase64: string }
   | { type: 'ignored'; reason: string };
 ```
@@ -229,6 +231,7 @@ export interface SendInput { text?: string; file?: { buffer: Buffer; mime: strin
 export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: string, input: SendInput): Promise<MessageDto>;
 export async function resendMessage(ctx: AppCtx, user: AuthUser, messageId: string): Promise<MessageDto>;
 export async function addNote(ctx: AppCtx, user: AuthUser, chatId: string, text: string): Promise<MessageDto>;
+export async function markSent(db: Db, messageId: string, channelId: string, externalId: string): Promise<{ row: typeof messages.$inferSelect; echoDropped: boolean }>; // echo guard + sent, one tx (Task 10; Task 11 triage uses it)
 // media.ts
 export async function saveMedia(mediaDir: string, data: Buffer, mime: string, originalName?: string | null): Promise<{ path: string; size: number }>; // path relative to mediaDir
 export function mediaResponseHeaders(mime: string, fileName: string): Record<string, string>;
@@ -240,7 +243,8 @@ export interface QuickAnswerVars { atendente: { nome: string; primeiro_nome: str
 export function renderQuickAnswer(body: string, vars: QuickAnswerVars): string;
 export function convertUmblerVariables(body: string, variables: Array<{ defaultValue: string }>): { body: string; unmapped: string[] };
 // dto.ts
-export async function toMessageDto(db: Db | Tx, row: typeof messages.$inferSelect): Promise<MessageDto>;
+export async function toMessageDto(db: Db | Tx, row: typeof messages.$inferSelect): Promise<MessageDto>; // mediaUnavailable = mediaPath == null && kind ∈ media kinds
+export function messagePreview(kind: MessageDto['kind'], body: string | null): string; // the only source of chats.last_message_preview (ingest, send, triage)
 ```
 
 ### `server/src/triage/triage.ts`
@@ -272,12 +276,22 @@ Note: `createHub` takes `getDb` because `AppCtx` is built after the hub; service
 export async function createChannel(ctx: AppCtx, name: string): Promise<ChannelDto>;
 export async function connectChannel(ctx: AppCtx, channelId: string): Promise<{ qrBase64: string | null }>;
 export async function syncChannelStatuses(ctx: AppCtx): Promise<void>; // on startup
-export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus): Promise<void>;
+export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus, phone?: string | null): Promise<void>; // non-null phone → channels.phone
 export async function getChannelByInstance(db: Db | Tx, instance: string): Promise<typeof channels.$inferSelect | null>;
+export function setChannelQr(ctx: AppCtx, instance: string, qrBase64: string | null): void; // latest qrcode.updated, in memory per ctx.db
+export function getChannelQr(ctx: AppCtx, instance: string): string | null;
+export async function getChannelQrById(ctx: AppCtx, channelId: string): Promise<{ qrBase64: string | null }>; // Task 14; 404 unknown id, null once connected
 ```
-Instance naming: `talk-` + first 8 chars of the channel id.
+Instance naming: `talk-` + first 8 chars of the channel id. `setChannelStatus`, `getChannelByInstance`, `setChannelQr`, `getChannelQr` are written in Task 9; Task 14 adds the rest.
 
-### `shared/src/index.ts` (DTOs; types only)
+### `shared/src/palette.ts` (created by Task 15; the only runtime code in `@talk/shared`)
+```ts
+export const TAG_COLORS: ReadonlyArray<{ name: string; label: string; hex: string }>; // Umbler's 20 TagColor values (name), pt-BR label, lowercase #rrggbb; tags store `hex`
+export function tagColorHex(color: string): string; // stored hex → itself (lowercased); Umbler name → its hex; anything else → gray #6b7280
+```
+Re-exported from `shared/src/index.ts` (`export { TAG_COLORS, tagColorHex } from './palette.js';`). Consumers: Task 18 (`TagsEditor` renders with `tagColorHex`), Task 19 (`TagForm` swatches, tag list), Task 20 (importer maps the Umbler colour name to its `hex`). No other palette exists.
+
+### `shared/src/index.ts` (DTOs; types only, plus the `TAG_COLORS` / `tagColorHex` re-export)
 ```ts
 export type Role = 'admin' | 'agent';
 export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[] }
@@ -343,6 +357,7 @@ export type WsEvent =
 | GET/PUT `/api/settings` | `SettingsDto` | `SettingsDto` | GET user, PUT admin |
 | POST `/api/channels` | `{name}` | `ChannelDto` | admin |
 | POST `/api/channels/:id/connect` | — | `{qrBase64}` | admin |
+| GET `/api/channels/:id/qr` | — | `{qrBase64: string \| null}` (latest `qrcode.updated`; null once connected) | admin |
 | POST `/webhooks/evolution/:secret` | Evolution payload | 200 | secret |
 | GET `/ws` (upgrade) | — | `WsEvent` stream | user + Origin |
 
@@ -379,13 +394,13 @@ export const TEST_ORIGIN = 'http://localhost:5173';
 - Produces:
   - `loadConfig(env: NodeJS.ProcessEnv): Config` in `server/src/config.ts`, with `Config` exactly as in the Shared Contract. Required env vars: `DATABASE_URL`, `APP_ORIGIN`, `WEBHOOK_SECRET` (at least 32 chars), `EVOLUTION_URL`, `EVOLUTION_API_KEY`. Defaults: `port` 3000, `cookieSecure` true, `webhookBaseUrl` `http://app:3000`, `mediaDir` `/data/media`, `webDistDir` = absolute `<repo>/web/dist`, `sessionDays` 30. Normalization: `appOrigin` is reduced to `scheme://host[:port]` (`new URL(v).origin`, so it is directly comparable with the `Origin` header). `evolution.url` and `webhookBaseUrl` have no trailing slash. `WEB_DIST_DIR=""` gives `webDistDir: null`. Invalid env throws `Error('Configuração inválida:\n…')`, which names the variable but never its value.
   - `server/src/lib/http-error.ts`: `class HttpError extends Error { constructor(public status: number, message: string) }`, `badRequest`, `forbidden`, `notFound`, `conflict` (default messages as in the contract).
-  - `server/src/ctx.ts`: `interface AppCtx { config: Config }`. **Task 2 adds `db: Db`, Task 4 adds `wa: WhatsAppGateway`, Task 8 adds `hub: Hub`**, each in its own task, until it matches the contract.
+  - `server/src/ctx.ts`: `interface AppCtx { config: Config }`. **Task 2 adds `db: Db`, Task 4 adds `wa: WhatsAppGateway`, Task 7 (Step 0) adds `hub: Hub`**, each in its own task, until it matches the contract.
   - `server/src/app.ts`: `type BuildAppOptions = Pick<FastifyServerOptions, 'logger' | 'trustProxy'>` and `buildApp(ctx: AppCtx, opts?: BuildAppOptions): Promise<FastifyInstance>`. Both options default to `false`. The returned instance is not yet `ready()`, so tests may add routes before `inject`. It registers `@fastify/cookie` with no secret, the error handler and `GET /api/health → { ok: true }`. Later tasks add their routes inside `buildApp`.
   - Error handler order:
     1. `HttpError` → its `status` with `{ error: message }`.
     2. `z.ZodError` → 400 with `{ error: 'Requisição inválida' }`.
     3. Fastify's own 4xx errors (`statusCode` 400–499: malformed JSON, body too large, rate limit) → that status with `{ error: err.message }`.
-    4. Anything else → logged with `correlationId = req.id`, then 500 with `{ error: 'Ocorreu um erro', correlationId }`.
+    4. Anything else → logged as `{ name, code, stack, correlationId: req.id }` only (never `err.message` or the whole `err`: driver errors embed bound parameters, i.e. message bodies; the stack's first line repeats the message, so it is dropped), then 500 with `{ error: 'Ocorreu um erro', correlationId }`.
   - `@talk/shared` workspace package: all DTO types from the contract. It has no build and no runtime code. Consumers write `import type { … } from '@talk/shared'`, which `verbatimModuleSyntax` enforces.
   - Commands (from the repo root):
     - `npm test -w server -- <file>` runs one server test file.
@@ -577,15 +592,15 @@ export default defineConfig({
 
 Run from the repo root, in this order:
 ```bash
-npm install --save-exact -w server fastify@5.12.7 @fastify/cookie@11.1.3 @fastify/websocket@11.3.4 @fastify/multipart@10.1.3 @fastify/static@10.1.6 @fastify/rate-limit@11.2.1 drizzle-orm@0.45.4 postgres@3.4.9 @electric-sql/pglite@0.5.10 @node-rs/argon2@2.2.2 zod@4.6.7 tsx@4.23.15
-npm install --save-exact --save-dev -w server drizzle-kit@0.31.11 vitest@5.0.4 typescript@5.9.3 @types/node@24.19.2 ws@8.22.0
+npm install --save-exact -w server fastify@5.12.7 @fastify/cookie@11.1.3 @fastify/websocket@11.3.4 @fastify/multipart@10.1.3 @fastify/static@10.1.6 @fastify/rate-limit@11.2.1 drizzle-orm@0.45.4 postgres@3.4.9 @node-rs/argon2@2.2.2 zod@4.6.7 tsx@4.23.15
+npm install --save-exact --save-dev -w server drizzle-kit@0.31.11 @electric-sql/pglite@0.5.10 vitest@5.0.4 typescript@5.9.3 @types/node@24.19.2 ws@8.22.0 @types/ws@8.18.1
 npm install --save-exact -w web react@19.3.1 react-dom@19.3.1 react-router@8.4.0 @tanstack/react-query@5.104.2 @phosphor-icons/react@2.1.10
 npm install --save-exact --save-dev -w web vite@8.3.4 @vitejs/plugin-react@6.1.2 tailwindcss@4.3.3 @tailwindcss/vite@4.3.3 typescript@5.9.3 vitest@5.0.4 jsdom@30.1.2 @testing-library/react@16.3.3 @testing-library/dom@10.4.2 @types/react@19.3.0 @types/react-dom@19.3.0
 npm install --save-exact --save-dev -w shared typescript@5.9.3
 ```
 Expected: each command ends with `found 0 vulnerabilities` or an audit note. drizzle-kit's transitive esbuild may print an audit note; it is dev-only, so ignore it. `server/package.json` and `web/package.json` now list every version without `^`.
 
-The contract does not pin `@types/react`, `@types/react-dom` or `@testing-library/dom` (a required peer of `@testing-library/react` 16). The versions used are the current ones on 2026-10-14.
+The contract does not pin `@types/react`, `@types/react-dom`, `@types/ws` (types for `ws` and `@fastify/websocket`) or `@testing-library/dom` (a required peer of `@testing-library/react` 16). The versions used are the current ones on 2026-10-14; later tasks use exactly these and never reinstall.
 
 Verify the shared types compile:
 Run: `npm run typecheck -w shared`
@@ -837,7 +852,7 @@ export const conflict = (m = 'Conflito') => new HttpError(409, m);
 ```ts
 import type { Config } from './config.js';
 
-// Grows with the plan: Task 2 adds `db: Db`, Task 4 adds `wa: WhatsAppGateway`, Task 8 adds `hub: Hub`
+// Grows with the plan: Task 2 adds `db: Db`, Task 4 adds `wa: WhatsAppGateway`, Task 7 adds `hub: Hub`
 // (final shape in the plan's Shared Contract).
 export interface AppCtx {
   config: Config;
@@ -865,7 +880,18 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
     if (typeof status === 'number' && status >= 400 && status < 500) {
       return reply.status(status).send({ error: err instanceof Error ? err.message : 'Requisição inválida' });
     }
-    req.log.error({ err, correlationId: req.id }, 'unhandled error');
+    // Never log err.message or the whole err (Global Constraint: no message bodies): driver errors embed
+    // bound parameters. The stack's first line repeats the message, so only the frames are kept.
+    const e = (err ?? {}) as { name?: unknown; code?: unknown; cause?: { code?: unknown }; stack?: unknown };
+    req.log.error(
+      {
+        name: e.name,
+        code: e.code ?? e.cause?.code,
+        stack: typeof e.stack === 'string' ? e.stack.split('\n').slice(1).join('\n') : undefined,
+        correlationId: req.id,
+      },
+      'unhandled error',
+    );
     return reply.status(500).send({ error: 'Ocorreu um erro', correlationId: req.id });
   });
 
@@ -995,7 +1021,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 2: Database schema, migrations and test DB
 
 **Files:**
-- Modify: `server/package.json` (dependencies + `db:generate` script, via `npm install` / `npm pkg set`)
+- Modify: `server/package.json` (`db:generate` script, via `npm pkg set`; dependencies were installed in Task 1)
 - Create: `server/src/db/schema.ts`
 - Create: `server/src/db/client.ts`
 - Create: `server/src/db/migrate.ts`
@@ -1034,21 +1060,19 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - Users: `admin@teste.local` (admin, `sectorIds: []`), `ana@teste.local` (agentA, in sectorA) and `bruno@teste.local` (agentB, in sectorB). All have `passwordHash: 'not-set'`.
     - Channel: `WhatsApp teste`, instance `talk-test`, status `connected`.
   - Helpers that later tasks add (do not add them in this task):
-    - **Task 4** adds `makeTestCtx()`: `createTestDb()` + `createFakeGateway()` + a test `Config`. Task 8 fills its hub slot.
+    - **Task 4** adds `makeTestCtx()`: `createTestDb()` + `createFakeGateway()` + a test `Config`. Task 7 fills its hub slot.
     - **Task 6** adds `TEST_PASSWORD` and `TEST_ORIGIN`, replaces `'not-set'` in `seedBasics` with `await hashPassword(TEST_PASSWORD)`, and adds `makeTestApp()` and `loginAs()`.
-    - **Task 8** puts `createRecordingHub()` into `makeTestCtx()`.
+    - **Task 7** (Step 0) puts `createRecordingHub()` into `makeTestCtx()`.
 
-- [ ] **Step 1: Install the database dependencies and add the generate script**
+- [ ] **Step 1: Add the generate script (no installs)**
 
-PGlite and drizzle-kit are dev-only. `client.ts` imports PGlite lazily, so the production image never needs either package.
+Task 1 already installed every database package at its pinned version: `drizzle-orm` and `postgres` as dependencies, `drizzle-kit` and `@electric-sql/pglite` as devDependencies. `client.ts` imports PGlite lazily, so the production image never needs either dev package. Do not run `npm install` here.
 
 ```bash
-npm install -w server --save-exact drizzle-orm@0.45.4 postgres@3.4.9
-npm install -w server --save-exact -D drizzle-kit@0.31.11 @electric-sql/pglite@0.5.10
 npm pkg set -w server "scripts.db:generate=drizzle-kit generate"
 ```
 
-Expected: `server/package.json` lists the four packages at exact versions and has `"db:generate": "drizzle-kit generate"`.
+Expected: `server/package.json` has `"db:generate": "drizzle-kit generate"`; `drizzle-orm@0.45.4`/`postgres@3.4.9` are under `dependencies` and `drizzle-kit@0.31.11`/`@electric-sql/pglite@0.5.10` under `devDependencies`, all without `^`.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1536,7 +1560,7 @@ Replace `server/src/ctx.ts` with:
 import type { Db } from './db/client.js';
 import type { Config } from './config.js';
 
-// Grows with the plan: Task 4 adds `wa: WhatsAppGateway`, Task 8 adds `hub: Hub`
+// Grows with the plan: Task 4 adds `wa: WhatsAppGateway`, Task 7 adds `hub: Hub`
 // (final shape in the plan's Shared Contract).
 export interface AppCtx {
   db: Db;
@@ -1572,7 +1596,7 @@ Expected: exit 0 with no output.
 - [ ] **Step 10: Commit**
 
 ```bash
-git add server/package.json package-lock.json server/drizzle.config.ts server/drizzle server/src/db server/test/helpers.ts server/test/db/schema.test.ts server/src/ctx.ts server/test/app.test.ts
+git add server/package.json server/drizzle.config.ts server/drizzle server/src/db server/test/helpers.ts server/test/db/schema.test.ts server/src/ctx.ts server/test/app.test.ts
 git commit -m "feat(db): drizzle schema, initial migration and PGlite test database
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1786,8 +1810,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `server/src/whatsapp/types.ts`: `ChannelStatus`, `MessageKind`, `QuotedRef`, `SendResult`, `OutgoingMedia`, `DownloadedMedia`, `WhatsAppGateway` and `InboundEvent`, copied verbatim from the contract.
   - `createEvolutionGateway(cfg: { url: string; apiKey: string }, fetchImpl?: typeof fetch): WhatsAppGateway`, used by `server/src/index.ts` with `config.evolution`.
   - `createFakeGateway(): WhatsAppGateway & { sent: Array<{ method: string; instance: string; phone?: string; payload: unknown }>; failNext(err?: Error): void; status: Map<string, ChannelStatus> }`
-  - `server/src/ctx.ts`: `AppCtx { config: Config; db: Db; wa: WhatsAppGateway }`. Task 8 adds `hub: Hub`.
-  - `server/test/helpers.ts`: `makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway> }>`: a fresh `createTestDb()`, `createFakeGateway()` and a test `Config` (`appOrigin: 'http://localhost:5173'`, `mediaDir` = a fresh temp directory). Task 8 adds the `hub` member to reach the contract signature.
+  - `server/src/ctx.ts`: `AppCtx { config: Config; db: Db; wa: WhatsAppGateway }`. Task 7 (Step 0) adds `hub: Hub`.
+  - `server/test/helpers.ts`: `makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway> }>`: a fresh `createTestDb()`, `createFakeGateway()` and a test `Config` (`appOrigin: 'http://localhost:5173'`, `mediaDir` = a fresh temp directory). Task 7 (Step 0) adds the `hub` member to reach the contract signature.
 - Behavior that later tasks rely on:
   - **Errors:**
     - Any non-2xx response from Evolution throws `Error("Evolution <METHOD> <path> failed: <status> <first 300 chars of body>")`.
@@ -1850,7 +1874,7 @@ export type InboundEvent =
       replyToExternalId: string | null; sentAt: Date; raw: unknown }
   | { type: 'reaction'; instance: string; targetExternalId: string; emoji: string | null }
   | { type: 'status'; instance: string; externalId: string; status: 'sent' | 'delivered' | 'read' | 'failed' }
-  | { type: 'connection'; instance: string; status: ChannelStatus }
+  | { type: 'connection'; instance: string; status: ChannelStatus; phone: string | null } // phone from `wuid` (owner JID) via phoneFromJid, null when absent
   | { type: 'qrcode'; instance: string; qrBase64: string }
   | { type: 'ignored'; reason: string };
 ```
@@ -2383,7 +2407,7 @@ import type { Config } from './config.js';
 import type { Db } from './db/client.js';
 import type { WhatsAppGateway } from './whatsapp/types.js';
 
-// Grows with the plan: Task 8 adds `hub: Hub` (final shape in the plan's Shared Contract).
+// Grows with the plan: Task 7 adds `hub: Hub` (final shape in the plan's Shared Contract).
 export interface AppCtx {
   config: Config;
   db: Db;
@@ -2405,7 +2429,7 @@ import { createFakeGateway } from '../src/whatsapp/fake.js';
 Then append this function at the end of the file. Leave everything else in the file unchanged:
 
 ```ts
-// Fresh in-memory DB, fake gateway and test config per call. Task 8 adds `hub: createRecordingHub()`
+// Fresh in-memory DB, fake gateway and test config per call. Task 7 adds `hub: createRecordingHub()`
 // and widens the return type to the contract signature.
 export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway> }> {
   const db = await createTestDb();
@@ -2476,7 +2500,7 @@ Payload facts (checked against the Evolution `2.3.7` source, `whatsapp.baileys.s
 - Envelope: `{ event, instance, data, date_time, sender, server_url, apikey }`. `event` is lowercase with dots (`messages.upsert`). We also accept the `MESSAGES_UPSERT` form.
 - `messages.upsert` `data` is the Baileys `WAMessage` after Evolution's `prepareMessage`: `{ key{remoteJid, fromMe, id, remoteJidAlt?, senderPn?, participant?, addressingMode?}, pushName, status, message, contextInfo, messageType, messageTimestamp, instanceId, source }`. Evolution converts a Long `messageTimestamp` to a number, but we still accept a number, a numeric string or `{low, high}`. When `remoteJid` is `@lid` and `remoteJidAlt` exists, Evolution may already have replaced `remoteJid` with the phone JID. Older Baileys builds send `senderPn` instead of `remoteJidAlt`.
 - `messages.update` `data` is `{ messageId (Evolution DB id), keyId, remoteJid, fromMe, participant, status, instanceId }`. `status` is one of `ERROR | PENDING | SERVER_ACK | DELIVERY_ACK | READ | PLAYED`, plus `DELETED` on deletes.
-- `connection.update` `data` is `{ instance, state: 'open'|'connecting'|'close', statusReason, wuid?, profileName? }`.
+- `connection.update` `data` is `{ instance, state: 'open'|'connecting'|'close', statusReason, wuid?, profileName? }`. `wuid` is the connected number's own JID; the parser emits `phone = phoneFromJid(wuid)` (null when `wuid` is absent) so ingest can store `channels.phone`.
 - `qrcode.updated` `data` is `{ qrcode: { instance, pairingCode, code, base64 } }`.
 
 Classification rules (spec §5.1 step 2):
@@ -3148,14 +3172,14 @@ All data is fake. Every file is a full Evolution webhook body.
   "instance": "talk-test",
   "data": {
     "instance": "talk-test",
-    "wuid": "556500000000@s.whatsapp.net",
+    "wuid": "5565988887777@s.whatsapp.net",
     "profileName": "Escritório Teste",
     "profilePictureUrl": null,
     "state": "open",
     "statusReason": 200
   },
   "date_time": "2025-10-14T11:06:40.000Z",
-  "sender": "556500000000@s.whatsapp.net",
+  "sender": "5565988887777@s.whatsapp.net",
   "server_url": "http://evolution:8080",
   "apikey": "chave-falsa-da-instancia"
 }
@@ -3255,7 +3279,7 @@ describe('parseEvolutionWebhook — reactions, statuses, connection, qrcode', ()
     ['reaction-removed', { type: 'reaction', instance: INSTANCE, targetExternalId: 'MSG-OUT-0001', emoji: null }],
     ['status-delivered', { type: 'status', instance: INSTANCE, externalId: 'MSG-OUT-0001', status: 'delivered' }],
     ['status-read', { type: 'status', instance: INSTANCE, externalId: 'MSG-OUT-0001', status: 'read' }],
-    ['connection-open', { type: 'connection', instance: INSTANCE, status: 'connected' }],
+    ['connection-open', { type: 'connection', instance: INSTANCE, status: 'connected', phone: '5565988887777' }],
     ['qrcode', { type: 'qrcode', instance: INSTANCE, qrBase64: 'data:image/png;base64,iVBORw0KGgo=' }],
   ];
 
@@ -3288,7 +3312,14 @@ describe('parseEvolutionWebhook — reactions, statuses, connection, qrcode', ()
   ])('maps connection state %s to %s', (state, status) => {
     const body = fixture('connection-open');
     body.data.state = state;
-    expect(parseEvolutionWebhook(body)).toEqual([{ type: 'connection', instance: INSTANCE, status }]);
+    expect(parseEvolutionWebhook(body)).toEqual([{ type: 'connection', instance: INSTANCE, status, phone: '5565988887777' }]);
+  });
+
+  it('gives phone null when connection.update has no wuid (connecting/close)', () => {
+    const body = fixture('connection-open');
+    body.data.state = 'close';
+    delete body.data.wuid;
+    expect(parseEvolutionWebhook(body)).toEqual([{ type: 'connection', instance: INSTANCE, status: 'disconnected', phone: null }]);
   });
 
   it('ignores an unknown connection state', () => {
@@ -3504,8 +3535,12 @@ function parseUpdate(instance: string, data: unknown): InboundEvent {
 }
 
 function parseConnection(instance: string, data: unknown): InboundEvent {
-  const status = isObj(data) ? CONNECTION.get(String(data.state)) : undefined;
-  return status ? { type: 'connection', instance, status } : ignored('unknown connection state');
+  if (!isObj(data)) return ignored('unknown connection state');
+  const status = CONNECTION.get(String(data.state));
+  // wuid = the connected number's own JID (owner); absent while connecting/closed.
+  const wuid = str(data.wuid);
+  const phone = wuid ? phoneFromJid(wuid) : null;
+  return status ? { type: 'connection', instance, status, phone } : ignored('unknown connection state');
 }
 
 function parseQrCode(instance: string, data: unknown): InboundEvent {
@@ -3546,10 +3581,10 @@ Implements spec §6 "Senhas e sessão", "CSRF" and "Login": argon2id passwords, 
 - Create: `server/src/auth/plugin.ts`
 - Create: `server/src/auth/routes.ts`
 - Create: `server/src/auth/seed-admin.ts`
-- Create (or overwrite if Task 2 left a type-only stub): `server/src/inbox/visibility.ts` (Task 6 writes `AuthUser` + `loadAuthUser`; Task 7 appends `ChatVisibilityFields`, `canSee`, `visibleChatsWhere`)
+- Create (or overwrite if Task 2 left a type-only stub): `server/src/inbox/visibility.ts` (Task 6 writes `AuthUser` + `loadAuthUser`; Task 7 Step 4 later overwrites the whole file with `ChatVisibilityFields`, `canSee`, `visibleChatsWhere` and a `loadAuthUser` that returns null for inactive users)
 - Modify: `server/src/app.ts` (register rate-limit, auth plugin, auth routes; cookie is already registered by Task 1)
 - Modify: `server/test/helpers.ts` (real password hashes in `seedBasics`; add `TEST_ORIGIN`, `testPasswordHash`, `makeTestApp`, `loginAs`)
-- Modify: `server/package.json` (dependencies + `seed:admin` script)
+- Modify: `server/package.json` (`seed:admin` script only; dependencies were installed in Task 1)
 - Test: `server/test/auth/password.test.ts`
 - Test: `server/test/auth/sessions.test.ts`
 - Test: `server/test/auth/routes.test.ts`
@@ -3565,25 +3600,22 @@ Implements spec §6 "Senhas e sessão", "CSRF" and "Login": argon2id passwords, 
 - Produces:
   - `server/src/auth/password.ts`: `hashPassword(plain: string): Promise<string>`; `verifyPassword(hash: string, plain: string): Promise<boolean>` (never throws; malformed hash → `false`).
   - `server/src/auth/sessions.ts`: `createSession(db: Db | Tx, userId: string, days = 30): Promise<string>` (returns the raw token); `getSessionUser(db: Db | Tx, rawToken: string, days = 30): Promise<AuthUser | null>` (null if unknown/expired/user inactive; on success pushes `expiresAt` to now + `days`); `deleteSession(db: Db | Tx, rawToken: string): Promise<void>`; `deleteUserSessions(db: Db | Tx, userId: string): Promise<void>`.
-  - `server/src/inbox/visibility.ts`: `interface AuthUser { id; name; email; role: 'admin' | 'agent'; signature: string | null; sectorIds: string[] }`; `loadAuthUser(db: Db | Tx, userId: string): Promise<AuthUser | null>` (does not filter by `active`).
+  - `server/src/inbox/visibility.ts`: `interface AuthUser { id; name; email; role: 'admin' | 'agent'; signature: string | null; sectorIds: string[] }`; `loadAuthUser(db: Db | Tx, userId: string): Promise<AuthUser | null>` (this task's version does not filter by `active`; Task 7 overwrites the file and its version returns null for inactive users. Nothing in this task depends on the difference: login checks `active` itself and `getSessionUser` joins on it).
   - `server/src/auth/plugin.ts`: `SESSION_COOKIE = 'sid'`; `authPlugin` (Fastify plugin, options `{ ctx: AppCtx }`, not encapsulated) which decorates `request.user: AuthUser` (typed non-null: inside any `/api/*` handler other than login/health it is always set), loads the user from the `sid` cookie on every `/api/*` and `/ws` request, answers 401 **before the handler** to every `/api/*` request without a valid session except `POST /api/auth/login` and `GET /api/health` (`/ws` is left to Task 8, which answers 401 itself), and rejects with 403 every non-GET/HEAD `/api/*` request **and every `/ws` request** whose `Origin` header is not exactly `config.appOrigin`; `requireUser(req): Promise<void>` (401) and `requireAdmin(req): Promise<void>` (401/403) for `preHandler`; `authUser(req): AuthUser` (returns the non-null user or throws 401) for use inside handlers.
   - `server/src/auth/routes.ts`: `authRoutes` (Fastify plugin, options `{ ctx: AppCtx }`): `POST /api/auth/login` → `Me`, `POST /api/auth/logout` → 204, `GET /api/auth/me` → `Me`.
   - `server/src/auth/seed-admin.ts`: `seedAdmin(db: Db, input: { email: string; name: string; password: string }): Promise<AuthUser>`; CLI `npm run seed:admin -w server -- --email x --name y` (password from `SEED_ADMIN_PASSWORD` or a prompt).
   - `server/test/helpers.ts`: `TEST_ORIGIN = 'http://localhost:5173'`, `testPasswordHash(): Promise<string>`, `makeTestApp(ctx?: AppCtx): Promise<{ app: FastifyInstance; ctx: AppCtx }>`, `loginAs(app, email, password = TEST_PASSWORD): Promise<{ cookie: string; headers: Record<string, string> }>` (headers = `{ cookie, origin: TEST_ORIGIN }`).
-  - Rule for later tasks: deactivating a user or resetting a password (Task 12) must call `deleteUserSessions(ctx.db, userId)` and then `ctx.hub.disconnectUser(userId)`. Route modules (Tasks 10, 12, 13, 14) get the 401 for anonymous `/api/*` from `authPlugin` itself and may read `req.user` directly (or via `authUser(req)`); `{ preHandler: requireUser }` is optional, `{ preHandler: requireAdmin }` is still needed for admin-only routes. Task 8's `/ws` route gets the Origin check and the session lookup from `authPlugin` for free, but on `/ws` `request.user` stays null at runtime when there is no session (despite the non-null type), so Task 8 must test `if (!req.user)` and answer 401 itself.
+  - Rule for later tasks: deactivating a user or resetting a password (Task 12) must call `deleteUserSessions(ctx.db, userId)` and then `ctx.hub.disconnectUser(userId)`. Route modules (Tasks 10, 12, 13, 14) get the 401 for anonymous `/api/*` from `authPlugin` itself and may read `req.user` directly (or via `authUser(req)`); `{ preHandler: requireUser }` is optional, `{ preHandler: requireAdmin }` is still needed for admin-only routes. The `onRequest` hook **must populate `request.user` for every `/api/*` and `/ws` request** (the 401 is enforced only for `/api/*`). Task 8's `/ws` route reads `request.user` and does no session lookup of its own; on `/ws` `request.user` stays null at runtime when there is no session (despite the non-null type), so Task 8 tests `if (!req.user)` and answers 401 itself. Task 8 also keeps its own Origin check in `preValidation` (defense in depth for the GET upgrade; this hook's check also covers `/ws`).
   - Emails are compared case-insensitively at login (`lower(email)`); writers (Task 12, seed-admin, importer) store them trimmed and lowercased.
 
 ---
 
-- [ ] **Step 1: Install the auth dependencies (pinned)**
+- [ ] **Step 1: Check the auth dependencies (no install)**
 
-Run from the repo root (no-op if Task 1 already installed them):
+Task 1 installed them; do not run `npm install`.
 
-```bash
-npm install --save-exact -w server @node-rs/argon2@2.2.2 @fastify/cookie@11.1.3 @fastify/rate-limit@11.2.1
-```
-
-Expected: `server/package.json` lists the three packages with exact versions (no `^`).
+Run: `npm ls -w server @node-rs/argon2 @fastify/cookie @fastify/rate-limit`
+Expected: `@node-rs/argon2@2.2.2`, `@fastify/cookie@11.1.3` and `@fastify/rate-limit@11.2.1`, no `UNMET` lines.
 
 - [ ] **Step 2: Write the failing password test**
 
@@ -3646,7 +3678,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/package.json package-lock.json server/src/auth/password.ts server/test/auth/password.test.ts
+git add server/src/auth/password.ts server/test/auth/password.test.ts
 git commit -m "feat(auth): argon2id password hashing
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -3754,7 +3786,7 @@ Expected: FAIL with `Failed to load url ../../src/auth/sessions.js` (and/or `loa
 
 - [ ] **Step 9: Implement `AuthUser` + `loadAuthUser`**
 
-Create `server/src/inbox/visibility.ts` (if Task 2 created it with only the `AuthUser` interface, replace the whole file with this; Task 7 appends `ChatVisibilityFields`, `canSee` and `visibleChatsWhere` below):
+Create `server/src/inbox/visibility.ts` (if Task 2 created it with only the `AuthUser` interface, replace the whole file with this; Task 7 Step 4 later overwrites the whole file with its own version that adds `ChatVisibilityFields`, `canSee` and `visibleChatsWhere` and makes `loadAuthUser` return null for inactive users):
 
 ```ts
 import { eq } from 'drizzle-orm';
@@ -4138,7 +4170,8 @@ const authPluginImpl: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx })
       if (user) req.user = user;
     }
 
-    // §6: every /api route that reads or changes data requires a session. /ws answers 401 itself (Task 8).
+    // §6: every /api route that reads or changes data requires a session. /ws gets req.user populated
+    // above (null when there is no valid session) and answers 401 itself (Task 8).
     if (isApi && !req.user && path !== '/api/auth/login' && path !== '/api/health') throw unauthorized();
   });
 };
@@ -4186,10 +4219,11 @@ function loginEmail(body: unknown): string {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
 
-// Verified when the email does not exist, so a wrong email costs the same time as a wrong password.
-let dummyHash: Promise<string> | undefined;
-
 export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx }) => {
+  // Verified when the email does not exist, so a wrong email costs the same time as a wrong password.
+  // Lives in the plugin closure (Global Constraint: no module-level singletons); computed once per app.
+  let dummyHash: Promise<string> | undefined;
+
   app.post(
     '/api/auth/login',
     {
@@ -4553,7 +4587,7 @@ export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof cr
 
 Inside `makeTestCtx`, add `hub: createRecordingHub()` to the returned object, replacing any `hub` placeholder an earlier task left there. Keep the existing `db`, `wa` and `config` properties as they are.
 
-Task 8 then overwrites `hub.ts` with its full version (same `Hub` and `createRecordingHub`, plus `createHub`), and its Step 11 (the `helpers.ts` edit) is already done and becomes a no-op.
+Task 8 then overwrites `hub.ts` with its full version (same `Hub` and `createRecordingHub`, plus `createHub`) and does not touch `helpers.ts` (the hub wiring is done here).
 
 Run: `npx tsc -p server/tsconfig.json --noEmit`
 Expected: exit code 0, no errors.
@@ -4622,8 +4656,13 @@ export async function insertChat(
   return id;
 }
 
+/** Events in insertion order: created_at is DB now() (microseconds, one per transaction); id breaks exact ties deterministically. */
 export async function eventsOf(ctx: AppCtx, chatId: string) {
-  return ctx.db.select().from(chatEvents).where(eq(chatEvents.chatId, chatId)).orderBy(asc(chatEvents.createdAt));
+  return ctx.db
+    .select()
+    .from(chatEvents)
+    .where(eq(chatEvents.chatId, chatId))
+    .orderBy(asc(chatEvents.createdAt), asc(chatEvents.id));
 }
 
 /** Resolves to 200 on success, the HttpError status on HttpError; rethrows anything else. */
@@ -5664,8 +5703,6 @@ Implements §5.5 (realtime) and the `/ws` part of §6 (Origin check, session coo
 - Create: `server/src/realtime/hub.ts`
 - Create: `server/src/realtime/routes.ts`
 - Modify: `server/src/app.ts` (register `realtimeRoutes(ctx)`)
-- Modify: `server/test/helpers.ts` (`makeTestCtx` returns `hub: createRecordingHub()`)
-- Modify: `server/package.json` (dependencies `@fastify/websocket`, `ws`, dev `@types/ws`)
 - Test: `server/test/messages/dto.test.ts`
 - Test: `server/test/realtime/hub.test.ts`
 - Test: `server/test/realtime/ws.test.ts`
@@ -5677,11 +5714,12 @@ Implements §5.5 (realtime) and the `/ws` part of §6 (Origin check, session coo
   - Schema tables from `server/src/db/schema.ts`: `users`, `sessions`, `channels`, `contacts`, `tags`, `contactTags`, `chats`, `chatPins`, `messages`.
   - `AuthUser`, `canSee(user: AuthUser, chat: ChatVisibilityFields): boolean`, `loadAuthUser(db: Db | Tx, userId: string): Promise<AuthUser | null>` from `server/src/inbox/visibility.ts` (Task 7).
   - `ChatRow` type from `server/src/inbox/chats.ts` (Task 7).
-  - Session cookie `sid` set by `POST /api/auth/login` (Task 6); `sessions.id` = SHA-256 hex of the raw cookie token; `@fastify/cookie` registered on the root instance by Task 6 (`request.cookies`).
+  - `request.user` populated by Task 6's `authPlugin` `onRequest` hook for every `/api/*` **and `/ws`** request (null at runtime on `/ws` when there is no valid session; the plugin does the session lookup with sliding expiry and rejects inactive users). This task does no session lookup of its own.
   - Test helpers (`server/test/helpers.ts`): `makeTestCtx()`, `seedBasics(ctx)`, `makeTestApp(ctx?)`, `loginAs(app, email, password?)`.
   - Shared types from the `shared` workspace (`@talk/shared`): `ChatListItem`, `MessageDto`, `ChannelDto`, `WsEvent`.
 - Produces:
-  - `server/src/messages/dto.ts`: `export async function toMessageDto(db: Db | Tx, row: typeof messages.$inferSelect): Promise<MessageDto>;` — `media.url` is `/api/media/<messageId>`; `mediaUnavailable` is true when a media kind has no stored file and `error` is set.
+  - `server/src/messages/dto.ts`: `export async function toMessageDto(db: Db | Tx, row: typeof messages.$inferSelect): Promise<MessageDto>;` — `media.url` is `/api/media/<messageId>`; `mediaUnavailable = mediaPath == null && kind ∈ {image, audio, video, document, sticker}`.
+  - `server/src/messages/dto.ts`: `export function messagePreview(kind: MessageDto['kind'], body: string | null): string;` — the only producer of `chats.last_message_preview` text: `body` when non-empty, else `📷 Imagem` / `🎤 Áudio` / `🎬 Vídeo` / `📄 Documento` / `Figurinha` / `Nota` / `Mensagem não suportada`; sliced to 100 chars. Used by ingest (Task 9), agent send (Task 10) and triage system texts (Task 11).
   - `server/src/inbox/queries.ts`: `export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string): Promise<ChatListItem>;` — `pinned` is per `userId`; `tagIds` are the contact's tags.
   - `server/src/realtime/hub.ts`: `Hub`, `createHub(getDb: () => Db): Hub`, `createRecordingHub(): Hub & { events: Array<{ type: string; chatId?: string; messageId?: string; channelId?: string; userId?: string }> }`.
     Recording hub event shapes (other tasks assert on these exactly):
@@ -5689,19 +5727,15 @@ Implements §5.5 (realtime) and the `/ws` part of §6 (Origin check, session coo
     - `publishMessage(chatId, type, messageId)` → `{ type: 'message.created' | 'message.updated', chatId, messageId }`
     - `publishChannel(channelId)` → `{ type: 'channel', channelId }`
     - `disconnectUser(userId)` → `{ type: 'disconnect', userId }`
-  - `server/src/realtime/routes.ts`: `export function realtimeRoutes(ctx: AppCtx): FastifyPluginAsync;` — `GET /ws`: missing/different `Origin` → 403 `{ error: 'Origem não permitida' }`; missing/invalid/expired session or inactive user → 401 `{ error: 'Não autenticado' }`; otherwise upgrades, sends `WsEvent` JSON strings, pings every 30 s and terminates a socket that missed a pong.
-  - `makeTestCtx()` now returns `hub: ReturnType<typeof createRecordingHub>`.
+  - `server/src/realtime/routes.ts`: `export function realtimeRoutes(ctx: AppCtx): FastifyPluginAsync;` — `GET /ws`: missing/different `Origin` → 403 `{ error: 'Origem não permitida' }` (own `preValidation` check, kept as defense in depth); `request.user` null (missing/invalid/expired session or inactive user, as resolved by Task 6's plugin) → 401 `{ error: 'Não autenticado' }`; otherwise upgrades, sends `WsEvent` JSON strings, pings every 30 s and terminates a socket that missed a pong.
+  - `makeTestCtx()` already returns `hub: ReturnType<typeof createRecordingHub>` (Task 7 Step 0); `server/test/helpers.ts` is not modified here.
 
-- [ ] **Step 1: Install the WebSocket dependencies**
+- [ ] **Step 1: Check the WebSocket dependencies (no install)**
 
-Run from repo root:
+Task 1 installed them; do not run `npm install`.
 
-```bash
-npm install -w server --save-exact @fastify/websocket@11.3.4 ws@8.22.0
-npm install -w server --save-dev --save-exact @types/ws@8.18.1
-```
-
-Expected: `server/package.json` lists `"@fastify/websocket": "11.3.4"` and `"ws": "8.22.0"` under `dependencies` and `"@types/ws": "8.18.1"` under `devDependencies` (if Task 1 already added them, npm reports "up to date").
+Run: `npm ls -w server @fastify/websocket ws @types/ws`
+Expected: `@fastify/websocket@11.3.4`, `ws@8.22.0` and `@types/ws@8.18.1` (the last two as devDependencies; `ws` is only used by the test client, the server gets its own copy through `@fastify/websocket`), no `UNMET` lines.
 
 - [ ] **Step 2: Write the failing test for `toMessageDto`**
 
@@ -5711,7 +5745,7 @@ Create `server/test/messages/dto.test.ts`:
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { chats, contacts, messages } from '../../src/db/schema.js';
-import { toMessageDto } from '../../src/messages/dto.js';
+import { messagePreview, toMessageDto } from '../../src/messages/dto.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 
 async function setup() {
@@ -5773,6 +5807,20 @@ describe('toMessageDto', () => {
     expect(dto.reaction).toBe('👍');
   });
 });
+
+describe('messagePreview', () => {
+  it('uses the body, else a label per kind, capped at 100 chars', () => {
+    expect(messagePreview('text', 'Bom dia')).toBe('Bom dia');
+    expect(messagePreview('image', 'legenda')).toBe('legenda');
+    expect(messagePreview('image', null)).toBe('📷 Imagem');
+    expect(messagePreview('audio', null)).toBe('🎤 Áudio');
+    expect(messagePreview('video', '')).toBe('🎬 Vídeo');
+    expect(messagePreview('document', null)).toBe('📄 Documento');
+    expect(messagePreview('sticker', null)).toBe('Figurinha');
+    expect(messagePreview('unsupported', null)).toBe('Mensagem não suportada');
+    expect(messagePreview('text', 'x'.repeat(150))).toBe('x'.repeat(100));
+  });
+});
 ```
 
 - [ ] **Step 3: Run it to verify it fails**
@@ -5794,6 +5842,26 @@ type MessageRow = typeof messages.$inferSelect;
 
 const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 
+const PREVIEW_LABEL: Record<MessageDto['kind'], string> = {
+  text: '',
+  image: '📷 Imagem',
+  audio: '🎤 Áudio',
+  video: '🎬 Vídeo',
+  document: '📄 Documento',
+  sticker: 'Figurinha',
+  note: 'Nota',
+  unsupported: 'Mensagem não suportada',
+};
+
+/**
+ * The single source of `chats.last_message_preview` (ingest, agent send, triage system text):
+ * the text (unsigned for agent sends), else a label for media without caption; max 100 chars.
+ * Labels match the web's `previewText` (Task 17).
+ */
+export function messagePreview(kind: MessageDto['kind'], body: string | null): string {
+  return (body || PREVIEW_LABEL[kind]).slice(0, 100);
+}
+
 export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<MessageDto> {
   const [author] = row.authorId
     ? await db.select({ name: users.name }).from(users).where(eq(users.id, row.authorId))
@@ -5811,9 +5879,10 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
     media: row.mediaPath
       ? { url: `/api/media/${row.id}`, mime: row.mediaMime ?? 'application/octet-stream', name: row.mediaName, size: row.mediaSize }
       : null,
-    // A media message without a file and with an error is a failed download (§5.1 step 6).
-    // Without an error the download is still running; message.updated follows.
-    mediaUnavailable: MEDIA_KINDS.has(row.kind) && !row.mediaPath && row.error !== null,
+    // A media message without a stored file (§5.1 step 6). Ingest also sets error 'mídia indisponível'
+    // when the download fails; while a download is still running this is briefly true and the
+    // message.updated that follows the download carries the file.
+    mediaUnavailable: row.mediaPath == null && MEDIA_KINDS.has(row.kind),
     authorId: row.authorId,
     authorName: author?.name ?? null,
     replyTo: reply ?? null,
@@ -5828,13 +5897,13 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
 - [ ] **Step 5: Run it to verify it passes**
 
 Run: `npm test -w server -- test/messages/dto.test.ts`
-Expected: PASS (2 tests).
+Expected: PASS (3 tests).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/package.json package-lock.json server/src/messages/dto.ts server/test/messages/dto.test.ts
-git commit -m "feat(server): add MessageDto mapper and websocket dependencies" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git add server/src/messages/dto.ts server/test/messages/dto.test.ts
+git commit -m "feat(server): add MessageDto mapper and messagePreview" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 - [ ] **Step 7: Write the failing hub test**
@@ -6221,36 +6290,21 @@ export function createRecordingHub(): Hub & {
 }
 ```
 
-- [ ] **Step 11: Make `makeTestCtx` use the recording hub**
-
-In `server/test/helpers.ts` add the import at the top:
-
-```ts
-import { createRecordingHub } from '../src/realtime/hub.js';
-```
-
-and, inside `makeTestCtx`, set the `hub` property of the returned context to a recording hub — replace whatever placeholder object Task 2 put there so the function body builds the context like this (keep Task 2's existing `db`, `wa` and `config` lines as they are):
-
-```ts
-  const hub = createRecordingHub();
-  return { db, wa, hub, config };
-```
-
-The declared return type stays exactly as in the contract: `Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway>; hub: ReturnType<typeof createRecordingHub> }>`.
+(There is no Step 11: Task 7 Step 0 already put `hub: createRecordingHub()` into `makeTestCtx`, so `server/test/helpers.ts` is not touched in this task.)
 
 - [ ] **Step 12: Run the hub tests to verify they pass**
 
 Run: `npm test -w server -- test/realtime/hub.test.ts test/messages/dto.test.ts`
-Expected: PASS (11 tests).
+Expected: PASS (12 tests: hub 9, dto 3).
 
-Then run the whole server suite to make sure the helper change did not break earlier tasks:
+Then run the whole server suite to make sure the full hub file did not break earlier tasks:
 Run: `npm test -w server`
 Expected: PASS.
 
 - [ ] **Step 13: Commit**
 
 ```bash
-git add server/src/inbox/queries.ts server/src/realtime/hub.ts server/test/helpers.ts server/test/realtime/hub.test.ts
+git add server/src/inbox/queries.ts server/src/realtime/hub.ts server/test/realtime/hub.test.ts
 git commit -m "feat(server): add realtime hub with per-user visibility fan-out" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -6381,48 +6435,30 @@ Expected: FAIL — every test receives `Unexpected server response: 404` (no `/w
 Create `server/src/realtime/routes.ts`:
 
 ```ts
-import { createHash } from 'node:crypto';
 import websocket from '@fastify/websocket';
-import { and, eq, gt } from 'drizzle-orm';
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import type { AppCtx } from '../ctx.js';
-import { sessions, users } from '../db/schema.js';
-import { loadAuthUser, type AuthUser } from '../inbox/visibility.js';
 
 const PING_INTERVAL_MS = 30_000;
-
-// Same rule as auth/sessions.ts (Task 6): the `sid` cookie holds the raw token and
-// sessions.id stores its SHA-256 hex; expired sessions and inactive users are rejected.
-async function userFromSessionCookie(ctx: AppCtx, token: string | undefined): Promise<AuthUser | null> {
-  if (!token) return null;
-  const id = createHash('sha256').update(token).digest('hex');
-  const [row] = await ctx.db
-    .select({ userId: sessions.userId })
-    .from(sessions)
-    .innerJoin(users, eq(users.id, sessions.userId))
-    .where(and(eq(sessions.id, id), gt(sessions.expiresAt, new Date()), eq(users.active, true)));
-  return row ? loadAuthUser(ctx.db, row.userId) : null;
-}
 
 export function realtimeRoutes(ctx: AppCtx): FastifyPluginAsync {
   return async (app) => {
     await app.register(websocket);
 
-    const authed = new WeakMap<FastifyRequest, AuthUser>();
-
     app.get('/ws', {
       websocket: true,
       // Runs before the upgrade: replying here answers with plain HTTP and no socket is opened (§6).
       preValidation: async (request, reply) => {
+        // Defense in depth for the GET upgrade (Task 6's onRequest hook checks Origin on /ws too).
         if (request.headers.origin !== ctx.config.appOrigin) {
           return reply.code(403).send({ error: 'Origem não permitida' });
         }
-        const user = await userFromSessionCookie(ctx, request.cookies.sid);
-        if (!user) return reply.code(401).send({ error: 'Não autenticado' });
-        authed.set(request, user);
+        // Task 6's authPlugin already loaded the session (sliding expiry, inactive users rejected) into
+        // request.user; on /ws it stays null when there is no valid session, despite the non-null type.
+        if (!request.user) return reply.code(401).send({ error: 'Não autenticado' });
       },
     }, (socket, request) => {
-      const user = authed.get(request);
+      const user = request.user;
       if (!user) {
         socket.close();
         return;
@@ -6459,7 +6495,7 @@ In `server/src/app.ts` add the import next to the other route imports:
 import { realtimeRoutes } from './realtime/routes.js';
 ```
 
-and register it inside `buildApp(ctx)` after the `@fastify/cookie` / auth plugin registration from Task 6 (it reads `request.cookies`), next to the other route registrations:
+and register it inside `buildApp(ctx)` after the auth plugin registration from Task 6 (it reads `request.user`, which that plugin's `onRequest` hook populates), next to the other route registrations:
 
 ```ts
   app.register(realtimeRoutes(ctx));
@@ -6494,7 +6530,7 @@ Implements spec §5.1 end to end: `POST /webhooks/evolution/:secret` → `parseE
 
 **Files:**
 - Create: `server/src/messages/media.ts` (only `saveMedia`; Task 10 appends `mediaResponseHeaders` to this same file)
-- Create: `server/src/channels/service.ts` (only `getChannelByInstance` + `setChannelStatus`; Task 14 appends `createChannel`, `connectChannel`, `syncChannelStatuses` to this same file)
+- Create: `server/src/channels/service.ts` (only `getChannelByInstance`, `setChannelStatus`, `setChannelQr`, `getChannelQr`; Task 14 appends `createChannel`, `connectChannel`, `syncChannelStatuses` to this same file)
 - Create: `server/src/messages/ingest.ts`
 - Create: `server/src/webhooks/routes.ts`
 - Modify: `server/src/app.ts` (register the webhook route inside `buildApp`)
@@ -6505,7 +6541,8 @@ Implements spec §5.1 end to end: `POST /webhooks/evolution/:secret` → `parseE
 
 **Interfaces:**
 - Consumes:
-  - `AppCtx` (`server/src/ctx.ts`), `Db` (`server/src/db/client.ts`), tables `channels`, `contacts`, `chats`, `messages` (`server/src/db/schema.ts`, Task 2). The unique index on `messages (channel_id, external_id)` and the partial unique indexes on `contacts.phone` / `contacts.lid` are relied on for `ON CONFLICT DO NOTHING`.
+  - `AppCtx` (`server/src/ctx.ts`), `Db` and `Tx` (`server/src/db/client.ts`; import `type Tx`, never redeclare it), tables `channels`, `contacts`, `chats`, `messages` (`server/src/db/schema.ts`, Task 2).
+  - `messagePreview(kind, body)` from `server/src/messages/dto.ts` (Task 8) for `chats.last_message_preview`. The unique index on `messages (channel_id, external_id)` and the partial unique indexes on `contacts.phone` / `contacts.lid` are relied on for `ON CONFLICT DO NOTHING`.
   - `normalizePhoneBR(raw: string): string` (Task 3).
   - `InboundEvent`, `MessageKind`, `ChannelStatus`, `WhatsAppGateway.downloadMedia(instance: string, rawMessage: unknown): Promise<DownloadedMedia>` (Task 4), `createFakeGateway()` (Task 4, via `makeTestCtx`).
   - `parseEvolutionWebhook(body: unknown): InboundEvent[]` (Task 5). Tests feed it inline Evolution v2 `messages.upsert` payloads (no dependency on Task 5 fixture file names).
@@ -6516,11 +6553,12 @@ Implements spec §5.1 end to end: `POST /webhooks/evolution/:secret` → `parseE
 - Produces:
   - `handleInbound(ctx: AppCtx, events: InboundEvent[], hooks?: IngestHooks): Promise<void>`: the contract signature plus an optional third parameter (default = real triage).
   - `export interface IngestHooks { startTriage: typeof startTriage; handleTriageReply: typeof handleTriageReply }`
-  - `export const MEDIA_UNAVAILABLE = 'mídia indisponível'`: the exact `messages.error` value for a failed media download. Task 10's `toMessageDto` should compute `mediaUnavailable` as `row.error === MEDIA_UNAVAILABLE`.
+  - `export const MEDIA_UNAVAILABLE = 'mídia indisponível'`: the exact `messages.error` value ingest sets for a failed media download. `toMessageDto` (Task 8, unchanged) derives `mediaUnavailable` from `mediaPath == null` on a media kind.
   - `saveMedia(mediaDir: string, data: Buffer, mime: string, originalName?: string | null): Promise<{ path: string; size: number }>` with `path` = `YYYY/MM/<uuid>.<ext>` relative to `mediaDir`, forward slashes. Task 10 reuses it for outgoing files.
-  - `getChannelByInstance(db: Db | Tx, instance: string): Promise<typeof channels.$inferSelect | null>` and `setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus): Promise<void>` (publishes `channel.status` only when the status actually changed). Task 14 keeps both and appends the rest of the channel service.
+  - `getChannelByInstance(db: Db | Tx, instance: string): Promise<typeof channels.$inferSelect | null>` and `setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus, phone?: string | null): Promise<void>` (also stores `channels.phone` when `phone` is non-null — from the `connection` event's `phone`; publishes `channel.status` only when status or phone actually changed; reaching `connected` clears the stored QR).
+  - `setChannelQr(ctx: AppCtx, instance: string, qrBase64: string | null): void` and `getChannelQr(ctx: AppCtx, instance: string): string | null`: the latest `qrcode.updated` image per instance, in memory (a `WeakMap` keyed by `ctx.db`, so each ctx has its own). Ingest stores every `qrcode` event of a known instance. Task 14 keeps all four functions and appends the rest of the channel service (and the `GET /api/channels/:id/qr` route).
   - `registerWebhookRoutes(app: FastifyInstance, ctx: AppCtx): void` serving `POST /webhooks/evolution/:secret`: wrong secret → 401, anything parseable or not → 200.
-  - Messages stored by ingest: `status = 'sent'` for both directions, `authorId = null`, `sentAt` = WhatsApp timestamp. `chats.last_message_preview` = body, or for media without caption one of `Imagem`, `Áudio`, `Vídeo`, `Documento`, `Figurinha`, `Mensagem não suportada`.
+  - Messages stored by ingest: `status = 'sent'` for both directions, `authorId = null`, `sentAt` = WhatsApp timestamp. `chats.last_message_preview` = `messagePreview(kind, body)`: the body, or for media without caption one of `📷 Imagem`, `🎤 Áudio`, `🎬 Vídeo`, `📄 Documento`, `Figurinha`, `Mensagem não suportada` (max 100 chars).
 
 - [ ] **Step 0: Create the triage stub if Task 11 has not run yet**
 
@@ -6655,6 +6693,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { getChannelQr } from '../../src/channels/service.js';
 import { channels, chats, contacts, messages } from '../../src/db/schema.js';
 import { handleInbound, MEDIA_UNAVAILABLE, type IngestHooks } from '../../src/messages/ingest.js';
 import { parseEvolutionWebhook } from '../../src/whatsapp/parse.js';
@@ -6893,7 +6932,9 @@ describe('handleInbound: messages', () => {
     expect(after.lid).toBeNull();
   });
 
-  it('two concurrent first messages from a new contact create one contact and one chat', async () => {
+  it('duplicate first messages (sequential) from a new contact create one contact and one chat', async () => {
+    // PGlite serializes transactions, so these two run one after the other; this checks the lookup-then-insert
+    // path, not a real race. Real race safety relies on ON CONFLICT DO NOTHING + re-read (partial unique indexes).
     await Promise.all([ingest(msg()), ingest(msg())]);
     expect(await allContacts()).toHaveLength(1);
     const list = await allChats();
@@ -6933,7 +6974,7 @@ describe('handleInbound: messages', () => {
     const bytes = await readFile(join(ctx.config.mediaDir, m.mediaPath!));
     expect(bytes.length).toBe(m.mediaSize);
     const [chat] = await allChats();
-    expect(chat.lastMessagePreview).toBe('Imagem');
+    expect(chat.lastMessagePreview).toBe('📷 Imagem');
     expect(hubEvents('message.updated')).toEqual([expect.objectContaining({ messageId: m.id })]);
   });
 
@@ -7009,17 +7050,36 @@ describe('handleInbound: status', () => {
 });
 
 describe('handleInbound: channel events', () => {
-  it('updates channel status and publishes only on change; qrcode stores nothing', async () => {
-    await ctx.db.update(channels).set({ status: 'disconnected' }).where(eq(channels.id, seed.channelId));
+  it('updates channel status and phone, publishing only on change', async () => {
+    await ctx.db.update(channels).set({ status: 'disconnected', phone: null }).where(eq(channels.id, seed.channelId));
 
-    await ingest({ type: 'connection', instance: 'talk-test', status: 'connected' });
-    await ingest({ type: 'connection', instance: 'talk-test', status: 'connected' });
-    await ingest({ type: 'qrcode', instance: 'talk-test', qrBase64: 'data:image/png;base64,AAAA' });
-    await ingest({ type: 'connection', instance: 'talk-desconhecida', status: 'connected' });
+    await ingest({ type: 'connection', instance: 'talk-test', status: 'connected', phone: '5565988887777' });
+    await ingest({ type: 'connection', instance: 'talk-test', status: 'connected', phone: '5565988887777' });
+    await ingest({ type: 'connection', instance: 'talk-desconhecida', status: 'connected', phone: null });
 
     const [ch] = await ctx.db.select().from(channels).where(eq(channels.id, seed.channelId));
-    expect(ch.status).toBe('connected');
+    expect(ch).toMatchObject({ status: 'connected', phone: '5565988887777' });
     expect(ctx.hub.events.filter((e) => e.channelId === seed.channelId)).toHaveLength(1);
+  });
+
+  it('a connection event without phone keeps the stored number', async () => {
+    await ctx.db.update(channels).set({ status: 'connected', phone: '5565988887777' }).where(eq(channels.id, seed.channelId));
+    await ingest({ type: 'connection', instance: 'talk-test', status: 'disconnected', phone: null });
+    const [ch] = await ctx.db.select().from(channels).where(eq(channels.id, seed.channelId));
+    expect(ch).toMatchObject({ status: 'disconnected', phone: '5565988887777' });
+  });
+
+  it('keeps the latest QR of a known instance in memory and clears it once connected (§5.6)', async () => {
+    await ctx.db.update(channels).set({ status: 'connecting' }).where(eq(channels.id, seed.channelId));
+    await ingest({ type: 'qrcode', instance: 'talk-test', qrBase64: 'data:image/png;base64,AAAA' });
+    await ingest({ type: 'qrcode', instance: 'talk-test', qrBase64: 'data:image/png;base64,BBBB' });
+    await ingest({ type: 'qrcode', instance: 'talk-desconhecida', qrBase64: 'data:image/png;base64,CCCC' });
+    expect(getChannelQr(ctx, 'talk-test')).toBe('data:image/png;base64,BBBB');
+    expect(getChannelQr(ctx, 'talk-desconhecida')).toBeNull();
+    expect(ctx.hub.events.filter((e) => e.channelId)).toHaveLength(0);
+
+    await ingest({ type: 'connection', instance: 'talk-test', status: 'connected', phone: '5565988887777' });
+    expect(getChannelQr(ctx, 'talk-test')).toBeNull();
   });
 });
 ```
@@ -7031,29 +7091,55 @@ Expected: FAIL. Vitest cannot resolve `../../src/messages/ingest.js`.
 
 - [ ] **Step 8: Implement the channel helpers**
 
-`server/src/channels/service.ts` (Task 14 appends `createChannel`, `connectChannel` and `syncChannelStatuses` to this file and keeps these two functions unchanged):
+`server/src/channels/service.ts` (Task 14 appends `createChannel`, `connectChannel` and `syncChannelStatuses` to this file and keeps these four functions unchanged):
 
 ```ts
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, or, sql } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
-import type { Db } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import { channels } from '../db/schema.js';
 import type { ChannelStatus } from '../whatsapp/types.js';
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export async function getChannelByInstance(db: Db | Tx, instance: string): Promise<typeof channels.$inferSelect | null> {
   const [row] = await db.select().from(channels).where(eq(channels.evolutionInstance, instance)).limit(1);
   return row ?? null;
 }
 
-/** Updates channels.status; publishes channel.status only when it actually changed. Unknown instance → no-op. */
-export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus): Promise<void> {
+// ponytail: the latest QR per instance lives in memory (spec §5.6: shown from qrcode.updated), keyed by the
+// ctx's Db so every app/test ctx gets its own map (no state shared across ctxs). Lost on restart: the admin
+// clicks "Conectar" again. Move it to a table if several app processes ever run.
+const qrByDb = new WeakMap<Db, Map<string, string>>();
+
+/** Stores (or with null clears) the latest QR image of an instance. */
+export function setChannelQr(ctx: AppCtx, instance: string, qrBase64: string | null): void {
+  let byInstance = qrByDb.get(ctx.db);
+  if (!byInstance) {
+    byInstance = new Map();
+    qrByDb.set(ctx.db, byInstance);
+  }
+  if (qrBase64) byInstance.set(instance, qrBase64);
+  else byInstance.delete(instance);
+}
+
+export function getChannelQr(ctx: AppCtx, instance: string): string | null {
+  return qrByDb.get(ctx.db)?.get(instance) ?? null;
+}
+
+/**
+ * Updates channels.status (and channels.phone when a phone is given: connection.update `wuid`);
+ * publishes channel.status only when something actually changed. A null phone keeps the stored number.
+ * Unknown instance → no-op. Reaching 'connected' clears the stored QR.
+ */
+export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus, phone: string | null = null): Promise<void> {
+  const changed = phone
+    ? or(ne(channels.status, status), sql`${channels.phone} is distinct from ${phone}`)
+    : ne(channels.status, status);
   const [row] = await ctx.db
     .update(channels)
-    .set({ status })
-    .where(and(eq(channels.evolutionInstance, instance), ne(channels.status, status)))
+    .set(phone ? { status, phone } : { status })
+    .where(and(eq(channels.evolutionInstance, instance), changed))
     .returning({ id: channels.id });
+  if (status === 'connected') setChannelQr(ctx, instance, null);
   if (row) await ctx.hub.publishChannel(row.id);
 }
 ```
@@ -7065,17 +7151,17 @@ export async function setChannelStatus(ctx: AppCtx, instance: string, status: Ch
 ```ts
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
-import { getChannelByInstance, setChannelStatus } from '../channels/service.js';
+import { getChannelByInstance, setChannelQr, setChannelStatus } from '../channels/service.js';
 import type { AppCtx } from '../ctx.js';
-import type { Db } from '../db/client.js';
+import type { Tx } from '../db/client.js';
 import { chats, contacts, messages } from '../db/schema.js';
 import { findOrOpenChat, getDefaultSectorId, type ChatRow } from '../inbox/chats.js';
 import { handleTriageReply, startTriage } from '../triage/triage.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
-import type { InboundEvent, MessageKind } from '../whatsapp/types.js';
+import type { InboundEvent } from '../whatsapp/types.js';
+import { messagePreview } from './dto.js';
 import { saveMedia } from './media.js';
 
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
 type StatusEvent = Extract<InboundEvent, { type: 'status' }>;
 type MessageStatus = (typeof messages.$inferSelect)['status'];
@@ -7088,18 +7174,8 @@ export interface IngestHooks {
 
 const defaultHooks: IngestHooks = { startTriage, handleTriageReply };
 
+/** messages.error of a failed media download (the DTO's mediaUnavailable comes from the missing file, Task 8). */
 export const MEDIA_UNAVAILABLE = 'mídia indisponível';
-
-const PREVIEW: Record<MessageKind, string> = {
-  text: '',
-  image: 'Imagem',
-  audio: 'Áudio',
-  video: 'Vídeo',
-  document: 'Documento',
-  sticker: 'Figurinha',
-  note: 'Nota',
-  unsupported: 'Mensagem não suportada',
-};
 
 /** Statuses a message may be in for the incoming status to apply (pending < sent < delivered < read; failed only from pending/sent). */
 const ADVANCES_FROM: Record<StatusEvent['status'], MessageStatus[]> = {
@@ -7115,16 +7191,17 @@ class Skip extends Error {}
 export async function handleInbound(ctx: AppCtx, events: InboundEvent[], hooks: IngestHooks = defaultHooks): Promise<void> {
   for (const ev of events) {
     if (ev.type === 'connection') {
-      await setChannelStatus(ctx, ev.instance, ev.status);
+      await setChannelStatus(ctx, ev.instance, ev.status, ev.phone);
       continue;
     }
-    // ponytail: qrcode events are not stored; the QR shown to the admin comes from connectChannel (§5.6)
-    if (ev.type === 'ignored' || ev.type === 'qrcode') continue;
+    if (ev.type === 'ignored') continue;
 
     const channel = await getChannelByInstance(ctx.db, ev.instance);
     if (!channel) continue;
 
-    if (ev.type === 'status') await applyStatus(ctx, channel.id, ev);
+    // §5.6: the admin's QR comes from qrcode.updated; GET /api/channels/:id/qr (Task 14) serves the latest one.
+    if (ev.type === 'qrcode') setChannelQr(ctx, ev.instance, ev.qrBase64);
+    else if (ev.type === 'status') await applyStatus(ctx, channel.id, ev);
     else if (ev.type === 'reaction') await applyReaction(ctx, channel.id, ev.targetExternalId, ev.emoji);
     else await ingestMessage(ctx, channel.id, ev, hooks);
   }
@@ -7209,7 +7286,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
       if (!inserted) throw new Skip(); // a concurrent copy of this webhook won the race
 
       const sentAt = ev.sentAt.toISOString();
-      const preview = (ev.body ?? PREVIEW[ev.kind]).slice(0, 200);
+      const preview = messagePreview(ev.kind, ev.body);
       const isNewest = sql`(${chats.lastMessageAt} is null or ${chats.lastMessageAt} <= ${sentAt}::timestamptz)`;
       const [updated] = await tx
         .update(chats)
@@ -7298,7 +7375,7 @@ async function fetchMedia(ctx: AppCtx, ev: MessageEvent, chatId: string, message
 - [ ] **Step 10: Run the ingest tests to verify they pass**
 
 Run: `npm test -w server -- test/messages/ingest.test.ts`
-Expected: PASS (24 tests).
+Expected: PASS (26 tests).
 
 - [ ] **Step 11: Commit**
 
@@ -7453,6 +7530,7 @@ Implements spec §5.2 (agent send, signature, quoted reply, failure and resend),
 - Create: `server/src/messages/signature.ts`
 - Modify: `server/src/messages/media.ts` (Task 9 created it with `saveMedia`; this task extends the MIME map and appends `baseMime` and `mediaResponseHeaders`)
 - Create: `server/src/messages/send.ts`
+- Modify: `server/src/triage/triage.ts` (delete its local `markSent`, import the one exported by `send.ts`)
 - Create: `server/src/media/routes.ts`
 - Modify: `server/src/app.ts` (register `mediaRoutes` with the other route modules)
 - Test: `server/test/messages/signature.test.ts`
@@ -7463,7 +7541,9 @@ Implements spec §5.2 (agent send, signature, quoted reply, failure and resend),
 **Interfaces:**
 - Consumes:
   - `AppCtx` (`server/src/ctx.ts`): `{ db, wa, hub, config }`; `config.mediaDir: string`.
-  - `Db` (`server/src/db/client.ts`); `Tx = Parameters<Parameters<Db['transaction']>[0]>[0]`.
+  - `Db` and `Tx` (`server/src/db/client.ts`; import `type Tx`, never redeclare it).
+  - `messagePreview(kind, body)` (`server/src/messages/dto.ts`, Task 8).
+  - `server/src/triage/triage.ts` (Task 11): its local `markSent` moves into `send.ts` in this task.
   - Schema (`server/src/db/schema.ts`, Task 2): `messages`, `chats`, `contacts`, `channels`, `sectors`, `chatEvents`. Columns used: `messages.{id, chatId, channelId, direction, kind, body, mediaPath, mediaMime, mediaSize, mediaName, authorId, replyToId, externalId, status, error, sentAt}`, `chats.{id, contactId, channelId, sectorId, ownerId, state, waiting, private, triagePending, unread, lastMessageAt, lastMessagePreview, closedAt}`, `contacts.{id, name, phone}`, `channels.{id, evolutionInstance}`, `sectors.{id, name}`, `chatEvents.{chatId, kind, data}`.
   - `HttpError`, `badRequest`, `conflict`, `notFound` (`server/src/lib/http-error.ts`).
   - `AuthUser` (`server/src/inbox/visibility.ts`).
@@ -7486,8 +7566,8 @@ Implements spec §5.2 (agent send, signature, quoted reply, failure and resend),
   - `resendMessage(ctx: AppCtx, user: AuthUser, messageId: string): Promise<MessageDto>`. Errors: 404 if the message is missing or not visible, 409 if it is not a failed outgoing message or the chat is closed.
   - `addNote(ctx: AppCtx, user: AuthUser, chatId: string, text: string): Promise<MessageDto>`. The note gets `kind='note'`, `direction='out'`, `status='sent'`, is never sent to the gateway, and does not change chat flags.
   - `mediaRoutes(app: FastifyInstance, ctx: AppCtx): Promise<void>` registers `GET /api/media/:messageId`.
-  - Stored-message conventions that later tasks rely on: an outgoing `body` is the exact text the contact receives (including the signature); voice messages are `kind='audio'` with `body=null`; image files other than jpeg/png, audio sent without `asVoice`, and every other file are stored as `kind='document'`; `chats.lastMessagePreview` holds the unsigned text, or `📷 Imagem` / `🎤 Áudio` / `🎥 Vídeo` / `📄 Documento`; the `assigned` event data is `{ ownerId }`.
-  - Echo guard: when the gateway call succeeds, the same transaction that stores `externalId`/`status='sent'` first deletes any other row with that `(channelId, externalId)` and `authorId IS NULL` (the webhook echo ingested before the gateway returned), then publishes `chat.updated` if one was dropped. Task 11's `sendSystemText` needs the same guard, and there it must also put `triage_pending` back to `true` for the welcome menu.
+  - Stored-message conventions that later tasks rely on: an outgoing `body` is the exact text the contact receives (including the signature); voice messages are `kind='audio'` with `body=null`; image files other than jpeg/png, audio sent without `asVoice`, and every other file are stored as `kind='document'`; `chats.lastMessagePreview` = `messagePreview(kind, unsignedText)` (Task 8): the unsigned text, or `📷 Imagem` / `🎤 Áudio` / `🎬 Vídeo` / `📄 Documento`; the `assigned` event data is `{ ownerId, previousOwnerId: null }` (same shape as Task 7's `assumeChat`).
+  - `markSent(db: Db, messageId: string, channelId: string, externalId: string): Promise<{ row: typeof messages.$inferSelect; echoDropped: boolean }>` exported from `server/src/messages/send.ts`. Echo guard (spec §5.1 idempotency): one transaction deletes any other row with that `(channelId, externalId)` and `authorId IS NULL` (the webhook echo ingested before the gateway returned), then sets `externalId`/`status='sent'`/`error=null` on ours. `deliver` uses it for every agent send/resend and publishes `chat.updated` if an echo was dropped. Task 11 wrote this exact function locally in `triage.ts`; this task moves it here and `triage.ts` imports it (its `startTriage` re-arms `triage_pending` when the menu's echo was dropped).
 
 ---
 
@@ -7805,7 +7885,7 @@ describe('sendAgentMessage — text', () => {
 
     const events = await ctx.db.select().from(chatEvents).where(and(eq(chatEvents.chatId, chatId), eq(chatEvents.kind, 'assigned')));
     expect(events).toHaveLength(1);
-    expect(events[0]!.data).toEqual({ ownerId: agentA.id });
+    expect(events[0]!.data).toEqual({ ownerId: agentA.id, previousOwnerId: null });
 
     const published = ctx.hub.events.filter((e) => e.messageId === dto.id).map((e) => e.type);
     expect(published).toEqual(['message.created', 'message.updated']);
@@ -8055,18 +8135,17 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
-import type { Db } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import { channels, chats, contacts, messages, sectors } from '../db/schema.js';
 import { getChatForUser, type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, notFound } from '../lib/http-error.js';
 import type { QuotedRef, SendResult } from '../whatsapp/types.js';
-import { toMessageDto } from './dto.js';
+import { messagePreview, toMessageDto } from './dto.js';
 import { baseMime, saveMedia } from './media.js';
 import { formatSignature, signatureLabel } from './signature.js';
 
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 type MessageRow = typeof messages.$inferSelect;
 type MessageDto = Awaited<ReturnType<typeof toMessageDto>>;
 type OutKind = 'text' | 'image' | 'video' | 'audio' | 'document';
@@ -8079,12 +8158,38 @@ export interface SendInput {
   replyToId?: string;
 }
 
-const PREVIEW: Record<Exclude<OutKind, 'text'>, string> = {
-  image: '📷 Imagem',
-  audio: '🎤 Áudio',
-  video: '🎥 Vídeo',
-  document: '📄 Documento',
-};
+/**
+ * Success path of every send (agent send, resend, triage system text — spec §5.1 idempotency).
+ * Evolution's messages.upsert echo can beat the gateway response; ingest then stored an author-less copy
+ * with our external_id. Drop it so ours keeps the id (otherwise the update hits
+ * messages_channel_external_unique), then mark ours sent — one transaction.
+ */
+export async function markSent(
+  db: Db,
+  messageId: string,
+  channelId: string,
+  externalId: string,
+): Promise<{ row: MessageRow; echoDropped: boolean }> {
+  return db.transaction(async (tx) => {
+    const gone = await tx
+      .delete(messages)
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          eq(messages.externalId, externalId),
+          isNull(messages.authorId),
+          ne(messages.id, messageId),
+        ),
+      )
+      .returning({ id: messages.id });
+    const [row] = await tx
+      .update(messages)
+      .set({ externalId, status: 'sent', error: null })
+      .where(eq(messages.id, messageId))
+      .returning();
+    return { row: row!, echoDropped: gone.length > 0 };
+  });
+}
 
 function fileKind(mime: string, asVoice: boolean): Exclude<OutKind, 'text'> {
   const type = baseMime(mime);
@@ -8102,7 +8207,8 @@ async function touchChat(tx: Tx, user: AuthUser, chat: ChatRow, last?: { at: Dat
       .set({ ownerId: user.id })
       .where(and(eq(chats.id, chat.id), isNull(chats.ownerId)))
       .returning({ id: chats.id });
-    if (won.length > 0) await addEvent(tx, chat.id, 'assigned', { ownerId: user.id }, user.id);
+    // Same data shape as Task 7's assumeChat; the conditional UPDATE above only wins when there was no owner.
+    if (won.length > 0) await addEvent(tx, chat.id, 'assigned', { ownerId: user.id, previousOwnerId: null }, user.id);
   }
   await tx
     .update(chats)
@@ -8165,32 +8271,14 @@ async function deliver(ctx: AppCtx, msg: MessageRow): Promise<MessageDto> {
   } catch (err) {
     error = err instanceof Error && err.message ? err.message.slice(0, 200) : 'Falha ao enviar';
   }
-  const { updated, echoDropped } = await ctx.db.transaction(async (tx) => {
-    let echoDropped = false;
-    if (result) {
-      // Evolution's messages.upsert echo of this send can beat the gateway response; ingest then stored it
-      // as an author-less "sent from the phone" copy with our external_id. Drop it so ours keeps the id
-      // (otherwise the update below hits messages_channel_external_unique).
-      const gone = await tx
-        .delete(messages)
-        .where(
-          and(
-            eq(messages.channelId, msg.channelId),
-            eq(messages.externalId, result.externalId),
-            isNull(messages.authorId),
-            ne(messages.id, msg.id),
-          ),
-        )
-        .returning({ id: messages.id });
-      echoDropped = gone.length > 0;
-    }
-    const [row] = await tx
-      .update(messages)
-      .set(result ? { externalId: result.externalId, status: 'sent', error: null } : { status: 'failed', error })
-      .where(eq(messages.id, msg.id))
-      .returning();
-    return { updated: row!, echoDropped };
-  });
+  let updated: MessageRow;
+  let echoDropped = false;
+  if (result) {
+    ({ row: updated, echoDropped } = await markSent(ctx.db, msg.id, msg.channelId, result.externalId));
+  } else {
+    const [row] = await ctx.db.update(messages).set({ status: 'failed', error }).where(eq(messages.id, msg.id)).returning();
+    updated = row!;
+  }
   await ctx.hub.publishMessage(msg.chatId, 'message.updated', msg.id);
   // ponytail: triage_pending needs no restore here: touchChat already set it (and waiting) false before the
   // gateway call, the same values the echo wrote. The echo's own message.created bubble stays on open clients
@@ -8230,7 +8318,7 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
   const now = new Date();
 
   const row = await ctx.db.transaction(async (tx) => {
-    await touchChat(tx, user, chat, { at: now, preview: (text ?? PREVIEW[kind as Exclude<OutKind, 'text'>]).slice(0, 100) });
+    await touchChat(tx, user, chat, { at: now, preview: messagePreview(kind, text) });
     const [inserted] = await tx
       .insert(messages)
       .values({
@@ -8311,10 +8399,35 @@ export async function addNote(ctx: AppCtx, user: AuthUser, chatId: string, text:
 Run: `npm test -w server -- test/messages/send.test.ts`
 Expected: PASS. All `sendAgentMessage`, `resendMessage` and `addNote` cases are green, including the echo-race case (one row, ours, `sent`).
 
+- [ ] **Step 9b: Rewire triage to the shared `markSent`**
+
+Task 11 wrote `markSent` locally in `server/src/triage/triage.ts`; `send.ts` now exports the same function. In `server/src/triage/triage.ts`:
+
+1. Delete the whole local `markSent` function together with the comment block above it (from the line `// Success path of a send (Task 10 moves this function, unchanged, into messages/send.ts and exports it).` down to the function's closing `}`).
+2. Replace the first import line `import { and, eq, isNull, ne, sql } from 'drizzle-orm';` with:
+
+```ts
+import { and, eq, sql } from 'drizzle-orm';
+```
+
+3. Add this import below `import { messagePreview } from '../messages/dto.js';`:
+
+```ts
+import { markSent } from '../messages/send.js';
+```
+
+`sendSystemText` keeps calling `markSent(ctx.db, id, chat.channelId, result.externalId)` unchanged.
+
+Run: `npm test -w server -- test/triage/triage.test.ts test/messages/send.test.ts`
+Expected: PASS, including Task 11's echo case (`startTriage` keeps one menu row and stays armed).
+
+Run: `npx tsc -p server/tsconfig.json --noEmit`
+Expected: exits 0 (no unused or missing imports).
+
 - [ ] **Step 10: Commit**
 
 ```bash
-git add server/src/messages/send.ts server/test/messages/send.test.ts
+git add server/src/messages/send.ts server/test/messages/send.test.ts server/src/triage/triage.ts
 git commit -m "feat(messages): send text/media/voice with signature and quote, resend, notes
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -8508,7 +8621,8 @@ Implements spec §5.4: when a chat is created by an `in` message and `settings.t
 **Interfaces:**
 - Consumes:
   - `AppCtx` from `server/src/ctx.ts` (`db`, `wa`, `hub`).
-  - `Db` from `server/src/db/client.ts`; transaction type defined locally as `type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]` (same definition as the contract).
+  - `Db` and `Tx` from `server/src/db/client.ts` (import `type Tx`; never redeclare it).
+  - `messagePreview(kind, body): string` from `server/src/messages/dto.ts` (Task 8) for `chats.last_message_preview`.
   - Schema tables from `server/src/db/schema.ts`: `chats`, `contacts`, `channels`, `messages`, `sectors`, `settings`, `chatEvents` (columns camelCase per spec §4: `chats.triagePending`, `chats.sectorId`, `chats.state`, `chats.lastMessageAt`, `chats.lastMessagePreview`, `channels.evolutionInstance`, `messages.externalId`, `messages.sentAt`, `settings.key`, `settings.value`, …).
   - `addEvent(db: Db | Tx, chatId: string, kind: ChatEventKind, data: Record<string, unknown>, authorId: string | null): Promise<void>` from `server/src/inbox/events.ts`.
   - `ChatRow` and `findOrOpenChat(db, { contactId, channelId, init: { sectorId, ownerId, waiting, triagePending, createdBy } })` from `server/src/inbox/chats.ts` (tests only use `findOrOpenChat`).
@@ -8528,7 +8642,8 @@ Implements spec §5.4: when a chat is created by an `in` message and `settings.t
   - `settings` row `key='triage_menu'` stores **snake_case** jsonb exactly as spec §4: `{ enabled, welcome_text, invalid_text, options: [{ key, label, sector_id }] }`. `getTriageMenu` maps it to camelCase `TriageMenu`; a missing or malformed row returns `{ enabled: false, welcomeText: '', invalidText: '', options: [] }`. Task 12 (`catalog/settings.ts`) must write this snake_case shape and may call `getTriageMenu` to build `SettingsDto.triageMenu`.
   - `matchTriageOption` ignores options whose `sectorId` is not a key of `sectorNames` (deleted sector).
   - Menu text sent to the contact: `${welcomeText}\n\n${key} - ${label}` lines (one per option with an existing sector).
-  - System messages (menu and invalid text) are rows with `direction='out'`, `kind='text'`, `authorId=null`, `status` `pending` → `sent` (with `externalId`) or `failed` (with `error`); they update `last_message_at/preview` but never `waiting`, `unread`, `ownerId` or `sectorId`.
+  - System messages (menu and invalid text) are rows with `direction='out'`, `kind='text'`, `authorId=null`, `status` `pending` → `sent` (with `externalId`) or `failed` (with `error`); they update `last_message_at/preview` (via `messagePreview`) but never `waiting`, `unread`, `ownerId` or `sectorId`.
+  - Echo guard (spec §5.1 idempotency, same rule as Task 10's `deliver`): on gateway success, one transaction deletes any other row with the same `(channelId, externalId)` and `authorId IS NULL` (Evolution's `fromMe` echo ingested before `sendText` returned), then sets `externalId`/`status='sent'` on ours. This task writes that block as a local `markSent(db, messageId, channelId, externalId)` in `triage.ts`; Task 10 moves it, unchanged, into `messages/send.ts` (exported) and rewires `triage.ts` to import it. When an echo was dropped after the **menu**, the echo's ingest had cleared `triage_pending`, so `startTriage` sets it back to `true` (open chat only) — the menu stays armed.
   - `handleTriageReply` returns `false` when the chat has no pending triage (caller continues normally) and `true` when the message was taken as a triage answer (routed, or invalid text sent). The inbound message itself is stored by ingest either way.
   - The flag is flipped with `UPDATE … WHERE triage_pending = true`, so two concurrent replies route/answer only once.
 
@@ -8644,10 +8759,8 @@ Create `server/src/triage/triage.ts`:
 ```ts
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import type { Db } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import { settings } from '../db/schema.js';
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export interface TriageOption { key: string; label: string; sectorId: string }
 export interface TriageMenu { enabled: boolean; welcomeText: string; invalidText: string; options: TriageOption[] }
@@ -8715,7 +8828,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 In `server/test/triage/triage.test.ts`, keep everything from Step 1 but replace the import block at the top of the file with exactly:
 
 ```ts
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 import { chatEvents, chats, contacts, messages, settings } from '../../src/db/schema.js';
@@ -8828,6 +8941,30 @@ describe('startTriage', () => {
     expect(msg.error).toBe('Evolution fora do ar');
     expect((await reload(ctx, chat.id)).triagePending).toBe(false);
   });
+
+  it('keeps one menu row and stays armed when the webhook echo beats the gateway response', async () => {
+    const { ctx, chat } = await setup();
+    const realSendText = ctx.wa.sendText.bind(ctx.wa);
+    vi.spyOn(ctx.wa, 'sendText').mockImplementation(async (instance, phone, text, quoted) => {
+      const res = await realSendText(instance, phone, text, quoted);
+      // What Task 9's ingest does with Evolution's fromMe echo while our call is still pending:
+      // an author-less 'out' copy with our external_id, and waiting/triage_pending cleared.
+      await ctx.db.insert(messages).values({
+        id: crypto.randomUUID(), chatId: chat.id, channelId: chat.channelId, direction: 'out', kind: 'text',
+        body: text, authorId: null, externalId: res.externalId, status: 'sent', sentAt: new Date(),
+      });
+      await ctx.db.update(chats).set({ waiting: false, triagePending: false }).where(eq(chats.id, chat.id));
+      return res;
+    });
+
+    await startTriage(ctx, chat);
+
+    const msgs = await chatMessages(ctx, chat.id);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]).toMatchObject({ status: 'sent', error: null, authorId: null });
+    expect(msgs[0].externalId).toMatch(/^fake-/);
+    expect((await reload(ctx, chat.id)).triagePending).toBe(true);
+  });
 });
 
 describe('handleTriageReply', () => {
@@ -8897,6 +9034,8 @@ describe('handleTriageReply', () => {
     await startTriage(ctx, chat);
     const pending = await reload(ctx, chat.id);
 
+    // PGlite serializes transactions, so this runs the two replies one after the other; it checks the
+    // `WHERE triage_pending = true` guard, not real lock behaviour (that relies on the conditional UPDATE).
     const results = await Promise.all([
       handleTriageReply(ctx, pending, '2'),
       handleTriageReply(ctx, pending, '1'),
@@ -8946,15 +9085,14 @@ Expected: FAIL — `SyntaxError: The requested module '../../src/triage/triage.j
 Replace `server/src/triage/triage.ts` with the complete file:
 
 ```ts
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
-import type { Db } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import { channels, chats, contacts, messages, sectors, settings } from '../db/schema.js';
 import type { ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+import { messagePreview } from '../messages/dto.js';
 
 export interface TriageOption { key: string; label: string; sectorId: string }
 export interface TriageMenu { enabled: boolean; welcomeText: string; invalidText: string; options: TriageOption[] }
@@ -9007,17 +9145,48 @@ async function loadSectorNames(db: Db | Tx): Promise<Map<string, string>> {
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
+// Success path of a send (Task 10 moves this function, unchanged, into messages/send.ts and exports it).
+// Evolution's messages.upsert echo can beat the gateway response; ingest then stored an author-less copy
+// with our external_id. Drop it so ours keeps the id (otherwise the update hits
+// messages_channel_external_unique), then mark ours sent — one transaction.
+async function markSent(
+  db: Db,
+  messageId: string,
+  channelId: string,
+  externalId: string,
+): Promise<{ row: typeof messages.$inferSelect; echoDropped: boolean }> {
+  return db.transaction(async (tx) => {
+    const gone = await tx
+      .delete(messages)
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          eq(messages.externalId, externalId),
+          isNull(messages.authorId),
+          ne(messages.id, messageId),
+        ),
+      )
+      .returning({ id: messages.id });
+    const [row] = await tx
+      .update(messages)
+      .set({ externalId, status: 'sent', error: null })
+      .where(eq(messages.id, messageId))
+      .returning();
+    return { row: row!, echoDropped: gone.length > 0 };
+  });
+}
+
 // System (bot) text: stored as an `out` message without author, signature or owner change.
-// Does not touch waiting/unread/triage_pending; the caller publishes chat.updated.
-// Returns true when the gateway accepted the message.
-async function sendSystemText(ctx: AppCtx, chat: ChatRow, text: string): Promise<boolean> {
+// Does not touch waiting/unread; the caller publishes chat.updated.
+// Returns { ok: gateway accepted it, echoDropped: an echo copy was removed (its ingest cleared triage_pending) }.
+async function sendSystemText(ctx: AppCtx, chat: ChatRow, text: string): Promise<{ ok: boolean; echoDropped: boolean }> {
   const [contact] = await ctx.db.select({ phone: contacts.phone }).from(contacts).where(eq(contacts.id, chat.contactId));
   const [channel] = await ctx.db
     .select({ instance: channels.evolutionInstance })
     .from(channels)
     .where(eq(channels.id, chat.channelId));
   // ponytail: contacts known only by LID get no automatic text; the gateway sends by phone.
-  if (!contact?.phone || !channel) return false;
+  if (!contact?.phone || !channel) return { ok: false, echoDropped: false };
 
   const now = new Date();
   const id = crypto.randomUUID();
@@ -9038,23 +9207,27 @@ async function sendSystemText(ctx: AppCtx, chat: ChatRow, text: string): Promise
       .update(chats)
       .set({
         lastMessageAt: sql`greatest(${chats.lastMessageAt}, ${now.toISOString()}::timestamptz)`,
-        lastMessagePreview: text.slice(0, 100),
+        lastMessagePreview: messagePreview('text', text),
       })
       .where(eq(chats.id, chat.id));
   });
   await ctx.hub.publishMessage(chat.id, 'message.created', id);
 
-  let ok = true;
+  let result: { externalId: string } | null = null;
+  let error = '';
   try {
-    const result = await ctx.wa.sendText(channel.instance, contact.phone, text);
-    await ctx.db.update(messages).set({ externalId: result.externalId, status: 'sent' }).where(eq(messages.id, id));
+    result = await ctx.wa.sendText(channel.instance, contact.phone, text);
   } catch (err) {
-    ok = false;
-    const error = err instanceof Error ? err.message : String(err);
+    error = err instanceof Error ? err.message : String(err);
+  }
+  let echoDropped = false;
+  if (result) {
+    ({ echoDropped } = await markSent(ctx.db, id, chat.channelId, result.externalId));
+  } else {
     await ctx.db.update(messages).set({ status: 'failed', error }).where(eq(messages.id, id));
   }
   await ctx.hub.publishMessage(chat.id, 'message.updated', id);
-  return ok;
+  return { ok: result !== null, echoDropped };
 }
 
 export async function startTriage(ctx: AppCtx, chat: ChatRow): Promise<void> {
@@ -9078,7 +9251,11 @@ export async function startTriage(ctx: AppCtx, chat: ChatRow): Promise<void> {
 
   const sent = await sendSystemText(ctx, chat, text);
   // The contact never saw the options, so do not interpret their next message as an answer.
-  if (!sent) await ctx.db.update(chats).set({ triagePending: false }).where(eq(chats.id, chat.id));
+  if (!sent.ok) await ctx.db.update(chats).set({ triagePending: false }).where(eq(chats.id, chat.id));
+  // The dropped echo's ingest (fromMe → out) had cleared triage_pending: re-arm the menu.
+  else if (sent.echoDropped) {
+    await ctx.db.update(chats).set({ triagePending: true }).where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
+  }
   await ctx.hub.publishChat(chat.id);
 }
 
@@ -9110,7 +9287,7 @@ export async function handleTriageReply(ctx: AppCtx, chat: ChatRow, text: string
 - [ ] **Step 9: Run the tests to verify they pass**
 
 Run: `npm test -w server -- test/triage/triage.test.ts`
-Expected: PASS (matching table, `getTriageMenu`, `startTriage` ×3, `handleTriageReply` ×7).
+Expected: PASS (matching table, `getTriageMenu`, `startTriage` ×4 including the echo case, `handleTriageReply` ×7).
 
 - [ ] **Step 10: Typecheck the server workspace**
 
@@ -9153,7 +9330,7 @@ This task covers the CRUD side of spec §3 items 5–6, plus the quick-answer va
 
 **Interfaces:**
 - Consumes:
-  - `AppCtx` (`db`, `hub`, `config.mediaDir`) from `server/src/ctx.ts`. `Db` comes from `server/src/db/client.ts`. `Tx` is defined locally as `type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]`.
+  - `AppCtx` (`db`, `hub`, `config.mediaDir`) from `server/src/ctx.ts`. `Db` and `Tx` come from `server/src/db/client.ts` (`import type { Db, Tx }`; never redeclare `Tx`).
   - Schema tables from `server/src/db/schema.ts` (Task 2, camelCase per spec §4): `users`, `sectors`, `userSectors`, `contacts`, `customFields`, `contactFieldValues`, `contactNotes`, `tags`, `contactTags`, `chats`, `quickAnswers`, `settings`.
   - `badRequest`, `forbidden`, `notFound`, `conflict` from `server/src/lib/http-error.ts`. The error handler in `buildApp` turns a `ZodError` into a 400 response.
   - **Task 6 (`auth/plugin.ts`)**: every authenticated `/api/*` request has `request.user: AuthUser` (a FastifyRequest augmentation). A request without a session gets 401 before the handler runs. A mutating request with a wrong `Origin` gets 403 before the handler runs.
@@ -10014,14 +10191,12 @@ Create `server/src/contacts/service.ts`:
 import { and, desc, eq, ilike, inArray, like, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { ChatListItem, ContactDto, ContactNoteDto } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
-import type { Db } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import { chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, tags, users } from '../db/schema.js';
 import { toChatListItem } from '../inbox/queries.js';
 import { visibleChatsWhere, type AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, notFound } from '../lib/http-error.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 type ContactRow = typeof contacts.$inferSelect;
 
 export interface ContactInput {
@@ -10543,12 +10718,10 @@ import type { UserDto } from '@talk/shared';
 import { hashPassword } from '../auth/password.js';
 import { deleteUserSessions } from '../auth/sessions.js';
 import type { AppCtx } from '../ctx.js';
-import type { Db } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import { sectors, userSectors, users } from '../db/schema.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 const IdParams = z.object({ id: z.uuid() });
 const fields = {
@@ -11241,7 +11414,7 @@ Every `/api/chats*` route from the REST table, plus `POST /api/messages/:id/rese
 - Modify (replace the whole file): `server/src/inbox/queries.ts`. Task 8 created it with `toChatListItem`; the signature does not change.
 - Create: `server/src/chats/routes.ts`
 - Modify: `server/src/app.ts` (register `chatRoutes`)
-- Modify: `server/package.json` (add `@fastify/multipart` if no earlier task added it)
+- No dependency changes: `@fastify/multipart` was installed in Task 1.
 - Create: `server/test/chats/seed.ts` (direct-insert helpers for chats, messages and events)
 - Test: `server/test/chats/list-and-timeline.test.ts`
 - Test: `server/test/chats/actions.test.ts`
@@ -11530,15 +11703,13 @@ import { and, asc, desc, eq, gte, ilike, inArray, isNull, like, lte, notInArray,
 import { z } from 'zod';
 import type { ChatDetail, ChatListFilters, ChatListItem, TimelineItem } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
-import type { Db } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import { chatEvents, chatPins, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
 import { badRequest } from '../lib/http-error.js';
 import { toMessageDto } from '../messages/dto.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
 import { getChatForUser, type ChatRow } from './chats.js';
 import { visibleChatsWhere, type AuthUser } from './visibility.js';
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -12077,10 +12248,12 @@ describe('POST /api/chats/:id/messages, notes and resend', () => {
 Run: `npm test -w server -- test/chats/actions.test.ts`
 Expected: FAIL. The action, start, messages, notes, pin and resend routes do not exist yet, so assertions report `expected 404 to be 200` (or `to be 204`). The "another sector is 404" test may pass by accident because the routes are missing; it guards against regressions after Step 12.
 
-- [ ] **Step 11: Install `@fastify/multipart`**
+- [ ] **Step 11: Check `@fastify/multipart` (no install)**
 
-Run: `npm install --save-exact -w server @fastify/multipart@10.1.3`
-Expected: `server/package.json` lists `"@fastify/multipart": "10.1.3"`. If an earlier task already added it, nothing changes.
+Task 1 installed it; do not run `npm install`.
+
+Run: `npm ls -w server @fastify/multipart`
+Expected: `@fastify/multipart@10.1.3`.
 
 - [ ] **Step 12: Write the final `server/src/chats/routes.ts` (replace the whole file)**
 
@@ -12259,7 +12432,7 @@ Expected: PASS. The realtime tests from Task 8 still pass with the new `toChatLi
 - [ ] **Step 15: Commit**
 
 ```bash
-git add server/src/chats/routes.ts server/package.json package-lock.json server/test/chats/actions.test.ts
+git add server/src/chats/routes.ts server/test/chats/actions.test.ts
 git commit -m "feat(chats): chat actions, start chat, send text/file, notes and resend routes
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -12271,11 +12444,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 14: Channels service, routes and startup sync
 
 **Files:**
-- Create (or replace, if Task 9 already created it with only `setChannelStatus` / `getChannelByInstance`): `server/src/channels/service.ts`
+- Replace (Task 9 created it with `getChannelByInstance`, `setChannelStatus`, `setChannelQr`, `getChannelQr`; the full file below keeps those four unchanged): `server/src/channels/service.ts`
 - Create: `server/src/channels/routes.ts`
 - Replace (Task 9 created it): `server/src/webhooks/routes.ts`
 - Modify: `server/src/app.ts` (register `registerChannelRoutes` inside `buildApp`; add the SPA static serving + JSON 404 as the last block. Task 9's `registerWebhookRoutes` import and call stay untouched)
-- Modify: `server/src/messages/ingest.ts` (import `setChannelStatus` / `getChannelByInstance` from `channels/service.ts`, drop any local copy, so there is ONE implementation)
+- Unchanged: `server/src/messages/ingest.ts` (Task 9 already imports `getChannelByInstance`, `setChannelStatus` and `setChannelQr` from `channels/service.ts`; nothing to edit)
 - Create: `server/src/index.ts` (production entry; Task 1 left it to a later task)
 - Test: `server/test/channels/service.test.ts`
 - Test: `server/test/channels/routes.test.ts`
@@ -12305,9 +12478,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     export async function createChannel(ctx: AppCtx, name: string): Promise<ChannelDto>;
     export async function connectChannel(ctx: AppCtx, channelId: string): Promise<{ qrBase64: string | null }>;
     export async function syncChannelStatuses(ctx: AppCtx): Promise<void>;
-    export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus): Promise<void>; // publishes channel.status only when the stored value changes
+    export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus, phone: string | null = null): Promise<void>; // non-null phone → channels.phone; publishes only when status/phone change; 'connected' clears the QR
+    export function setChannelQr(ctx: AppCtx, instance: string, qrBase64: string | null): void;
+    export function getChannelQr(ctx: AppCtx, instance: string): string | null;
+    export async function getChannelQrById(ctx: AppCtx, channelId: string): Promise<{ qrBase64: string | null }>; // 404 unknown id; null once connected
     ```
-  - `server/src/channels/routes.ts`: `export function registerChannelRoutes(app: FastifyInstance, ctx: AppCtx): void` — `GET /api/channels` (user) → `ChannelDto[]`; `POST /api/channels` `{name}` (admin) → `ChannelDto`; `POST /api/channels/:id/connect` (admin) → `{ qrBase64: string | null }`.
+    `connectChannel` also stores the QR it gets back with `setChannelQr`, so `GET /api/channels/:id/qr` returns it before the first `qrcode.updated` arrives.
+  - `server/src/channels/routes.ts`: `export function registerChannelRoutes(app: FastifyInstance, ctx: AppCtx): void` — `GET /api/channels` (user) → `ChannelDto[]`; `POST /api/channels` `{name}` (admin) → `ChannelDto`; `POST /api/channels/:id/connect` (admin) → `{ qrBase64: string | null }`; `GET /api/channels/:id/qr` (admin) → `{ qrBase64: string | null }` (the latest `qrcode.updated` image stored by ingest, spec §5.6; Task 19 polls it every 5 s while the channel is not connected).
   - `server/src/app.ts` (`buildApp`, last block): when `config.webDistDir` holds an `index.html`, `@fastify/static` serves the build and any other `GET` outside `/api/`, `/ws` and `/webhooks/` falls back to `index.html` (client-side routes); everything else that matches no route → 404 `{ error: 'Não encontrado' }`.
   - `server/src/webhooks/routes.ts` (same signature as Task 9, body replaced): `export function registerWebhookRoutes(app: FastifyInstance, ctx: AppCtx): void` — `POST /webhooks/evolution/:secret`. Status codes: wrong secret → 401 (Evolution does not retry 4xx); unparseable/unknown payload → 200 + log line with only the event name; `handleInbound` failure (DB down) → 500 so Evolution retries (safe: ingest is idempotent on `(channel_id, external_id)`); success → 200 `{ ok: true }`.
   - `server/src/index.ts`: production entry (no exports).
@@ -12326,6 +12503,9 @@ import {
   connectChannel,
   createChannel,
   getChannelByInstance,
+  getChannelQr,
+  getChannelQrById,
+  setChannelQr,
   setChannelStatus,
   syncChannelStatuses,
 } from '../../src/channels/service.js';
@@ -12383,6 +12563,8 @@ describe('connectChannel', () => {
 
     expect(await statusOf(seed.channelId)).toBe('connecting');
     expect(channelEvents(seed.channelId)).toBe(1);
+    // stored so GET /api/channels/:id/qr has it before the first qrcode.updated webhook
+    expect(getChannelQr(ctx, seed.instance)).toBe('data:image/png;base64,QRTESTE');
   });
 
   it('without a QR asks Evolution for the real state instead of guessing', async () => {
@@ -12415,6 +12597,27 @@ describe('setChannelStatus / syncChannelStatuses', () => {
     await setChannelStatus(ctx, 'talk-naoexiste', 'connected');
     expect(ctx.hub.events.filter((e) => e.channelId)).toHaveLength(0);
   });
+
+  it('setChannelStatus stores the phone and publishes when only the phone changes', async () => {
+    await setChannelStatus(ctx, seed.instance, 'connected', '5565988887777');
+    await setChannelStatus(ctx, seed.instance, 'connected', '5565911112222');
+    const [row] = await ctx.db.select().from(channels).where(eq(channels.id, seed.channelId));
+    expect(row!.phone).toBe('5565911112222');
+    expect(channelEvents(seed.channelId)).toBe(2);
+  });
+});
+
+describe('getChannelQrById', () => {
+  it('returns the latest stored QR while not connected, null once connected, 404 for an unknown id', async () => {
+    await ctx.db.update(channels).set({ status: 'connecting' }).where(eq(channels.id, seed.channelId));
+    setChannelQr(ctx, seed.instance, 'data:image/png;base64,NOVO');
+    await expect(getChannelQrById(ctx, seed.channelId)).resolves.toEqual({ qrBase64: 'data:image/png;base64,NOVO' });
+
+    await setChannelStatus(ctx, seed.instance, 'connected');
+    await expect(getChannelQrById(ctx, seed.channelId)).resolves.toEqual({ qrBase64: null });
+
+    await expect(getChannelQrById(ctx, crypto.randomUUID())).rejects.toMatchObject({ status: 404 });
+  });
 });
 ```
 
@@ -12425,11 +12628,11 @@ Expected: FAIL — `Failed to resolve import "../../src/channels/service.js"` (o
 
 - [ ] **Step 3: Write the service**
 
-Create (or fully replace) `server/src/channels/service.ts`:
+Fully replace `server/src/channels/service.ts` (Task 9's four functions are carried over unchanged):
 
 ```ts
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, ne } from 'drizzle-orm';
+import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
 import type { ChannelDto } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -12438,6 +12641,26 @@ import { notFound } from '../lib/http-error.js';
 import type { ChannelStatus } from '../whatsapp/types.js';
 
 type ChannelRow = typeof channels.$inferSelect;
+
+// ponytail: the latest QR per instance lives in memory (spec §5.6: shown from qrcode.updated), keyed by the
+// ctx's Db so every app/test ctx gets its own map (no state shared across ctxs). Lost on restart: the admin
+// clicks "Conectar" again. Move it to a table if several app processes ever run.
+const qrByDb = new WeakMap<Db, Map<string, string>>();
+
+/** Stores (or with null clears) the latest QR image of an instance. */
+export function setChannelQr(ctx: AppCtx, instance: string, qrBase64: string | null): void {
+  let byInstance = qrByDb.get(ctx.db);
+  if (!byInstance) {
+    byInstance = new Map();
+    qrByDb.set(ctx.db, byInstance);
+  }
+  if (qrBase64) byInstance.set(instance, qrBase64);
+  else byInstance.delete(instance);
+}
+
+export function getChannelQr(ctx: AppCtx, instance: string): string | null {
+  return qrByDb.get(ctx.db)?.get(instance) ?? null;
+}
 
 export function toChannelDto(row: ChannelRow): ChannelDto {
   return { id: row.id, name: row.name, status: row.status, phone: row.phone };
@@ -12474,20 +12697,38 @@ export async function connectChannel(ctx: AppCtx, channelId: string): Promise<{ 
   const [row] = await ctx.db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
   if (!row) throw notFound();
   const { qrBase64 } = await ctx.wa.connect(row.evolutionInstance);
+  // The first QR comes back here; later ones arrive as qrcode.updated webhooks (ingest → setChannelQr).
+  if (qrBase64) setChannelQr(ctx, row.evolutionInstance, qrBase64);
   // no QR means Evolution already holds an open session: ask instead of assuming "connecting"
   const status = qrBase64 ? 'connecting' : await ctx.wa.connectionState(row.evolutionInstance);
   await setChannelStatus(ctx, row.evolutionInstance, status);
   return { qrBase64 };
 }
 
-// Single implementation, also used by messages/ingest.ts for connection.update webhooks.
-export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus): Promise<void> {
-  const changed = await ctx.db
+/** GET /api/channels/:id/qr: the latest QR while the channel is not connected (spec §5.6). */
+export async function getChannelQrById(ctx: AppCtx, channelId: string): Promise<{ qrBase64: string | null }> {
+  const [row] = await ctx.db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
+  if (!row) throw notFound();
+  return { qrBase64: row.status === 'connected' ? null : getChannelQr(ctx, row.evolutionInstance) };
+}
+
+/**
+ * Single implementation, also used by messages/ingest.ts for connection.update webhooks.
+ * Updates channels.status (and channels.phone when a phone is given: connection.update `wuid`);
+ * publishes channel.status only when something actually changed. A null phone keeps the stored number.
+ * Unknown instance → no-op. Reaching 'connected' clears the stored QR.
+ */
+export async function setChannelStatus(ctx: AppCtx, instance: string, status: ChannelStatus, phone: string | null = null): Promise<void> {
+  const changed = phone
+    ? or(ne(channels.status, status), sql`${channels.phone} is distinct from ${phone}`)
+    : ne(channels.status, status);
+  const [row] = await ctx.db
     .update(channels)
-    .set({ status })
-    .where(and(eq(channels.evolutionInstance, instance), ne(channels.status, status)))
+    .set(phone ? { status, phone } : { status })
+    .where(and(eq(channels.evolutionInstance, instance), changed))
     .returning({ id: channels.id });
-  for (const { id } of changed) await ctx.hub.publishChannel(id);
+  if (status === 'connected') setChannelQr(ctx, instance, null);
+  if (row) await ctx.hub.publishChannel(row.id);
 }
 
 // ponytail: sequential, first Evolution failure aborts the rest; fine for one number, use Promise.allSettled when there are many channels
@@ -12499,28 +12740,20 @@ export async function syncChannelStatuses(ctx: AppCtx): Promise<void> {
 }
 ```
 
-- [ ] **Step 4: Make the service the only implementation**
+- [ ] **Step 4: Confirm the service is the only implementation (no edit expected)**
 
-Run: `grep -rn "function setChannelStatus\|function getChannelByInstance" server/src`
-Expected: exactly two lines, both in `server/src/channels/service.ts`.
-
-If another file is listed (Task 9 may have defined them inside `server/src/messages/ingest.ts`), delete that function body from that file and add to that file's imports:
-
-```ts
-import { getChannelByInstance, setChannelStatus } from '../channels/service.js';
-```
-
-(keep only the names that file actually uses). Re-run the grep until it shows only `server/src/channels/service.ts`.
+Run: `grep -rn "function setChannelStatus\|function getChannelByInstance\|function setChannelQr\|function getChannelQr" server/src`
+Expected: exactly five lines (`getChannelQr` also matches `getChannelQrById`), all in `server/src/channels/service.ts`. Task 9's `ingest.ts` already imports these from `../channels/service.js`, so it needs no change.
 
 - [ ] **Step 5: Run the service test and the ingest tests**
 
 Run: `npm test -w server -- test/channels/service.test.ts test/messages`
-Expected: PASS (all service tests green; Task 9 ingest tests still green after the import change).
+Expected: PASS (service 9 tests; Task 9 ingest tests still green on the replaced file).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/src/channels/service.ts server/src/messages/ingest.ts server/test/channels/service.test.ts
+git add server/src/channels/service.ts server/test/channels/service.test.ts
 git commit -m "feat(channels): channel service with create, connect, status sync
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -12532,7 +12765,10 @@ Create `server/test/channels/routes.test.ts`:
 
 ```ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
+import { channels } from '../../src/db/schema.js';
+import { handleInbound } from '../../src/messages/ingest.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
 type Ctx = Awaited<ReturnType<typeof makeTestCtx>>;
@@ -12609,6 +12845,23 @@ describe('channel routes', () => {
     const res = await app.inject({ method: 'POST', url: `/api/channels/${crypto.randomUUID()}/connect`, headers: admin.headers });
     expect(res.statusCode).toBe(404);
   });
+
+  it('GET /api/channels/:id/qr returns the latest qrcode.updated image for admins (§5.6)', async () => {
+    await ctx.db.update(channels).set({ status: 'connecting' }).where(eq(channels.id, seed.channelId));
+    await handleInbound(ctx, [{ type: 'qrcode', instance: seed.instance, qrBase64: 'data:image/png;base64,QRNOVO' }]);
+    const admin = await loginAs(app, seed.admin.email);
+
+    const res = await app.inject({ method: 'GET', url: `/api/channels/${seed.channelId}/qr`, headers: admin.headers });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ qrBase64: 'data:image/png;base64,QRNOVO' });
+  });
+
+  it('GET /api/channels/:id/qr is admin only', async () => {
+    const agent = await loginAs(app, seed.agentA.email);
+    const res = await app.inject({ method: 'GET', url: `/api/channels/${seed.channelId}/qr`, headers: agent.headers });
+    expect(res.statusCode).toBe(403);
+  });
 });
 ```
 
@@ -12628,7 +12881,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
 import { requireAdmin, requireUser } from '../auth/plugin.js';
-import { connectChannel, createChannel, listChannels } from './service.js';
+import { connectChannel, createChannel, getChannelQrById, listChannels } from './service.js';
 
 const createBody = z.object({ name: z.string().trim().min(1).max(60) });
 const idParams = z.object({ id: z.uuid() });
@@ -12650,6 +12903,13 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: AppCtx): void {
     const { id } = idParams.parse(request.params);
     return connectChannel(ctx, id);
   });
+
+  // §5.6: the QR shown to the admin comes from qrcode.updated (stored in memory by ingest); polled by the UI.
+  app.get('/api/channels/:id/qr', async (request) => {
+    await requireAdmin(request);
+    const { id } = idParams.parse(request.params);
+    return getChannelQrById(ctx, id);
+  });
 }
 ```
 
@@ -12668,13 +12928,13 @@ and, inside `buildApp`, right after the existing route registrations (the SPA bl
 - [ ] **Step 10: Run it to verify it passes**
 
 Run: `npm test -w server -- test/channels/routes.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 11: Commit**
 
 ```bash
 git add server/src/channels/routes.ts server/src/app.ts server/test/channels/routes.test.ts
-git commit -m "feat(channels): list, create and connect channel routes
+git commit -m "feat(channels): list, create, connect and QR channel routes
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -12755,12 +13015,13 @@ describe('POST /webhooks/evolution/:secret', () => {
     const res = await post(ctx.config.webhookSecret, {
       event: 'connection.update',
       instance: seed.instance,
-      data: { instance: seed.instance, state: 'open', statusReason: 200 },
+      data: { instance: seed.instance, state: 'open', statusReason: 200, wuid: '5565988887777@s.whatsapp.net' },
     });
 
     expect(res.statusCode).toBe(200);
     const [row] = await ctx.db.select().from(channels).where(eq(channels.id, seed.channelId));
     expect(row!.status).toBe('connected');
+    expect(row!.phone).toBe('5565988887777'); // wuid → channels.phone (spec §3.1)
     expect(ctx.hub.events).toContainEqual(expect.objectContaining({ channelId: seed.channelId }));
   });
 
@@ -13045,6 +13306,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create or replace (Task 1 may have left a stub): `web/package.json`, `web/tsconfig.json`
+- Create: `shared/src/palette.ts`; Modify: `shared/src/index.ts` (header comment + `TAG_COLORS`/`tagColorHex` re-export), `shared/package.json` (`exports` gains a runtime `default`)
 - Create: `web/vite.config.ts`, `web/index.html`
 - Create: `web/src/main.tsx`, `web/src/App.tsx`, `web/src/index.css`
 - Create: `web/src/lib/format.ts`, `web/src/lib/api.ts`, `web/src/lib/ws.ts`, `web/src/lib/auth.tsx`
@@ -13054,7 +13316,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes:
-  - `shared/src/index.ts` types (contract): `Me`, `ChatListFilters`, `ChatListItem`, `ChatDetail`, `TimelineItem`, `MessageDto`, `ChannelDto`, `ContactDto`, `ContactNoteDto`, `SectorDto`, `TagDto`, `CustomFieldDto`, `UserDto`, `QuickAnswerDto`, `SettingsDto`, `WsEvent`. The web imports them as `import type { … } from '@talk/shared'`. `web/tsconfig.json` maps that name to `../shared/src/index.ts` through `paths`, so the web does not depend on the npm name Task 1 gave the shared workspace. **Every import from `@talk/shared` must be `import type`.** Type imports are erased at build, so Vite never resolves the alias at runtime.
+  - `shared/src/index.ts` types (contract): `Me`, `ChatListFilters`, `ChatListItem`, `ChatDetail`, `TimelineItem`, `MessageDto`, `ChannelDto`, `ContactDto`, `ContactNoteDto`, `SectorDto`, `TagDto`, `CustomFieldDto`, `UserDto`, `QuickAnswerDto`, `SettingsDto`, `WsEvent`. The web imports them as `import type { … } from '@talk/shared'`. `web/tsconfig.json` maps that name to `../shared/src/index.ts` through `paths` for `tsc`. **Every import from `@talk/shared` must be `import type`, except `TAG_COLORS` and `tagColorHex`** (the only runtime exports, created by this task in `shared/src/palette.ts`). Vite resolves that one at runtime through the `@talk/shared` workspace dependency kept in `web/package.json` (`shared/package.json` `exports["."].default` → `./src/index.ts`, transpiled by Vite).
   - The REST table and `GET /ws` from the contract. Error bodies are `{ error }`, and a 500 is `{ error, correlationId }`. `@fastify/rate-limit` answers a 429 with its own body.
   - The server checks Origin (Task 6). In dev, Vite proxies `/api` and `/ws` to `http://localhost:3000` and keeps the browser's `Origin: http://localhost:5173`, so the dev `.env` needs `APP_ORIGIN=http://localhost:5173` (the same as `TEST_ORIGIN`).
 - Produces (later web tasks rely on these exact names):
@@ -13081,7 +13343,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     - `useLogin()`, `useLogout()`.
     - `RequireAuth({ children })`.
   - `web/src/lib/ws.ts`: `applyWsEvent(qc: QueryClient, event: WsEvent): void`, `connectWs(qc: QueryClient, url?: string): () => void`, `onWsEvent(fn: (ev: WsEvent) => void): () => void` (returns unsubscribe; called with every parsed event after the cache is updated) and `useWsEvent(fn: (ev: WsEvent) => void): void` (hook form of `onWsEvent`, always calls the latest `fn`).
-  - `web/src/lib/format.ts`: `relativeTime(iso: string, now?: Date): string`, `formatPhone(phone: string | null | undefined): string`, `initials(name: string | null | undefined): string`.
+  - `web/src/lib/format.ts`: `relativeTime(iso: string, now?: Date): string`, `formatPhone(phone: string | null | undefined): string`, `initials(name: string | null | undefined): string`. **`formatPhone` is the only phone formatter in the web** (`+55 65 99999-9999`, `+55 65 3222-1111`, `''` for null): Task 16's `contactLabel` and Task 18's contact screens import it; no task writes another one.
+  - `shared/src/palette.ts`: `TAG_COLORS` (Umbler's 20 tag colours `{ name, label, hex }`) and `tagColorHex(color: string): string`, re-exported from `shared/src/index.ts`. Task 18 and Task 19 (web) and Task 20 (importer) import them from `@talk/shared`; no task declares another palette.
   - `web/src/App.tsx`: `export const routes: RouteObject[]`.
     - The authenticated layout route is `path: '/'` with `children`. Tasks 16, 18 and 19 add `chats`, `contacts` and `configuracoes/:section?` to those `children`, before the `*` catch-all.
     - The channel banner links admins to `/configuracoes/canais`, which Task 19 must serve.
@@ -13094,9 +13357,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 `web/package.json`:
 
+The name stays `@talk/web` and the `@talk/shared` dependency stays (Vite needs it to load `TAG_COLORS` at runtime). Every version is exactly what Task 1 installed:
+
 ```json
 {
-  "name": "web",
+  "name": "@talk/web",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13107,6 +13373,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",
+    "@talk/shared": "*",
     "@tanstack/react-query": "5.104.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -13114,7 +13381,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
+    "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "jsdom": "30.1.2",
     "tailwindcss": "4.3.3",
@@ -13188,16 +13458,71 @@ export default defineConfig({
 </html>
 ```
 
-- [ ] **Step 2: Install dependencies**
+- [ ] **Step 2: Check the dependencies (no install) and add the shared tag palette**
 
-Run from the repo root:
+Task 1 installed every web dependency at the versions listed above; do not run `npm install`.
 
-```bash
-npm install
-npm install -w web --save-exact -D @types/react@19 @types/react-dom@19 @testing-library/dom@10
+Run: `npm ls -w web @types/react @types/react-dom @testing-library/dom @talk/shared`
+Expected: `@types/react@19.3.0`, `@types/react-dom@19.3.0`, `@testing-library/dom@10.4.2` and the linked `@talk/shared`, no `UNMET` lines.
+
+Create `shared/src/palette.ts` (the single tag palette: Task 18/19 render with `tagColorHex`, Task 19's form offers `TAG_COLORS`, Task 20's importer maps Umbler colour names to their `hex`; Task 19's `TagForm.test.tsx` covers both exports):
+
+```ts
+// The 20 colors of Umbler's tag palette (TagColor enum in utalk-openapi-v1.json), in Umbler's order.
+// `name` is the Umbler enum value, `label` is pt-BR, `hex` is lowercase #rrggbb. tags.color stores the hex.
+// This is the only runtime value in @talk/shared (no build step: tsx and Vite load this source directly).
+export const TAG_COLORS = [
+  { name: 'Blue', label: 'Azul', hex: '#2563eb' },
+  { name: 'Skyblue', label: 'Azul-céu', hex: '#0ea5e9' },
+  { name: 'Cyan', label: 'Ciano', hex: '#06b6d4' },
+  { name: 'Aquamarine', label: 'Água-marinha', hex: '#14b8a6' },
+  { name: 'Green', label: 'Verde', hex: '#16a34a' },
+  { name: 'Kiwi', label: 'Kiwi', hex: '#65a30d' },
+  { name: 'Gold', label: 'Dourado', hex: '#ca8a04' },
+  { name: 'Amber', label: 'Âmbar', hex: '#d97706' },
+  { name: 'Tangerine', label: 'Tangerina', hex: '#ea580c' },
+  { name: 'Chocolate', label: 'Chocolate', hex: '#92400e' },
+  { name: 'Salmon', label: 'Salmão', hex: '#f87171' },
+  { name: 'Tomato', label: 'Tomate', hex: '#ef4444' },
+  { name: 'Rose', label: 'Rosa', hex: '#e11d48' },
+  { name: 'Pink', label: 'Rosa-claro', hex: '#ec4899' },
+  { name: 'Magenta', label: 'Magenta', hex: '#c026d3' },
+  { name: 'Violet', label: 'Violeta', hex: '#8b5cf6' },
+  { name: 'Grape', label: 'Uva', hex: '#6d28d9' },
+  { name: 'Gray', label: 'Cinza', hex: '#6b7280' },
+  { name: 'Silver', label: 'Prata', hex: '#94a3b8' },
+  { name: 'Umblerito', label: 'Azul-marinho', hex: '#1e3a8a' },
+] as const;
+
+const GRAY = '#6b7280';
+
+/** Renders a stored tag color: a hex as-is (lowercased), an Umbler colour name via TAG_COLORS, anything else gray. */
+export function tagColorHex(color: string): string {
+  const byName = TAG_COLORS.find((c) => c.name.toLowerCase() === color.toLowerCase());
+  if (byName) return byName.hex;
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : GRAY;
+}
 ```
 
-Expected: both commands exit 0. `web/package.json` now also lists `@types/react`, `@types/react-dom` and `@testing-library/dom` with exact versions. `@testing-library/dom` is a required peer of `@testing-library/react` 16, and the `@types/*` packages are needed by `tsc`. The contract does not pin any of the three, so the second command pins whatever is current.
+In `shared/src/index.ts`, replace the two header comment lines (Task 1) with:
+
+```ts
+// DTOs and WebSocket event types shared by server and web, plus the tag palette (palette.ts), the only
+// runtime code. There is no build step: tsx (server) and Vite (web) load this TypeScript source directly.
+// Use `import type` for everything except TAG_COLORS and tagColorHex.
+export { TAG_COLORS, tagColorHex } from './palette.js';
+```
+
+In `shared/package.json`, replace the `"exports"` block with (the `default` condition lets tsx and Vite load the source at runtime):
+
+```json
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./src/index.ts" }
+  },
+```
+
+Run: `npm run typecheck -w shared`
+Expected: exits 0 with no output from `tsc`.
 
 - [ ] **Step 3: Write the failing test for `format.ts`**
 
@@ -14487,7 +14812,7 @@ createRoot(document.getElementById('root')!).render(
 Run: `npm run build -w web`
 Expected: `tsc --noEmit` reports no errors, and `vite build` ends with `✓ built in …`, writing `web/dist/index.html` and `web/dist/assets/*`. The layout and entry point are presentational and are verified by this step, not by unit tests.
 
-If `tsc` reports `popover`/`popoverTarget` as unknown props, the installed `@types/react` is older than 19.1. Re-run `npm install -w web --save-exact -D @types/react@19 @types/react-dom@19`.
+`@types/react@19.3.0` (Task 1) already types `popover`/`popoverTarget`; if `tsc` reports them as unknown, check `npm ls -w web @types/react` shows 19.3.0 instead of reinstalling anything.
 
 - [ ] **Step 22: Run the whole web suite**
 
@@ -14510,7 +14835,8 @@ Expected:
 - [ ] **Step 24: Commit**
 
 ```bash
-git add package-lock.json web/package.json web/tsconfig.json web/vite.config.ts web/index.html \
+git add web/package.json web/tsconfig.json web/vite.config.ts web/index.html \
+  shared/src/palette.ts shared/src/index.ts shared/package.json \
   web/src/main.tsx web/src/App.tsx web/src/index.css \
   web/src/lib/format.ts web/src/lib/format.test.ts web/src/lib/api.ts web/src/lib/api.test.ts \
   web/src/lib/ws.ts web/src/lib/ws.test.ts web/src/lib/auth.tsx \
@@ -14558,7 +14884,8 @@ Left column of `/chats` mirroring Umbler (MAPA §3): tabs **Entrada / Esperando 
   - `QueryClientProvider` mounted in `main.tsx`.
   - The web workspace has `"test": "vitest run"` and `"build"` scripts, plus `@testing-library/react` and `jsdom` installed.
 - Produces:
-  - `web/src/lib/format.ts`: `contactLabel(c: { name: string | null; phone: string | null }): string`, `listTime(iso: string, now?: Date): string` (list "horário": HH:MM today, "Ontem", dd/mm, dd/mm/yy).
+  - `web/src/lib/format.ts`: `contactLabel(c: { name: string | null; phone: string | null }): string` (name, else `formatPhone(phone)`, else `'Sem nome'`), `listTime(iso: string, now?: Date): string` (list "horário": HH:MM today, "Ontem", dd/mm, dd/mm/yy).
+  - Styling: only Task 15's dark theme tokens (`bg-surface`, `bg-panel`, `bg-sidebar-hover`, `border-border`, `text-fg`, `text-muted`, `bg-primary`/`text-primary`, `bg-danger`/`text-danger`, `bg-success`), never `bg-white`, `gray-*`, `zinc-*`, `slate-*` or `emerald-*` literals.
   - `web/src/components/inbox/chat-query.ts`: `type Period = 'any' | 'today' | '7d' | '30d' | 'range'`, `interface InboxFilters { sectorId: string; ownerId: string; tagId: string; period: Period; rangeFrom: string; rangeTo: string }`, `EMPTY_FILTERS`, `NO_OWNER = 'none'`, `PAGE_SIZE = 50`, `buildChatQuery(tab: ChatTab, q: string, f: InboxFilters, now?: Date): ChatListFilters` (no `cursor`; the infinite query adds it per page).
   - `web/src/components/inbox/ChatListItem.tsx`: `ChatListItem(props: { chat: ChatListItem; sectorName: string | null; ownerName: string | null; active: boolean; onOpen(): void; onTogglePin(): void })`.
   - `web/src/components/inbox/NewChatDialog.tsx`: `NewChatDialog(props: { sectors: SectorDto[]; onClose(): void })`. Task 17 and Task 18 call `api.chats.start({ contactId })` directly and do not need it.
@@ -14567,13 +14894,12 @@ Left column of `/chats` mirroring Umbler (MAPA §3): tabs **Entrada / Esperando 
   - Routes: `/chats` (index: "Selecione uma conversa") and `/chats/:id` (placeholder element that Task 17 replaces).
   - `web/src/lib/notify.tsx`: `useMessageNotifications(): void`, `NotificationPermissionButton()`.
 
-- [ ] **Step 1: Make sure the DOM testing peer is installed**
+- [ ] **Step 1: Check the DOM testing peer (no install)**
 
-`@testing-library/react@16` needs `@testing-library/dom` as a peer.
+`@testing-library/react@16` needs `@testing-library/dom` as a peer; Task 1 installed it. Do not run `npm install`.
 
 Run: `npm ls -w web @testing-library/dom`
-If it prints `(empty)`, run: `npm install -w web -D --save-exact @testing-library/dom@10.4.0`
-Expected: `npm ls -w web @testing-library/dom` lists `@testing-library/dom@10.4.0` (or the version Task 15 already installed).
+Expected: `@testing-library/dom@10.4.2`.
 
 - [ ] **Step 2: Write the failing test for the display helpers**
 
@@ -14586,9 +14912,9 @@ describe('contactLabel', () => {
   it('prefers the trimmed name', () => {
     expect(contactLabel({ name: '  Ana  ', phone: '5565999990000' })).toBe('Ana');
   });
-  it('formats canonical mobile and landline phones', () => {
-    expect(contactLabel({ name: null, phone: '5565999990000' })).toBe('(65) 99999-0000');
-    expect(contactLabel({ name: '', phone: '556532221111' })).toBe('(65) 3222-1111');
+  it('formats canonical mobile and landline phones with the shared formatPhone', () => {
+    expect(contactLabel({ name: null, phone: '5565999990000' })).toBe('+55 65 99999-0000');
+    expect(contactLabel({ name: '', phone: '556532221111' })).toBe('+55 65 3222-1111');
   });
   it('handles missing data', () => {
     expect(contactLabel({ name: null, phone: '123' })).toBe('123');
@@ -14620,14 +14946,11 @@ Expected: FAIL. `contactLabel` and `listTime` are not exported by `./format`.
 
 Add at the end of the file and keep Task 15's existing exports (`relativeTime`, `formatPhone`, `initials`) unchanged. Do not redeclare them: Task 15's `relativeTime` ("há 5 minutos") stays for other screens, and the list uses `listTime` for the Umbler "horário" column.
 ```ts
-/** Contact display name: name, else canonical phone formatted as (DD) 99999-9999 / (DD) 3222-1111. */
+/** Contact display name: name, else the phone through Task 15's formatPhone (the only phone formatter). */
 export function contactLabel(c: { name: string | null; phone: string | null }): string {
   const name = c.name?.trim();
   if (name) return name;
-  const phone = c.phone ?? '';
-  const m = /^55(\d{2})(\d{4,5})(\d{4})$/.exec(phone);
-  if (m) return `(${m[1]}) ${m[2]}-${m[3]}`;
-  return phone || 'Sem nome';
+  return formatPhone(c.phone) || 'Sem nome';
 }
 
 /** Chat list time: HH:MM today, "Ontem", dd/mm this year, dd/mm/yy older. */
@@ -14769,7 +15092,7 @@ Expected: PASS (5 tests).
 - [ ] **Step 10: Commit**
 
 ```bash
-git add web/package.json package-lock.json web/src/lib/format.ts web/src/lib/format-inbox.test.ts web/src/components/inbox/chat-query.ts web/src/components/inbox/chat-query.test.ts
+git add web/src/lib/format.ts web/src/lib/format-inbox.test.ts web/src/components/inbox/chat-query.ts web/src/components/inbox/chat-query.test.ts
 git commit -m "feat(web): chat list query mapping and display helpers
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -14940,7 +15263,7 @@ export function NewChatDialog({ sectors, onClose }: Props) {
     if (e.key === 'Escape') onClose();
   }
 
-  const input = 'mt-1 w-full rounded bg-zinc-800 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-600';
+  const input = 'mt-1 w-full rounded bg-surface px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
@@ -14951,19 +15274,19 @@ export function NewChatDialog({ sectors, onClose }: Props) {
         onSubmit={submit}
         onKeyDown={onKeyDown}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md space-y-3 rounded-lg bg-zinc-900 p-4 text-zinc-100 shadow-xl"
+        className="w-full max-w-md space-y-3 rounded-lg bg-panel p-4 text-fg shadow-xl"
       >
         <h2 id={ids.title} className="text-lg font-semibold">Nova conversa</h2>
 
         {contact ? (
-          <div className="flex items-center gap-2 rounded bg-zinc-800 px-3 py-2 text-sm">
+          <div className="flex items-center gap-2 rounded bg-surface px-3 py-2 text-sm">
             <span className="flex-1 truncate">{contactLabel(contact)}</span>
-            <button type="button" onClick={() => setContact(null)} className="text-emerald-400 underline">Trocar</button>
+            <button type="button" onClick={() => setContact(null)} className="text-primary underline">Trocar</button>
           </div>
         ) : (
           <>
             <div>
-              <label htmlFor={ids.text} className="text-sm text-zinc-300">Contato ou telefone</label>
+              <label htmlFor={ids.text} className="text-sm text-muted">Contato ou telefone</label>
               <input
                 id={ids.text}
                 autoFocus
@@ -14974,13 +15297,13 @@ export function NewChatDialog({ sectors, onClose }: Props) {
               />
             </div>
             {results.data && results.data.items.length > 0 && (
-              <ul className="max-h-48 overflow-y-auto rounded border border-zinc-800">
+              <ul className="max-h-48 overflow-y-auto rounded border border-border">
                 {results.data.items.map((c) => (
                   <li key={c.id}>
                     <button
                       type="button"
                       onClick={() => setContact(c)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-zinc-800"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-surface"
                     >
                       {contactLabel(c)}
                       {c.name && c.phone ? ` · ${contactLabel({ name: null, phone: c.phone })}` : ''}
@@ -14990,14 +15313,14 @@ export function NewChatDialog({ sectors, onClose }: Props) {
               </ul>
             )}
             <div>
-              <label htmlFor={ids.name} className="text-sm text-zinc-300">Nome (opcional)</label>
+              <label htmlFor={ids.name} className="text-sm text-muted">Nome (opcional)</label>
               <input id={ids.name} value={name} onChange={(e) => setName(e.target.value)} className={input} />
             </div>
           </>
         )}
 
         <div>
-          <label htmlFor={ids.sector} className="text-sm text-zinc-300">Setor</label>
+          <label htmlFor={ids.sector} className="text-sm text-muted">Setor</label>
           <select id={ids.sector} value={sectorId} onChange={(e) => setSectorId(e.target.value)} className={input}>
             <option value="">Setor padrão</option>
             {sectors.map((s) => (
@@ -15006,14 +15329,14 @@ export function NewChatDialog({ sectors, onClose }: Props) {
           </select>
         </div>
 
-        {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="rounded px-3 py-2 text-sm hover:bg-zinc-800">Cancelar</button>
+          <button type="button" onClick={onClose} className="rounded px-3 py-2 text-sm hover:bg-surface">Cancelar</button>
           <button
             type="submit"
             disabled={start.isPending}
-            className="rounded bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+            className="rounded bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
           >
             Iniciar conversa
           </button>
@@ -15113,7 +15436,7 @@ function renderInbox() {
 it('renders chat items with preview, unread, owner, sector, lock and pin', async () => {
   renderInbox();
   expect(await screen.findByText('Ana Souza')).toBeTruthy();
-  expect(screen.getByText('(65) 99999-0000')).toBeTruthy();
+  expect(screen.getByText('+55 65 99999-0000')).toBeTruthy();
   expect(screen.getByText('Bom dia')).toBeTruthy();
   expect(screen.getByLabelText('Não lidas: 3')).toBeTruthy();
   expect(screen.getByLabelText('Conversa privada')).toBeTruthy();
@@ -15175,14 +15498,14 @@ interface Props {
 export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTogglePin }: Props) {
   const title = contactLabel(chat.contact);
   return (
-    <li className={`flex items-stretch border-b border-zinc-800 ${active ? 'bg-zinc-800' : 'hover:bg-zinc-900'}`}>
+    <li className={`flex items-stretch border-b border-border ${active ? 'bg-sidebar-active' : 'hover:bg-panel'}`}>
       <button
         type="button"
         onClick={onOpen}
         aria-current={active ? 'true' : undefined}
         className="flex min-w-0 flex-1 gap-3 px-3 py-2 text-left"
       >
-        <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-zinc-700 text-sm font-semibold">
+        <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-sidebar-active text-sm font-semibold">
           {/* ponytail: Task 15's initials; phone-only contacts show '?' */}
           {initials(chat.contact.name)}
         </span>
@@ -15190,28 +15513,28 @@ export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTo
           <span className="flex items-center gap-1">
             <span className="truncate font-medium">{title}</span>
             {chat.private && <LockSimple aria-label="Conversa privada" className="shrink-0 text-amber-400" />}
-            {chat.pinned && <PushPin aria-label="Fixada" weight="fill" className="shrink-0 text-zinc-400" />}
-            <span className="ml-auto shrink-0 text-xs text-zinc-500">
+            {chat.pinned && <PushPin aria-label="Fixada" weight="fill" className="shrink-0 text-muted" />}
+            <span className="ml-auto shrink-0 text-xs text-muted">
               {chat.lastMessageAt ? listTime(chat.lastMessageAt) : ''}
             </span>
           </span>
           <span className="flex items-center gap-2">
-            <span className="truncate text-sm text-zinc-400">{chat.lastMessagePreview ?? ''}</span>
+            <span className="truncate text-sm text-muted">{chat.lastMessagePreview ?? ''}</span>
             {chat.unread > 0 && (
               <span
                 aria-label={`Não lidas: ${chat.unread}`}
-                className="ml-auto shrink-0 rounded-full bg-emerald-600 px-1.5 text-xs font-semibold text-white"
+                className="ml-auto shrink-0 rounded-full bg-primary px-1.5 text-xs font-semibold text-white"
               >
                 {chat.unread}
               </span>
             )}
           </span>
           <span className="mt-1 flex items-center gap-1">
-            {sectorName && <span className="rounded bg-zinc-800 px-1.5 text-xs text-zinc-300">{sectorName}</span>}
+            {sectorName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{sectorName}</span>}
             {ownerName && (
               <span
                 title={ownerName}
-                className="grid size-5 place-items-center rounded-full bg-sky-700 text-[10px] font-semibold text-white"
+                className="grid size-5 place-items-center rounded-full bg-primary text-[10px] font-semibold text-white"
               >
                 {initials(ownerName)}
               </span>
@@ -15220,17 +15543,17 @@ export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTo
         </span>
       </button>
       <details className="relative">
-        <summary aria-label="Opções da conversa" className="cursor-pointer list-none px-1 py-3 text-zinc-400 hover:text-zinc-100">
+        <summary aria-label="Opções da conversa" className="cursor-pointer list-none px-1 py-3 text-muted hover:text-fg">
           <DotsThreeVertical size={18} />
         </summary>
-        <div className="absolute right-1 z-10 mt-1 rounded bg-zinc-800 py-1 shadow-lg">
+        <div className="absolute right-1 z-10 mt-1 rounded border border-border bg-panel py-1 shadow-lg">
           <button
             type="button"
             onClick={(e) => {
               e.currentTarget.closest('details')?.removeAttribute('open');
               onTogglePin();
             }}
-            className="block w-full whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-zinc-700"
+            className="block w-full whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-sidebar-hover"
           >
             {chat.pinned ? 'Desafixar' : 'Fixar'}
           </button>
@@ -15268,12 +15591,12 @@ interface Props {
 export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
   const ids = { sector: useId(), owner: useId(), tag: useId(), from: useId(), to: useId() };
   const set = (patch: Partial<InboxFilters>) => onChange({ ...value, ...patch });
-  const field = 'mt-1 w-full rounded bg-zinc-800 px-2 py-1.5 text-sm outline-none';
+  const field = 'mt-1 w-full rounded bg-panel px-2 py-1.5 text-sm outline-none';
 
   return (
-    <div className="space-y-2 border-b border-zinc-800 p-3 text-sm">
+    <div className="space-y-2 border-b border-border p-3 text-sm">
       <div>
-        <label htmlFor={ids.sector} className="text-zinc-400">Setor</label>
+        <label htmlFor={ids.sector} className="text-muted">Setor</label>
         <select id={ids.sector} value={value.sectorId} onChange={(e) => set({ sectorId: e.target.value })} className={field}>
           <option value="">Todos</option>
           {sectors.map((s) => (
@@ -15282,7 +15605,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
         </select>
       </div>
       <div>
-        <label htmlFor={ids.owner} className="text-zinc-400">Atendente</label>
+        <label htmlFor={ids.owner} className="text-muted">Atendente</label>
         <select id={ids.owner} value={value.ownerId} onChange={(e) => set({ ownerId: e.target.value })} className={field}>
           <option value="">Todos</option>
           <option value={NO_OWNER}>Sem dono</option>
@@ -15292,7 +15615,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
         </select>
       </div>
       <div>
-        <label htmlFor={ids.tag} className="text-zinc-400">Etiqueta</label>
+        <label htmlFor={ids.tag} className="text-muted">Etiqueta</label>
         <select id={ids.tag} value={value.tagId} onChange={(e) => set({ tagId: e.target.value })} className={field}>
           <option value="">Todas</option>
           {tags.map((t) => (
@@ -15301,7 +15624,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
         </select>
       </div>
       <fieldset>
-        <legend className="text-zinc-400">Período de criação</legend>
+        <legend className="text-muted">Período de criação</legend>
         <div className="mt-1 flex flex-wrap gap-1">
           {PERIODS.map(([p, label]) => (
             <button
@@ -15309,7 +15632,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
               type="button"
               aria-pressed={value.period === p}
               onClick={() => set({ period: p })}
-              className={`rounded px-2 py-1 ${value.period === p ? 'bg-emerald-700 text-white' : 'bg-zinc-800 hover:bg-zinc-700'}`}
+              className={`rounded px-2 py-1 ${value.period === p ? 'bg-primary text-white' : 'bg-panel hover:bg-sidebar-hover'}`}
             >
               {label}
             </button>
@@ -15318,17 +15641,17 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
         {value.period === 'range' && (
           <div className="mt-2 flex gap-2">
             <div className="flex-1">
-              <label htmlFor={ids.from} className="text-zinc-400">De</label>
+              <label htmlFor={ids.from} className="text-muted">De</label>
               <input id={ids.from} type="date" value={value.rangeFrom} onChange={(e) => set({ rangeFrom: e.target.value })} className={field} />
             </div>
             <div className="flex-1">
-              <label htmlFor={ids.to} className="text-zinc-400">Até</label>
+              <label htmlFor={ids.to} className="text-muted">Até</label>
               <input id={ids.to} type="date" value={value.rangeTo} onChange={(e) => set({ rangeTo: e.target.value })} className={field} />
             </div>
           </div>
         )}
       </fieldset>
-      <button type="button" onClick={() => onChange(EMPTY_FILTERS)} className="text-emerald-400 underline">
+      <button type="button" onClick={() => onChange(EMPTY_FILTERS)} className="text-primary underline">
         Limpar filtros
       </button>
     </div>
@@ -15432,7 +15755,7 @@ export function Inbox() {
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex w-96 shrink-0 flex-col border-r border-zinc-800">
+      <aside className="flex w-96 shrink-0 flex-col border-r border-border">
         <div className="flex items-center gap-2 px-3 pt-3">
           <h1 className="text-lg font-semibold">Conversas</h1>
           <button
@@ -15440,13 +15763,13 @@ export function Inbox() {
             aria-label="Nova conversa"
             title="Nova conversa"
             onClick={() => setShowNew(true)}
-            className="ml-auto rounded p-1.5 hover:bg-zinc-800"
+            className="ml-auto rounded p-1.5 hover:bg-sidebar-hover"
           >
             <Plus size={20} />
           </button>
         </div>
 
-        <div role="tablist" className="mt-2 flex border-b border-zinc-800">
+        <div role="tablist" className="mt-2 flex border-b border-border">
           {TABS.map(({ tab: t, label }) => (
             <button
               key={t}
@@ -15455,14 +15778,14 @@ export function Inbox() {
               aria-selected={tab === t}
               onClick={() => setTab(t)}
               className={`flex flex-1 items-center justify-center gap-1 py-2 text-sm ${
-                tab === t ? 'border-b-2 border-emerald-500 font-medium text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'
+                tab === t ? 'border-b-2 border-primary font-medium text-fg' : 'text-muted hover:text-fg'
               }`}
             >
               {label}
               {badges[t] > 0 && (
                 <span
                   aria-label={`Conversas não lidas: ${badges[t]}`}
-                  className="rounded-full bg-emerald-600 px-1.5 text-xs font-semibold text-white"
+                  className="rounded-full bg-primary px-1.5 text-xs font-semibold text-white"
                 >
                   {badges[t]}
                 </span>
@@ -15472,8 +15795,8 @@ export function Inbox() {
         </div>
 
         <div className="flex items-center gap-2 p-3">
-          <label className="flex flex-1 items-center gap-2 rounded bg-zinc-900 px-2">
-            <MagnifyingGlass aria-hidden="true" className="text-zinc-500" />
+          <label className="flex flex-1 items-center gap-2 rounded bg-panel px-2">
+            <MagnifyingGlass aria-hidden="true" className="text-muted" />
             <input
               type="search"
               aria-label="Buscar conversas"
@@ -15488,7 +15811,7 @@ export function Inbox() {
             aria-label="Filtrar conversas"
             aria-expanded={showFilters}
             onClick={() => setShowFilters((v) => !v)}
-            className={`relative rounded p-1.5 hover:bg-zinc-800 ${activeFilters ? 'text-emerald-400' : 'text-zinc-400'}`}
+            className={`relative rounded p-1.5 hover:bg-sidebar-hover ${activeFilters ? 'text-primary' : 'text-muted'}`}
           >
             <Funnel size={20} weight={activeFilters ? 'fill' : 'regular'} />
           </button>
@@ -15504,7 +15827,7 @@ export function Inbox() {
           />
         )}
         {pinError && (
-          <p role="alert" className="mx-3 mb-2 rounded bg-red-950 px-3 py-2 text-sm text-red-300">
+          <p role="alert" className="mx-3 mb-2 rounded bg-danger/15 px-3 py-2 text-sm text-danger">
             {pinError}
           </p>
         )}
@@ -15521,10 +15844,10 @@ export function Inbox() {
               onTogglePin={() => pin.mutate(c)}
             />
           ))}
-          {list.isPending && <li className="p-4 text-sm text-zinc-500">Carregando…</li>}
-          {list.isError && <li className="p-4 text-sm text-red-400">Não foi possível carregar as conversas.</li>}
-          {list.isSuccess && chats.length === 0 && <li className="p-4 text-sm text-zinc-500">Nenhuma conversa</li>}
-          {list.isFetchingNextPage && <li className="p-4 text-sm text-zinc-500">Carregando…</li>}
+          {list.isPending && <li className="p-4 text-sm text-muted">Carregando…</li>}
+          {list.isError && <li className="p-4 text-sm text-danger">Não foi possível carregar as conversas.</li>}
+          {list.isSuccess && chats.length === 0 && <li className="p-4 text-sm text-muted">Nenhuma conversa</li>}
+          {list.isFetchingNextPage && <li className="p-4 text-sm text-muted">Carregando…</li>}
         </ul>
       </aside>
 
@@ -15604,13 +15927,13 @@ export function NotificationPermissionButton() {
   const supported = typeof Notification !== 'undefined';
   const [permission, setPermission] = useState<NotificationPermission>(supported ? Notification.permission : 'denied');
   if (!supported) return null;
-  if (permission === 'granted') return <p className="px-3 py-2 text-sm text-zinc-400">Notificações ativadas</p>;
-  if (permission === 'denied') return <p className="px-3 py-2 text-sm text-zinc-400">Notificações bloqueadas no navegador</p>;
+  if (permission === 'granted') return <p className="px-3 py-2 text-sm text-muted">Notificações ativadas</p>;
+  if (permission === 'denied') return <p className="px-3 py-2 text-sm text-muted">Notificações bloqueadas no navegador</p>;
   return (
     <button
       type="button"
       onClick={async () => setPermission(await Notification.requestPermission())}
-      className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-800"
+      className="block w-full px-3 py-2 text-left text-sm hover:bg-sidebar-hover"
     >
       Ativar notificações
     </button>
@@ -15645,9 +15968,9 @@ In `routes`, inside the `children` of the `path: '/'` route, replace the comment
         path: 'chats',
         element: <Inbox />,
         children: [
-          { index: true, element: <p className="grid h-full place-items-center text-sm text-zinc-500">Selecione uma conversa</p> },
+          { index: true, element: <p className="grid h-full place-items-center text-sm text-muted">Selecione uma conversa</p> },
           // Task 17 replaces this element with the conversation view
-          { path: ':id', element: <p className="grid h-full place-items-center text-sm text-zinc-500">Carregando conversa…</p> },
+          { path: ':id', element: <p className="grid h-full place-items-center text-sm text-muted">Carregando conversa…</p> },
         ],
       },
       // Tasks 18 and 19 insert `contacts` and `configuracoes/:section?` here, above the catch-all.
@@ -17503,7 +17826,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 Mirrors Umbler's `/contacts` table, the **Contato** side drawer (tabs **Contato** / **Detalhes da conversa**) and the **Novo contato** page (spec §3 item 5, §5.3a; `docs/MAPA-UMBLER-TALK.md` §3 and §4). The contact panel is one component, used from the contact list and from the conversation page.
 
 **Files:**
-- Create: `web/src/components/contacts/phone.ts`: display formatting and the input mask for BR phones
+- Create: `web/src/components/contacts/phone.ts`: the input mask for BR phones (display formatting is Task 15's `formatPhone` in `web/src/lib/format.ts`; this task does not write another formatter)
 - Create: `web/src/components/contacts/ContactForm.tsx`: create/edit form; exports `Field`, `inputClass`, `ADDRESS_FIELDS`, `FIELD_INPUT_TYPE`
 - Create: `web/src/components/contacts/TagsEditor.tsx`
 - Create: `web/src/components/contacts/NotesList.tsx`
@@ -17522,16 +17845,19 @@ Mirrors Umbler's `/contacts` table, the **Contato** side drawer (tabs **Contato*
     - Types `ContactInput`, `ContactListQuery`, `Page<T>`.
     - Query keys `qk.contacts` (prefix), `qk.contactList(q)`, `qk.contact(id)`, `qk.contactChats(id)`, `qk.contactNotes(id)`, `qk.tags`, `qk.customFields`, `qk.sectors`, `qk.users`, `qk.channels`, `qk.chats` (prefix), `qk.chat(id)`.
     - Tests keep the real module (for `qk`) and replace only `api`: `vi.mock('../../lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../lib/api')>()), api: m }))`, with `m` built by `vi.hoisted`.
-  - Task 15, `web/src/App.tsx`: `export const routes: RouteObject[]`. The authenticated layout route is `path: '/'` with `children`, ending in the `*` catch-all. The sidebar links to `/contatos`.
-  - Task 16/17: the conversation route is `/conversas/:id`. `web/src/pages/Conversation.tsx` (default export `ConversationPage`) owns `contactPanelOpen`. The header's **Contato** button toggles it through `onToggleContactPanel`.
+  - Task 15, `web/src/App.tsx`: `export const routes: RouteObject[]`. The authenticated layout route is `path: '/'` with `children`, ending in the `*` catch-all. The sidebar (source of truth) links to `/contacts`.
+  - Task 15, `web/src/lib/format.ts`: `formatPhone(phone)` (`+55 65 99999-9999`, `''` for null; render `formatPhone(x) || '—'` where a dash is wanted).
+  - `@talk/shared` runtime export `tagColorHex(color)` (Task 15, `shared/src/palette.ts`) for tag chip colours.
+  - Task 16/17: the conversation route is `/chats/:id`. `web/src/pages/Conversation.tsx` (default export `ConversationPage`) owns `contactPanelOpen`. The header's **Contato** button toggles it through `onToggleContactPanel`.
   - `@talk/shared`: `ContactDto`, `ContactNoteDto`, `TagDto`, `CustomFieldDto`, `ChatListItem`, `ChatDetail`.
   - Task 12 REST: `GET/POST /api/contacts`, `GET/PATCH /api/contacts/:id`, `POST /api/contacts/:id/block {blocked}`, `PUT /api/contacts/:id/tags {tagIds}`, `PUT /api/contacts/:id/fields {[fieldId]: value}`, `GET /api/contacts/:id/chats`, `GET/POST /api/contacts/:id/notes`, `PATCH/DELETE /api/contacts/:id/notes/:noteId`, `GET /api/tags|custom-fields|sectors|users|channels`. Task 13: `POST /api/chats {contactId}`, `GET /api/chats/:id`.
 - Produces:
   - `ContactPanel(props: { contactId: string; chatId?: string; onClose: () => void }): JSX.Element`. With `chatId`, it also shows the **Detalhes da conversa** tab.
   - `Avatar(props: { name: string | null }): JSX.Element`
   - `ContactForm(props: { contact?: ContactDto; onSaved: (contact: ContactDto) => void; onCancel: () => void }): JSX.Element`
-  - `ContactsPage(): JSX.Element` at route `/contatos`, and `ContactNewPage(): JSX.Element` at route `/contatos/novo`
-  - `localDigits(raw: string): string`, `maskPhone(raw: string): string`, `formatPhone(phone: string | null): string`
+  - `ContactsPage(): JSX.Element` at route `/contacts`, and `ContactNewPage(): JSX.Element` at route `/contacts/new`
+  - `localDigits(raw: string): string`, `maskPhone(raw: string): string` (input mask only)
+  - Styling: only Task 15's dark theme tokens (`bg-surface`, `bg-panel`, `bg-sidebar-hover`, `border-border`, `divide-border`, `text-fg`, `text-muted`, `bg-primary`/`text-primary`, `bg-danger`/`text-danger`), never `bg-white`, `gray-*`, `slate-*`, `zinc-*` or `emerald-*` literals.
   - Cache behaviour: a saved contact is written to `qk.contact(id)` and every contact list is invalidated with `qk.contactList({})` (an empty filter object partially matches every list key). A tag change also invalidates `qk.chats`, because `ChatListItem.tagIds` comes from the contact's tags. The chat details tab and the conversation page read `qk.chat(id)`, the same entry Task 17 and the WS handler update.
 - Conventions this task fixes:
   - `ContactDto.address` uses Umbler's `AddressModel` keys: `addressLine1` (Endereço), `addressLine2` (Complemento), `city`, `state`, `zipCode` (CEP), `country` (País). The Task 20 importer can copy them as they are.
@@ -17543,7 +17869,7 @@ Mirrors Umbler's `/contacts` table, the **Contato** side drawer (tabs **Contato*
 `web/src/components/contacts/phone.test.ts`
 ```ts
 import { describe, expect, it } from 'vitest';
-import { formatPhone, localDigits, maskPhone } from './phone';
+import { localDigits, maskPhone } from './phone';
 
 describe('localDigits', () => {
   it('strips the 55 country code only from full numbers', () => {
@@ -17572,18 +17898,9 @@ describe('maskPhone', () => {
     expect(maskPhone('65999991')).toBe('(65) 9999-91');
   });
 });
-
-describe('formatPhone', () => {
-  it('formats canonical numbers for display', () => {
-    expect(formatPhone('5565999991234')).toBe('+55 (65) 99999-1234');
-    expect(formatPhone('556532221111')).toBe('+55 (65) 3222-1111');
-  });
-  it('handles missing and foreign numbers', () => {
-    expect(formatPhone(null)).toBe('—');
-    expect(formatPhone('14155550123')).toBe('+14155550123');
-  });
-});
 ```
+
+(Display formatting is not tested here: the contact screens use Task 15's `formatPhone` from `web/src/lib/format.ts`, already covered by `format.test.ts`.)
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -17594,7 +17911,8 @@ Expected: FAIL with `Failed to resolve import "./phone"`.
 
 `web/src/components/contacts/phone.ts`
 ```ts
-// ponytail: BR-only display/mask. The server's normalizePhoneBR is the source of truth for storage.
+// ponytail: BR-only input mask. The server's normalizePhoneBR is the source of truth for storage;
+// display formatting is web/src/lib/format.ts formatPhone (Task 15), the only phone formatter.
 
 /** Digits without the 55 country code, capped at 11 (DDD + 9 digits). */
 export function localDigits(raw: string): string {
@@ -17614,20 +17932,12 @@ export function maskPhone(raw: string): string {
   if (rest.length <= split) return `(${ddd}) ${rest}`;
   return `(${ddd}) ${rest.slice(0, split)}-${rest.slice(split)}`;
 }
-
-/** Display form of a stored phone ("5565999991234" -> "+55 (65) 99999-1234"). */
-export function formatPhone(phone: string | null): string {
-  if (!phone) return '—';
-  const d = phone.replace(/\D/g, '');
-  if (d.startsWith('55') && (d.length === 12 || d.length === 13)) return `+55 ${maskPhone(d)}`;
-  return `+${d}`;
-}
 ```
 
 - [ ] **Step 4: Run it to verify it passes**
 
 Run: `npm test -w web -- src/components/contacts/phone.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Write the failing contact-form test**
 
@@ -17751,12 +18061,12 @@ export const FIELD_INPUT_TYPE: Record<CustomFieldDto['kind'], string> = {
 };
 
 export const inputClass =
-  'w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none';
+  'w-full rounded-md border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none';
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block text-sm">
-      <span className="mb-1 block font-medium text-slate-700">{label}</span>
+      <span className="mb-1 block font-medium text-fg">{label}</span>
       {children}
     </label>
   );
@@ -17811,7 +18121,7 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
   return (
     <form onSubmit={submit} noValidate className="space-y-6">
       <fieldset className="space-y-3">
-        <legend className="mb-2 text-sm font-semibold text-slate-900">Informações básicas</legend>
+        <legend className="mb-2 text-sm font-semibold text-fg">Informações básicas</legend>
         <Field label="Nome">
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
@@ -17828,7 +18138,7 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
       </fieldset>
 
       <fieldset className="space-y-3">
-        <legend className="mb-2 text-sm font-semibold text-slate-900">Dados complementares</legend>
+        <legend className="mb-2 text-sm font-semibold text-fg">Dados complementares</legend>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Telefone fixo">
             <input
@@ -17856,7 +18166,7 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
 
       {!!customFields.data?.length && (
         <fieldset className="space-y-3">
-          <legend className="mb-2 text-sm font-semibold text-slate-900">Campos personalizados</legend>
+          <legend className="mb-2 text-sm font-semibold text-fg">Campos personalizados</legend>
           {customFields.data.map((f) => (
             <Field key={f.id} label={f.name}>
               <input
@@ -17870,16 +18180,16 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
         </fieldset>
       )}
 
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="rounded-md px-4 py-2 text-sm hover:bg-slate-100">
+        <button type="button" onClick={onCancel} className="rounded-md px-4 py-2 text-sm hover:bg-sidebar-hover">
           Cancelar
         </button>
         <button
           type="submit"
           disabled={saving}
-          className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
         >
           Salvar
         </button>
@@ -18055,7 +18365,7 @@ Expected: FAIL with `Failed to resolve import "./TagsEditor"` and `Failed to res
 `web/src/components/contacts/TagsEditor.tsx`
 ```tsx
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ContactDto } from '@talk/shared';
+import { tagColorHex, type ContactDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 
 // ponytail: every tag is a toggle chip; add a search popover if the office passes ~40 tags.
@@ -18076,11 +18386,12 @@ export function TagsEditor({ contact }: { contact: ContactDto }) {
     save.mutate(selected.has(id) ? contact.tagIds.filter((t) => t !== id) : [...contact.tagIds, id]);
   }
 
-  if (!tags.data?.length) return <p className="text-sm text-slate-500">Nenhuma etiqueta cadastrada.</p>;
+  if (!tags.data?.length) return <p className="text-sm text-muted">Nenhuma etiqueta cadastrada.</p>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {tags.data.map((t) => {
         const on = selected.has(t.id);
+        const color = tagColorHex(t.color); // the shared palette (Task 15), same as Task 19's form
         return (
           <button
             key={t.id}
@@ -18088,15 +18399,15 @@ export function TagsEditor({ contact }: { contact: ContactDto }) {
             aria-pressed={on}
             disabled={save.isPending}
             onClick={() => toggle(t.id)}
-            className="rounded-full border px-2.5 py-0.5 text-xs font-medium disabled:opacity-60"
-            style={on ? { backgroundColor: t.color, borderColor: t.color, color: '#fff' } : { borderColor: t.color, color: t.color }}
+            className="rounded-full border border-border px-2.5 py-0.5 text-xs font-medium disabled:opacity-60"
+            style={on ? { backgroundColor: color, borderColor: color, color: '#fff' } : { borderColor: color, color }}
           >
             {t.emoji ? `${t.emoji} ` : ''}
             {t.name}
           </button>
         );
       })}
-      {save.error && <p role="alert" className="w-full text-xs text-red-600">{save.error.message}</p>}
+      {save.error && <p role="alert" className="w-full text-xs text-danger">{save.error.message}</p>}
     </div>
   );
 }
@@ -18150,26 +18461,26 @@ export function NotesList({ contactId }: { contactId: string }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Escreva uma observação"
-          className="w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+          className="w-full resize-y rounded-md border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none"
         />
         <div className="flex justify-end">
           <button
             type="submit"
             disabled={!text.trim() || add.isPending}
-            className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
           >
             Adicionar
           </button>
         </div>
       </form>
       {(add.error || pin.error || remove.error) && (
-        <p role="alert" className="text-xs text-red-600">{(add.error ?? pin.error ?? remove.error)?.message}</p>
+        <p role="alert" className="text-xs text-danger">{(add.error ?? pin.error ?? remove.error)?.message}</p>
       )}
       <ul className="space-y-2">
         {sorted.map((n) => (
-          <li key={n.id} className={`rounded-md border p-3 text-sm ${n.pinned ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}>
+          <li key={n.id} className={`rounded-md border p-3 text-sm ${n.pinned ? 'border-primary bg-primary/10' : 'border-border'}`}>
             <p className="whitespace-pre-wrap break-words">{n.body}</p>
-            <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted">
               <span className="flex-1">
                 {n.authorName ?? 'Sistema'} · {new Date(n.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
               </span>
@@ -18178,7 +18489,7 @@ export function NotesList({ contactId }: { contactId: string }) {
                 aria-label={n.pinned ? 'Desafixar observação' : 'Fixar observação'}
                 aria-pressed={n.pinned}
                 onClick={() => pin.mutate(n)}
-                className="rounded p-1 hover:bg-slate-100"
+                className="rounded p-1 hover:bg-sidebar-hover"
               >
                 <PushPin size={14} weight={n.pinned ? 'fill' : 'regular'} />
               </button>
@@ -18186,7 +18497,7 @@ export function NotesList({ contactId }: { contactId: string }) {
                 type="button"
                 aria-label="Excluir observação"
                 onClick={() => window.confirm('Excluir esta observação?') && remove.mutate(n.id)}
-                className="rounded p-1 hover:bg-slate-100"
+                className="rounded p-1 hover:bg-sidebar-hover"
               >
                 <Trash size={14} />
               </button>
@@ -18215,7 +18526,7 @@ export function CustomFieldsEditor({ contact }: { contact: ContactDto }) {
     onSuccess: (dto) => qc.setQueryData(qk.contact(dto.id), dto),
   });
 
-  if (!defs.data?.length) return <p className="text-sm text-slate-500">Nenhum campo personalizado.</p>;
+  if (!defs.data?.length) return <p className="text-sm text-muted">Nenhum campo personalizado.</p>;
   return (
     <div className="space-y-3">
       {defs.data.map((f) => {
@@ -18235,7 +18546,7 @@ export function CustomFieldsEditor({ contact }: { contact: ContactDto }) {
           </Field>
         );
       })}
-      {save.error && <p role="alert" className="text-xs text-red-600">{save.error.message}</p>}
+      {save.error && <p role="alert" className="text-xs text-danger">{save.error.message}</p>}
     </div>
   );
 }
@@ -18269,7 +18580,7 @@ import { ADDRESS_FIELDS, ContactForm } from './ContactForm';
 import { CustomFieldsEditor } from './CustomFieldsEditor';
 import { NotesList } from './NotesList';
 import { TagsEditor } from './TagsEditor';
-import { formatPhone } from './phone';
+import { formatPhone } from '../../lib/format';
 
 const dateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
@@ -18278,7 +18589,7 @@ export function Avatar({ name }: { name: string | null }) {
   const initials =
     (name ?? '').trim().split(/\s+/).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || '?';
   return (
-    <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-semibold text-emerald-800">
+    <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
       {initials}
     </span>
   );
@@ -18287,7 +18598,7 @@ export function Avatar({ name }: { name: string | null }) {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h3>
       {children}
     </section>
   );
@@ -18298,7 +18609,7 @@ function Rows({ rows }: { rows: Array<[string, string]> }) {
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
       {rows.map(([k, v]) => (
         <Fragment key={k}>
-          <dt className="text-slate-500">{k}</dt>
+          <dt className="text-muted">{k}</dt>
           <dd className="break-words">{v}</dd>
         </Fragment>
       ))}
@@ -18313,7 +18624,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`border-b-2 px-3 py-3 text-sm font-medium ${active ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+      className={`border-b-2 px-3 py-3 text-sm font-medium ${active ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-fg'}`}
     >
       {children}
     </button>
@@ -18341,13 +18652,13 @@ export function ContactPanel({ contactId, chatId, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
       <div className="absolute inset-0 bg-black/30" aria-hidden onClick={onClose} />
-      <aside role="dialog" aria-modal="true" aria-label="Contato" className="relative flex h-full w-full max-w-md flex-col bg-white shadow-xl">
-        <header role="tablist" className="flex items-center border-b border-slate-200 px-2">
+      <aside role="dialog" aria-modal="true" aria-label="Contato" className="relative flex h-full w-full max-w-md flex-col bg-panel shadow-xl">
+        <header role="tablist" className="flex items-center border-b border-border px-2">
           <TabButton active={tab === 'contact'} onClick={() => setTab('contact')}>Contato</TabButton>
           {chatId && (
             <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>Detalhes da conversa</TabButton>
           )}
-          <button type="button" aria-label="Fechar" onClick={onClose} className="ml-auto rounded p-2 hover:bg-slate-100">
+          <button type="button" aria-label="Fechar" onClick={onClose} className="ml-auto rounded p-2 hover:bg-sidebar-hover">
             <X size={18} />
           </button>
         </header>
@@ -18357,7 +18668,7 @@ export function ContactPanel({ contactId, chatId, onClose }: Props) {
           ) : contact.data ? (
             <ContactTab contact={contact.data} onClose={onClose} />
           ) : (
-            <p className="text-sm text-slate-500">{contact.isError ? 'Contato não encontrado.' : 'Carregando…'}</p>
+            <p className="text-sm text-muted">{contact.isError ? 'Contato não encontrado.' : 'Carregando…'}</p>
           )}
         </div>
       </aside>
@@ -18381,7 +18692,7 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
     mutationFn: () => api.chats.start({ contactId: contact.id }),
     onSuccess: (chat) => {
       onClose();
-      navigate(`/conversas/${chat.id}`);
+      navigate(`/chats/${chat.id}`);
     },
   });
 
@@ -18414,10 +18725,10 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
         <Avatar name={contact.name} />
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold">{contact.name || formatPhone(contact.phone)}</p>
-          <p className="text-sm text-slate-500">{formatPhone(contact.phone)}</p>
-          {contact.blocked && <span className="text-xs font-medium text-red-600">Bloqueado</span>}
+          <p className="text-sm text-muted">{formatPhone(contact.phone)}</p>
+          {contact.blocked && <span className="text-xs font-medium text-danger">Bloqueado</span>}
         </div>
-        <button type="button" aria-label="Editar contato" onClick={() => setEditing(true)} className="rounded p-2 hover:bg-slate-100">
+        <button type="button" aria-label="Editar contato" onClick={() => setEditing(true)} className="rounded p-2 hover:bg-sidebar-hover">
           <PencilSimple size={18} />
         </button>
       </div>
@@ -18426,11 +18737,11 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
         type="button"
         disabled={contact.blocked || start.isPending}
         onClick={() => start.mutate()}
-        className="flex w-full items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
       >
         <ChatCircle size={16} /> Nova conversa
       </button>
-      {error && <p role="alert" className="text-sm text-red-600">{error.message}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error.message}</p>}
 
       <Section title="Etiquetas">
         <TagsEditor contact={contact} />
@@ -18443,8 +18754,8 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
       <Section title="Dados do contato">
         <Rows
           rows={[
-            ['Celular', formatPhone(contact.phone)],
-            ['Telefone fixo', formatPhone(contact.landline)],
+            ['Celular', formatPhone(contact.phone) || '—'],
+            ['Telefone fixo', formatPhone(contact.landline) || '—'],
             ['E-mail', contact.email ?? '—'],
             ['Endereço', address || '—'],
             ['LID', contact.lid ?? '—'],
@@ -18465,7 +18776,7 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
         type="button"
         onClick={toggleBlock}
         disabled={block.isPending}
-        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-danger hover:bg-danger/15 disabled:opacity-50"
       >
         <Prohibit size={16} /> {contact.blocked ? 'Desbloquear contato' : 'Bloquear contato'}
       </button>
@@ -18476,19 +18787,19 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
 function ContactChats({ contactId, onNavigate }: { contactId: string; onNavigate: () => void }) {
   const chats = useQuery({ queryKey: qk.contactChats(contactId), queryFn: () => api.contacts.chats(contactId) });
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: () => api.sectors.list() }).data ?? [];
-  if (!chats.data?.length) return <p className="text-sm text-slate-500">Nenhuma conversa visível.</p>;
+  if (!chats.data?.length) return <p className="text-sm text-muted">Nenhuma conversa visível.</p>;
   return (
-    <ul className="divide-y divide-slate-100">
+    <ul className="divide-y divide-border">
       {chats.data.map((c) => (
         <li key={c.id}>
-          <Link to={`/conversas/${c.id}`} onClick={onNavigate} className="block rounded px-1 py-2 hover:bg-slate-50">
+          <Link to={`/chats/${c.id}`} onClick={onNavigate} className="block rounded px-1 py-2 hover:bg-sidebar-hover">
             <div className="flex justify-between text-sm">
               <span className="font-medium">{sectors.find((s) => s.id === c.sectorId)?.name ?? '—'}</span>
-              <span className={c.state === 'open' ? 'text-emerald-700' : 'text-slate-500'}>
+              <span className={c.state === 'open' ? 'text-primary' : 'text-muted'}>
                 {c.state === 'open' ? 'Aberta' : 'Finalizada'}
               </span>
             </div>
-            <p className="truncate text-xs text-slate-500">
+            <p className="truncate text-xs text-muted">
               {dateTime(c.lastMessageAt)}
               {c.lastMessagePreview ? ` · ${c.lastMessagePreview}` : ''}
             </p>
@@ -18505,7 +18816,7 @@ function ChatDetailsTab({ chatId }: { chatId: string }) {
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: () => api.sectors.list() }).data ?? [];
   const users = useQuery({ queryKey: qk.users, queryFn: () => api.users.list() }).data ?? [];
   const channels = useQuery({ queryKey: qk.channels, queryFn: () => api.channels.list() }).data ?? [];
-  if (!chat.data) return <p className="text-sm text-slate-500">{chat.isError ? 'Conversa não encontrada.' : 'Carregando…'}</p>;
+  if (!chat.data) return <p className="text-sm text-muted">{chat.isError ? 'Conversa não encontrada.' : 'Carregando…'}</p>;
   const c = chat.data;
   const rows: Array<[string, string]> = [
     ['Canal', channels.find((x) => x.id === c.channelId)?.name ?? '—'],
@@ -18531,7 +18842,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import { api, qk } from '../lib/api';
 import { Avatar, ContactPanel } from '../components/contacts/ContactPanel';
-import { formatPhone } from '../components/contacts/phone';
+import { formatPhone } from '../lib/format';
 
 export function ContactsPage() {
   const navigate = useNavigate();
@@ -18555,8 +18866,8 @@ export function ContactsPage() {
         <h1 className="mr-auto text-xl font-semibold">Contatos</h1>
         <button
           type="button"
-          onClick={() => navigate('/contatos/novo')}
-          className="flex items-center gap-2 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          onClick={() => navigate('/contacts/new')}
+          className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
         >
           <Plus size={16} /> Adicionar contato
         </button>
@@ -18565,13 +18876,13 @@ export function ContactsPage() {
       <div className="mb-4 flex flex-wrap gap-3">
         <label className="relative min-w-60 flex-1">
           <span className="sr-only">Buscar por nome ou telefone</span>
-          <MagnifyingGlass size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-slate-400" />
+          <MagnifyingGlass size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-muted" />
           <input
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Buscar por nome ou telefone"
-            className="w-full rounded-md border border-slate-300 py-2 pr-3 pl-9 text-sm focus:border-emerald-600 focus:outline-none"
+            className="w-full rounded-md border border-border py-2 pr-3 pl-9 text-sm focus:border-primary focus:outline-none"
           />
         </label>
         <label>
@@ -18579,7 +18890,7 @@ export function ContactsPage() {
           <select
             value={tagId}
             onChange={(e) => setTagId(e.target.value)}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+            className="rounded-md border border-border px-3 py-2 text-sm"
           >
             <option value="">Todas as etiquetas</option>
             {tags.data?.map((t) => (
@@ -18592,9 +18903,9 @@ export function ContactsPage() {
         </label>
       </div>
 
-      <div className="flex-1 overflow-auto rounded-md border border-slate-200">
+      <div className="flex-1 overflow-auto rounded-md border border-border">
         <table className="w-full min-w-[640px] text-left text-sm">
-          <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
+          <thead className="sticky top-0 bg-panel text-xs uppercase text-muted">
             <tr>
               <th className="px-4 py-2 font-medium">Contato</th>
               <th className="px-4 py-2 font-medium">Telefone</th>
@@ -18602,17 +18913,17 @@ export function ContactsPage() {
               <th className="px-4 py-2 font-medium">Criado em</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-border">
             {contacts.map((c) => (
-              <tr key={c.id} onClick={() => setOpenId(c.id)} className="cursor-pointer hover:bg-slate-50">
+              <tr key={c.id} onClick={() => setOpenId(c.id)} className="cursor-pointer hover:bg-sidebar-hover">
                 <td className="px-4 py-2">
                   <button type="button" className="flex items-center gap-3 text-left" onClick={() => setOpenId(c.id)}>
                     <Avatar name={c.name} />
                     <span className="font-medium">{c.name || 'Sem nome'}</span>
-                    {c.blocked && <span className="text-xs text-red-600">Bloqueado</span>}
+                    {c.blocked && <span className="text-xs text-danger">Bloqueado</span>}
                   </button>
                 </td>
-                <td className="px-4 py-2 whitespace-nowrap">{formatPhone(c.phone)}</td>
+                <td className="px-4 py-2 whitespace-nowrap">{formatPhone(c.phone) || '—'}</td>
                 <td className="px-4 py-2">{c.email ?? '—'}</td>
                 <td className="px-4 py-2 whitespace-nowrap">{new Date(c.createdAt).toLocaleDateString('pt-BR')}</td>
               </tr>
@@ -18620,16 +18931,16 @@ export function ContactsPage() {
           </tbody>
         </table>
         {list.isSuccess && contacts.length === 0 && (
-          <p className="p-6 text-center text-sm text-slate-500">Nenhum contato encontrado.</p>
+          <p className="p-6 text-center text-sm text-muted">Nenhum contato encontrado.</p>
         )}
-        {list.isError && <p className="p-6 text-center text-sm text-red-600">{list.error.message}</p>}
+        {list.isError && <p className="p-6 text-center text-sm text-danger">{list.error.message}</p>}
         {list.hasNextPage && (
           <div className="p-3 text-center">
             <button
               type="button"
               disabled={list.isFetchingNextPage}
               onClick={() => list.fetchNextPage()}
-              className="rounded-md px-4 py-2 text-sm text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              className="rounded-md px-4 py-2 text-sm text-primary hover:bg-primary/15 disabled:opacity-50"
             >
               Carregar mais
             </button>
@@ -18657,10 +18968,10 @@ export function ContactNewPage() {
     <div className="mx-auto max-w-2xl p-4 sm:p-6">
       <h1 className="mb-6 text-xl font-semibold">Novo contato</h1>
       <ContactForm
-        onCancel={() => navigate('/contatos')}
+        onCancel={() => navigate('/contacts')}
         onSaved={() => {
           void qc.invalidateQueries({ queryKey: qk.contactList({}) });
-          navigate('/contatos');
+          navigate('/contacts');
         }}
       />
     </div>
@@ -18675,10 +18986,10 @@ export function ContactNewPage() {
 import { ContactsPage } from './pages/Contacts';
 import { ContactNewPage } from './pages/ContactNew';
 ```
-Then add these two entries to the `'/'` layout route's `children`, after the `conversas` routes and above the `{ path: '*', element: <NotFound /> }` catch-all. If a placeholder `contatos` entry exists, replace it.
+Then add these two entries to the `'/'` layout route's `children`, after the `chats` routes and above the `{ path: '*', element: <NotFound /> }` catch-all. The paths match Task 15's sidebar link `/contacts` (the sidebar is the source of truth). If a placeholder `contacts` entry exists, replace it.
 ```tsx
-      { path: 'contatos', element: <ContactsPage /> },
-      { path: 'contatos/novo', element: <ContactNewPage /> },
+      { path: 'contacts', element: <ContactsPage /> },
+      { path: 'contacts/new', element: <ContactNewPage /> },
 ```
 
 (b) Replace `web/src/pages/Conversation.tsx` (Task 17) with the version below. It keeps Task 17's behaviour and adds the panel next to `<ConversationView>`. The header component is not touched: Task 17's **Contato** button already toggles `contactPanelOpen` through `onToggleContactPanel`. The `useQuery` call reads `qk.chat(id)`, the same cache entry that `ConversationView` already filled, so it sends no extra request. It sits before the early return so that hook order stays stable.
@@ -18719,14 +19030,14 @@ Run: `npm run build -w web`
 Expected: exits 0, and `tsc` reports no type errors.
 
 Run: `npm test -w web`
-Expected: PASS, including the 18 contact tests.
+Expected: PASS, including the 16 contact tests.
 
 Manual check (`npm run dev`):
-1. Open `/contatos` from the sidebar. Search by name and by phone. Filter by tag.
-2. Click **Adicionar contato** (goes to `/contatos/novo`), save without a celular and see "Informe o celular.", then save with one. It returns to `/contatos` and the new contact is listed.
+1. Open `/contacts` from the sidebar (**Contatos**). Search by name and by phone. Filter by tag.
+2. Click **Adicionar contato** (goes to `/contacts/new`), save without a celular and see "Informe o celular.", then save with one. It returns to `/contacts` and the new contact is listed.
 3. Click a row: the drawer opens. Toggle a tag, add and pin a note, and edit a custom field (it saves on blur).
 4. Block the contact (confirm), then unblock it.
-5. Click **Nova conversa**: it navigates to `/conversas/:id`.
+5. Click **Nova conversa**: it navigates to `/chats/:id`.
 6. In a conversation, the header's **Contato** button opens the drawer, which now has the **Detalhes da conversa** tab. Assume the chat in the header: the tab's **Atendente** row updates without reopening.
 
 - [ ] **Step 19: Commit**
@@ -18748,7 +19059,7 @@ Settings area at `/configuracoes/:section?` with a left menu like Umbler (§3 it
 Known limitation (deliberate, no cross-task edit): the REST table has no self-service profile route. An **admin** edits their own name, signature and password through `PATCH /api/users/:id`. An **agent** sees their profile read-only, with the message "Para alterar nome, assinatura ou senha, peça a um administrador.".
 
 **Files:**
-- Create: `web/src/lib/tag-colors.ts`
+- No palette file: `TAG_COLORS` and `tagColorHex` come from `@talk/shared` (`shared/src/palette.ts`, Task 15)
 - Create: `web/src/components/settings/common.tsx`
 - Create: `web/src/components/settings/TagForm.tsx`
 - Create: `web/src/components/settings/TriageOptionsEditor.tsx`
@@ -18770,7 +19081,7 @@ Known limitation (deliberate, no cross-task edit): the REST table has no self-se
 
 **Interfaces:**
 - Consumes:
-  - From `@talk/shared` (contract): `Me`, `Role`, `SectorDto`, `TagDto`, `UserDto`, `ChannelDto`, `CustomFieldDto`, `QuickAnswerDto`, `TriageMenuDto`, `SettingsDto`.
+  - From `@talk/shared` (contract): `Me`, `Role`, `SectorDto`, `TagDto`, `UserDto`, `ChannelDto`, `CustomFieldDto`, `QuickAnswerDto`, `TriageMenuDto`, `SettingsDto` (types), plus the runtime `TAG_COLORS` and `tagColorHex` (Task 15, `shared/src/palette.ts`; the importer of Task 20 uses the same palette, so imported tags always match a swatch).
   - From Task 15. These are the only names this task uses:
     - `web/src/lib/api.ts`: `request<T>(method: string, path: string, body?: unknown): Promise<T>`. A `FormData` body is sent as-is and any other body as JSON. A 204 response resolves to `undefined`. A non-2xx response throws `ApiError extends Error` whose `message` is the server's `{ error }`.
     - `web/src/lib/api.ts`: `api` (namespace object; this task uses `api.sectors.list`, `api.tags.list`, `api.customFields.list`, `api.users.list`, `api.quickAnswers.list`, `api.settings.get`, `api.channels.list`) and `qk` (`qk.me`, `qk.sectors`, `qk.tags`, `qk.customFields`, `qk.users`, `qk.quickAnswers`, `qk.settings`, `qk.channels`).
@@ -18789,12 +19100,11 @@ Known limitation (deliberate, no cross-task edit): the REST table has no self-se
     - `PUT /api/settings` with the full `SettingsDto`
     - `POST /api/channels` with `{name}`
     - `POST /api/channels/:id/connect` → `{qrBase64}`. Task 14 tests return a `data:image/png;base64,…` URL. This page also accepts raw base64.
+    - `GET /api/channels/:id/qr` (admin) → `{qrBase64: string | null}`: the latest `qrcode.updated` image (spec §5.6), null once connected (Task 14).
 - Produces:
   - Route `/configuracoes/:section?` with these sections: `perfil`, `canais`, `atendentes`, `setores`, `etiquetas`, `campos`, `respostas-rapidas`, `triagem`, `conversas`.
-  - `web/src/lib/tag-colors.ts`:
-    - `TAG_COLORS: ReadonlyArray<{ name: string; label: string; hex: string }>`: the 20 colors of Umbler's `TagColor` enum. `name` is the Umbler enum value, `label` is pt-BR and `hex` is lowercase `#rrggbb`.
-    - `tagColorHex(color: string): string`: accepts a stored hex value or an Umbler name, such as `'Tomato'`. It falls back to gray.
-    - **Tasks 16 and 18 should render tag chips with `tagColorHex(tag.color)`.**
+  - Canais page: **Conectar** shows the QR returned by `connect`; then, while the channel is not `connected`, it polls `GET /api/channels/:id/qr` every 5 s and shows the newest image (WhatsApp rotates QRs). The connected number (`ChannelDto.phone`, written from `connection.update` by Tasks 5/9) is shown formatted with Task 15's `formatPhone`.
+  - Styling: only Task 15's dark theme tokens (`bg-surface`, `bg-panel`, `bg-sidebar-hover`, `bg-sidebar-active`, `border-border`, `divide-border`, `text-fg`, `text-muted`, `bg-primary`/`text-primary`, `bg-danger`/`text-danger`, `bg-success`/`text-success`), never `bg-white`, `gray-*`, `blue-*`, `slate-*` or `zinc-*` literals.
   - `web/src/components/settings/common.tsx`:
     - `send<T>(path, method, body?)`, a thin wrapper over Task 15's `request`
     - `useSend(...refreshKeys: QueryKey[])`, a mutation whose argument is a thunk; on success it invalidates the given `qk.*` keys
@@ -18804,7 +19114,7 @@ Known limitation (deliberate, no cross-task edit): the REST table has no self-se
   - `TriageOptionsEditor` with `TriageOptionInput = TriageMenuDto['options'][number]`.
   - `QuickAnswerForm` with `QuickAnswerInput { name; body; visibility: 'all' | 'owner'; file: File | null }`, plus `insertAtCursor(text, start, end, snippet): { text; caret }` and `FIXED_VARIABLES`.
   - Data conventions:
-    - `tags.color` is sent as lowercase hex. The importer (Task 20) may store either an Umbler color name or hex; `tagColorHex` renders both.
+    - `tags.color` is sent as lowercase hex from the shared `TAG_COLORS`. The importer (Task 20) stores the same palette's hex; `tagColorHex` still renders an Umbler name or any hex for older rows.
     - Custom-field variables are inserted as `{{campo.<field name exactly as stored>}}`, spaces included. Task 10's `renderQuickAnswer` must look fields up by that exact name.
 
 ---
@@ -18817,8 +19127,8 @@ Create `web/src/components/settings/TagForm.test.tsx`:
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { TAG_COLORS, tagColorHex } from '@talk/shared';
 import { TagForm } from './TagForm';
-import { TAG_COLORS, tagColorHex } from '../../lib/tag-colors';
 
 afterEach(cleanup);
 
@@ -18900,53 +19210,17 @@ describe('TagForm', () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `npm test -w web -- src/components/settings/TagForm.test.tsx`
-Expected: FAIL — `Failed to resolve import "./TagForm"` (and `../../lib/tag-colors`).
+Expected: FAIL — `Failed to resolve import "./TagForm"`. (The palette already exists: `TAG_COLORS`/`tagColorHex` come from `@talk/shared`, Task 15.)
 
-- [ ] **Step 3: Write the palette and the form**
+- [ ] **Step 3: Write the form**
 
-Create `web/src/lib/tag-colors.ts`:
-
-```ts
-// The 20 colors of Umbler's tag palette (TagColor enum in utalk-openapi-v1.json), in Umbler's order.
-// tags.color stores the hex; tagColorHex also accepts the Umbler name so imported tags render either way.
-export const TAG_COLORS = [
-  { name: 'Blue', label: 'Azul', hex: '#2563eb' },
-  { name: 'Skyblue', label: 'Azul-céu', hex: '#0ea5e9' },
-  { name: 'Cyan', label: 'Ciano', hex: '#06b6d4' },
-  { name: 'Aquamarine', label: 'Água-marinha', hex: '#14b8a6' },
-  { name: 'Green', label: 'Verde', hex: '#16a34a' },
-  { name: 'Kiwi', label: 'Kiwi', hex: '#65a30d' },
-  { name: 'Gold', label: 'Dourado', hex: '#ca8a04' },
-  { name: 'Amber', label: 'Âmbar', hex: '#d97706' },
-  { name: 'Tangerine', label: 'Tangerina', hex: '#ea580c' },
-  { name: 'Chocolate', label: 'Chocolate', hex: '#92400e' },
-  { name: 'Salmon', label: 'Salmão', hex: '#f87171' },
-  { name: 'Tomato', label: 'Tomate', hex: '#ef4444' },
-  { name: 'Rose', label: 'Rosa', hex: '#e11d48' },
-  { name: 'Pink', label: 'Rosa-claro', hex: '#ec4899' },
-  { name: 'Magenta', label: 'Magenta', hex: '#c026d3' },
-  { name: 'Violet', label: 'Violeta', hex: '#8b5cf6' },
-  { name: 'Grape', label: 'Uva', hex: '#6d28d9' },
-  { name: 'Gray', label: 'Cinza', hex: '#6b7280' },
-  { name: 'Silver', label: 'Prata', hex: '#94a3b8' },
-  { name: 'Umblerito', label: 'Azul-marinho', hex: '#1e3a8a' },
-] as const;
-
-const GRAY = '#6b7280';
-
-export function tagColorHex(color: string): string {
-  const byName = TAG_COLORS.find((c) => c.name.toLowerCase() === color.toLowerCase());
-  if (byName) return byName.hex;
-  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : GRAY;
-}
-```
+The palette is Task 15's `shared/src/palette.ts`; do not create another one.
 
 Create `web/src/components/settings/TagForm.tsx`:
 
 ```tsx
 import { useId, useState, type FormEvent } from 'react';
-import type { TagDto } from '@talk/shared';
-import { TAG_COLORS, tagColorHex } from '../../lib/tag-colors';
+import { TAG_COLORS, tagColorHex, type TagDto } from '@talk/shared';
 
 export interface TagInput {
   name: string;
@@ -18982,7 +19256,7 @@ export function TagForm({
   }
 
   return (
-    <form onSubmit={submit} className="mb-6 space-y-4 rounded border p-4">
+    <form onSubmit={submit} className="mb-6 space-y-4 rounded border border-border p-4">
       <div className="flex gap-3">
         <div className="w-20">
           <label htmlFor={`${id}-emoji`} className="block text-sm font-medium">
@@ -18994,7 +19268,7 @@ export function TagForm({
             value={emoji}
             onChange={(e) => setEmoji(e.target.value)}
             placeholder="⭐"
-            className="mt-1 w-full rounded border px-2 py-1.5 text-center"
+            className="mt-1 w-full rounded border border-border px-2 py-1.5 text-center"
           />
         </div>
         <div className="flex-1">
@@ -19006,9 +19280,9 @@ export function TagForm({
             value={name}
             maxLength={TAG_NAME_MAX}
             onChange={(e) => setName(e.target.value.slice(0, TAG_NAME_MAX))}
-            className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+            className="mt-1 w-full rounded border border-border px-2 py-1.5 text-sm"
           />
-          <p className="mt-1 text-right text-xs text-gray-500">{`${name.length}/${TAG_NAME_MAX}`}</p>
+          <p className="mt-1 text-right text-xs text-muted">{`${name.length}/${TAG_NAME_MAX}`}</p>
         </div>
       </div>
 
@@ -19026,7 +19300,7 @@ export function TagForm({
               aria-label={c.label}
               title={c.label}
               onClick={() => setColor(c.hex)}
-              className={`h-7 w-7 rounded-full ${color === c.hex ? 'ring-2 ring-gray-900 ring-offset-2' : ''}`}
+              className={`h-7 w-7 rounded-full ${color === c.hex ? 'ring-2 ring-fg ring-offset-2 ring-offset-panel' : ''}`}
               style={{ backgroundColor: c.hex }}
             />
           ))}
@@ -19045,19 +19319,19 @@ export function TagForm({
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}
 
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50">
+        <button type="button" onClick={onCancel} className="rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover">
           Cancelar
         </button>
         <button
           type="submit"
           disabled={!cleanName || pending}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
         >
           Salvar
         </button>
@@ -19075,7 +19349,7 @@ Expected: PASS (8 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add web/src/lib/tag-colors.ts web/src/components/settings/TagForm.tsx web/src/components/settings/TagForm.test.tsx
+git add web/src/components/settings/TagForm.tsx web/src/components/settings/TagForm.test.tsx
 git commit -m "feat(web): tag form with Umbler 20-color palette, emoji and 30-char name
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -19197,7 +19471,7 @@ import type { SectorDto, TriageMenuDto } from '@talk/shared';
 
 export type TriageOptionInput = TriageMenuDto['options'][number];
 
-const cell = 'w-full rounded border px-2 py-1 text-sm';
+const cell = 'w-full rounded border border-border px-2 py-1 text-sm';
 
 export function TriageOptionsEditor({
   options,
@@ -19226,11 +19500,11 @@ export function TriageOptionsEditor({
   return (
     <div>
       {options.length === 0 ? (
-        <p className="text-sm text-gray-500">Nenhuma opção. Clique em “Adicionar opção”.</p>
+        <p className="text-sm text-muted">Nenhuma opção. Clique em “Adicionar opção”.</p>
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-gray-500">
+            <tr className="text-left text-muted">
               <th className="w-16 pb-1 font-medium">Nº</th>
               <th className="pb-1 font-medium">Texto da opção</th>
               <th className="w-48 pb-1 font-medium">Setor</th>
@@ -19281,7 +19555,7 @@ export function TriageOptionsEditor({
                     aria-label={`Remover opção ${i + 1}`}
                     title="Remover"
                     onClick={() => onChange(options.filter((_, j) => j !== i))}
-                    className="rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
+                    className="rounded p-1 text-muted hover:bg-danger/15 hover:text-danger"
                   >
                     <TrashIcon size={16} />
                   </button>
@@ -19291,7 +19565,7 @@ export function TriageOptionsEditor({
           </tbody>
         </table>
       )}
-      <button type="button" onClick={add} className="mt-2 rounded border px-3 py-1.5 text-sm hover:bg-gray-50">
+      <button type="button" onClick={add} className="mt-2 rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover">
         Adicionar opção
       </button>
     </div>
@@ -19460,7 +19734,7 @@ export function insertAtCursor(text: string, start: number, end: number, snippet
   return { text: text.slice(0, start) + snippet + text.slice(end), caret: start + snippet.length };
 }
 
-const field = 'mt-1 w-full rounded border px-2 py-1.5 text-sm';
+const field = 'mt-1 w-full rounded border border-border px-2 py-1.5 text-sm';
 
 export function QuickAnswerForm({
   initial,
@@ -19517,7 +19791,7 @@ export function QuickAnswerForm({
   ];
 
   return (
-    <form onSubmit={submit} className="mb-6 space-y-4 rounded border p-4">
+    <form onSubmit={submit} className="mb-6 space-y-4 rounded border border-border p-4">
       <div>
         <label htmlFor={`${id}-name`} className="block text-sm font-medium">
           Nome
@@ -19554,7 +19828,7 @@ export function QuickAnswerForm({
           className={field}
         />
         <div className="mt-2">
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-muted">
             Inserir variável (trocada pelos dados do atendente e do contato quando a resposta é escolhida com / na conversa):
           </p>
           <div className="mt-1 flex flex-wrap gap-1">
@@ -19566,7 +19840,7 @@ export function QuickAnswerForm({
                 // keep the textarea focused so its selection is not lost
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => insert(variable)}
-                className="rounded-full border px-2 py-0.5 text-xs hover:bg-gray-50"
+                className="rounded-full border border-border px-2 py-0.5 text-xs hover:bg-sidebar-hover"
               >
                 {label}
               </button>
@@ -19580,9 +19854,9 @@ export function QuickAnswerForm({
           Anexo (opcional)
         </label>
         {initial?.hasAttachment && (
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-muted">
             Esta resposta já tem um anexo:{' '}
-            <a href={`/api/quick-answers/${initial.id}/attachment`} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+            <a href={`/api/quick-answers/${initial.id}/attachment`} target="_blank" rel="noreferrer" className="text-primary underline">
               abrir
             </a>
             . Escolha outro arquivo para substituir.
@@ -19592,19 +19866,19 @@ export function QuickAnswerForm({
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}
 
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50">
+        <button type="button" onClick={onCancel} className="rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover">
           Cancelar
         </button>
         <button
           type="submit"
           disabled={!name.trim() || !body.trim() || pending}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          className="rounded bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
         >
           Salvar
         </button>
@@ -19637,7 +19911,7 @@ import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-quer
 import type { ReactNode } from 'react';
 import { request } from '../../lib/api';
 
-export type Method = 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; // GET: the Canais page polls the channel QR
 
 // Task 15's request() with the path first, which reads better in the settings screens.
 export function send<T = unknown>(path: string, method: Method, body?: unknown): Promise<T> {
@@ -19653,9 +19927,9 @@ export function useSend(...refresh: QueryKey[]) {
   });
 }
 
-export const btn = 'rounded border px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50';
-export const btnPrimary = 'rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50';
-export const field = 'mt-1 w-full rounded border px-2 py-1.5 text-sm';
+export const btn = 'rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover disabled:opacity-50';
+export const btnPrimary = 'rounded bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50';
+export const field = 'mt-1 w-full rounded border border-border px-2 py-1.5 text-sm';
 
 export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
@@ -19672,14 +19946,14 @@ export function Section({ title, action, children }: { title: string; action?: R
 export function ErrorText({ error }: { error: unknown }) {
   if (!error) return null;
   return (
-    <p role="alert" className="my-2 text-sm text-red-600">
+    <p role="alert" className="my-2 text-sm text-danger">
       {error instanceof Error ? error.message : 'Ocorreu um erro'}
     </p>
   );
 }
 
 export function Loading({ error }: { error: unknown }) {
-  return error ? <ErrorText error={error} /> : <p className="text-sm text-gray-500">Carregando…</p>;
+  return error ? <ErrorText error={error} /> : <p className="text-sm text-muted">Carregando…</p>;
 }
 ```
 
@@ -19725,14 +19999,14 @@ export function SettingsPage() {
   return (
     <div className="flex h-full min-h-0">
       <nav aria-label="Configurações" className="w-56 shrink-0 overflow-y-auto border-r p-3">
-        <h2 className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Configurações</h2>
+        <h2 className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-muted">Configurações</h2>
         <ul className="space-y-1">
           {visible.map((s) => (
             <li key={s.path}>
               <NavLink
                 to={`/configuracoes/${s.path}`}
                 className={({ isActive }) =>
-                  `block rounded px-2 py-1.5 text-sm ${isActive ? 'bg-blue-50 font-medium text-blue-700' : 'hover:bg-gray-50'}`
+                  `block rounded px-2 py-1.5 text-sm ${isActive ? 'bg-sidebar-active font-medium text-fg' : 'hover:bg-sidebar-hover'}`
                 }
               >
                 {s.label}
@@ -19771,17 +20045,17 @@ export function ProfileSettings() {
   return (
     <Section title="Perfil">
       <dl className="mb-6 grid grid-cols-[10rem_1fr] gap-y-2 text-sm">
-        <dt className="text-gray-500">E-mail</dt>
+        <dt className="text-muted">E-mail</dt>
         <dd>{me.email}</dd>
-        <dt className="text-gray-500">Papel</dt>
+        <dt className="text-muted">Papel</dt>
         <dd>{me.role === 'admin' ? 'Administrador' : 'Atendente'}</dd>
-        <dt className="text-gray-500">Setores</dt>
+        <dt className="text-muted">Setores</dt>
         <dd>{sectorNames}</dd>
         {me.role !== 'admin' && (
           <>
-            <dt className="text-gray-500">Nome</dt>
+            <dt className="text-muted">Nome</dt>
             <dd>{me.name}</dd>
-            <dt className="text-gray-500">Assinatura</dt>
+            <dt className="text-muted">Assinatura</dt>
             <dd>{me.signature || `Setor da conversa - ${me.name}`}</dd>
           </>
         )}
@@ -19790,7 +20064,7 @@ export function ProfileSettings() {
         <ProfileForm me={me} />
       ) : (
         // ponytail: no self-service route in the REST contract; agents ask an admin (known limitation)
-        <p className="text-sm text-gray-500">Para alterar nome, assinatura ou senha, peça a um administrador.</p>
+        <p className="text-sm text-muted">Para alterar nome, assinatura ou senha, peça a um administrador.</p>
       )}
     </Section>
   );
@@ -19825,11 +20099,11 @@ function ProfileForm({ me }: { me: Me }) {
       <label className="block text-sm font-medium">
         Assinatura
         <input value={signature} maxLength={60} onChange={(e) => setSignature(e.target.value)} className={field} />
-        <span className="mt-1 block text-xs font-normal text-gray-500">
+        <span className="mt-1 block text-xs font-normal text-muted">
           Prévia no WhatsApp: <b>*{signature.trim() || `Setor da conversa - ${name.trim()}`}:*</b>. Se ficar vazia, usa “Setor - Nome”.
         </span>
       </label>
-      <fieldset className="space-y-2 rounded border p-3">
+      <fieldset className="space-y-2 rounded border border-border p-3">
         <legend className="px-1 text-sm font-medium">Trocar senha (opcional)</legend>
         <label className="block text-sm">
           Nova senha
@@ -19839,11 +20113,11 @@ function ProfileForm({ me }: { me: Me }) {
           Repita a nova senha
           <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={field} />
         </label>
-        {password && mismatch && <p className="text-sm text-red-600">As senhas não conferem.</p>}
-        <p className="text-xs text-gray-500">Ao trocar a senha, você sai de todos os aparelhos e entra de novo.</p>
+        {password && mismatch && <p className="text-sm text-danger">As senhas não conferem.</p>}
+        <p className="text-xs text-muted">Ao trocar a senha, você sai de todos os aparelhos e entra de novo.</p>
       </fieldset>
       <ErrorText error={save.error} />
-      {save.isSuccess && !password && <p className="text-sm text-green-700">Perfil salvo.</p>}
+      {save.isSuccess && !password && <p className="text-sm text-success">Perfil salvo.</p>}
       <button type="submit" disabled={save.isPending || mismatch || !name.trim()} className={btnPrimary}>
         Salvar
       </button>
@@ -19861,12 +20135,15 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ChannelDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
+import { formatPhone } from '../../lib/format';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
 
+const QR_POLL_MS = 5_000;
+
 const STATUS: Record<ChannelDto['status'], { label: string; className: string }> = {
-  connected: { label: 'Conectado', className: 'bg-green-100 text-green-800' },
-  connecting: { label: 'Conectando', className: 'bg-amber-100 text-amber-800' },
-  disconnected: { label: 'Desconectado', className: 'bg-red-100 text-red-800' },
+  connected: { label: 'Conectado', className: 'bg-success/20 text-success' },
+  connecting: { label: 'Conectando', className: 'bg-primary/20 text-primary' },
+  disconnected: { label: 'Desconectado', className: 'bg-danger/20 text-danger' },
 };
 
 const asImageSrc = (qr: string) => (qr.startsWith('data:') ? qr : `data:image/png;base64,${qr}`);
@@ -19886,7 +20163,7 @@ export function ChannelsSettings() {
   const [qr, setQr] = useState<Record<string, string>>({});
   const connect = useMutation({
     mutationFn: (channelId: string) => api.channels.connect(channelId),
-    // null QR = Evolution already has a session; the status arrives through channel.status
+    // the first QR comes back here; null QR = Evolution already has a session (status arrives via channel.status)
     onSuccess: ({ qrBase64 }, channelId) => setQr((cur) => withQr(cur, channelId, qrBase64)),
   });
 
@@ -19894,14 +20171,23 @@ export function ChannelsSettings() {
   const waiting = Object.keys(qr)
     .filter((id) => channels.data?.find((c) => c.id === id)?.status !== 'connected')
     .join(',');
-  const { mutate: refreshQr } = connect;
 
-  // ponytail: refreshes the QR by re-calling connect every 20s; push qrcode.updated over WS if this ever feels slow
+  // §5.6: later QRs arrive as qrcode.updated webhooks; the server keeps the latest (Task 14,
+  // GET /api/channels/:id/qr). Poll it while the channel is not connected.
+  // ponytail: 5 s polling; push qrcode.updated over WS if this ever feels slow.
   useEffect(() => {
     if (!waiting) return;
-    const t = setInterval(() => waiting.split(',').forEach((id) => refreshQr(id)), 20_000);
+    const t = setInterval(() => {
+      for (const id of waiting.split(',')) {
+        send<{ qrBase64: string | null }>(`/api/channels/${id}/qr`, 'GET')
+          .then(({ qrBase64 }) => {
+            if (qrBase64) setQr((cur) => withQr(cur, id, qrBase64));
+          })
+          .catch(() => {}); // a failed poll keeps the last QR on screen; the next tick retries
+      }
+    }, QR_POLL_MS);
     return () => clearInterval(t);
-  }, [waiting, refreshQr]);
+  }, [waiting]);
 
   if (!channels.data) return <Loading error={channels.error} />;
 
@@ -19920,7 +20206,7 @@ export function ChannelsSettings() {
           value={name}
           maxLength={60}
           onChange={(e) => setName(e.target.value)}
-          className="flex-1 rounded border px-2 py-1.5 text-sm"
+          className="flex-1 rounded border border-border px-2 py-1.5 text-sm"
         />
         <button type="submit" disabled={!name.trim() || create.isPending} className={btnPrimary}>
           Novo canal
@@ -19929,16 +20215,16 @@ export function ChannelsSettings() {
       <ErrorText error={create.error} />
       <ErrorText error={connect.error} />
 
-      {channels.data.length === 0 && <p className="text-sm text-gray-500">Nenhum canal cadastrado.</p>}
+      {channels.data.length === 0 && <p className="text-sm text-muted">Nenhum canal cadastrado.</p>}
       <ul className="space-y-3">
         {channels.data.map((c) => {
           const code = qr[c.id];
           return (
-            <li key={c.id} className="rounded border p-4">
+            <li key={c.id} className="rounded border border-border p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="font-medium">{c.name}</p>
-                  <p className="text-sm text-gray-500">{c.phone ? `+${c.phone}` : 'Nenhum número conectado'}</p>
+                  <p className="text-sm text-muted">{c.phone ? formatPhone(c.phone) : 'Nenhum número conectado'}</p>
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS[c.status].className}`}>
                   {STATUS[c.status].label}
@@ -19956,12 +20242,12 @@ export function ChannelsSettings() {
               )}
               {code && c.status !== 'connected' && (
                 <div className="mt-4 flex flex-wrap gap-4">
-                  <img src={asImageSrc(code)} alt={`QR Code do canal ${c.name}`} className="h-64 w-64 rounded border bg-white p-2" />
+                  <img src={asImageSrc(code)} alt={`QR Code do canal ${c.name}`} className="h-64 w-64 rounded border border-border bg-panel p-2" />
                   <ol className="max-w-xs list-decimal space-y-1 pl-5 text-sm">
                     <li>Abra o WhatsApp no celular do escritório.</li>
                     <li>Toque em Mais opções › Aparelhos conectados › Conectar um aparelho.</li>
                     <li>Aponte a câmera para este código.</li>
-                    <li>O código se renova sozinho a cada 20 segundos. Mantenha esta tela aberta até aparecer “Conectado”.</li>
+                    <li>O código se renova sozinho (esta tela busca o mais recente a cada 5 segundos). Mantenha-a aberta até aparecer “Conectado”.</li>
                   </ol>
                 </div>
               )}
@@ -20056,7 +20342,7 @@ export function UsersSettings() {
 
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-gray-500">
+          <tr className="border-b border-border text-left text-muted">
             <th className="py-2 font-medium">Nome</th>
             <th className="py-2 font-medium">E-mail</th>
             <th className="py-2 font-medium">Papel</th>
@@ -20067,7 +20353,7 @@ export function UsersSettings() {
         </thead>
         <tbody>
           {users.data.map((u) => (
-            <tr key={u.id} className={`border-b ${u.active ? '' : 'text-gray-400'}`}>
+            <tr key={u.id} className={`border-b border-border ${u.active ? '' : 'text-muted'}`}>
               <td className="py-2">{u.name}</td>
               <td className="py-2">{u.email}</td>
               <td className="py-2">{u.role === 'admin' ? 'Administrador' : 'Atendente'}</td>
@@ -20124,7 +20410,7 @@ function UserForm({
   }
 
   return (
-    <form onSubmit={submit} className="mb-6 grid grid-cols-2 gap-4 rounded border p-4">
+    <form onSubmit={submit} className="mb-6 grid grid-cols-2 gap-4 rounded border border-border p-4">
       <label className="block text-sm font-medium">
         Nome
         <input required value={v.name} onChange={(e) => set({ name: e.target.value })} className={field} />
@@ -20155,7 +20441,7 @@ function UserForm({
       <label className="col-span-2 block text-sm font-medium">
         Assinatura (opcional)
         <input value={v.signature} maxLength={60} onChange={(e) => set({ signature: e.target.value })} className={field} />
-        <span className="mt-1 block text-xs font-normal text-gray-500">Se ficar vazia, as mensagens saem como “Setor - Nome”.</span>
+        <span className="mt-1 block text-xs font-normal text-muted">Se ficar vazia, as mensagens saem como “Setor - Nome”.</span>
       </label>
       <fieldset className="col-span-2">
         <legend className="text-sm font-medium">Setores</legend>
@@ -20167,7 +20453,7 @@ function UserForm({
             </label>
           ))}
         </div>
-        <p className="mt-1 text-xs text-gray-500">
+        <p className="mt-1 text-xs text-muted">
           Administradores veem todas as conversas. Atendentes veem as dos seus setores e as que são deles.
         </p>
       </fieldset>
@@ -20241,22 +20527,22 @@ export function SectorsSettings() {
           value={name}
           maxLength={60}
           onChange={(e) => setName(e.target.value)}
-          className="flex-1 rounded border px-2 py-1.5 text-sm"
+          className="flex-1 rounded border border-border px-2 py-1.5 text-sm"
         />
         <button type="submit" disabled={!name.trim() || save.isPending} className={btnPrimary}>
           Adicionar setor
         </button>
       </form>
       <ErrorText error={save.error} />
-      <p className="mb-2 text-xs text-gray-500">
+      <p className="mb-2 text-xs text-muted">
         O setor padrão recebe as conversas novas. A ordem é a usada nas listas e filtros.
       </p>
-      <ul className="divide-y rounded border">
+      <ul className="divide-y divide-border rounded border border-border">
         {sorted.map((s, i) => (
           <li key={s.id} className="flex items-center gap-2 px-3 py-2 text-sm">
             <span className="flex-1">
               {s.name}
-              {s.isDefault && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800">Padrão</span>}
+              {s.isDefault && <span className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 text-xs text-primary">Padrão</span>}
             </span>
             <button type="button" aria-label={`Subir ${s.name}`} disabled={i === 0 || save.isPending} onClick={() => move(i, -1)} className={btn}>
               <ArrowUpIcon size={14} />
@@ -20298,11 +20584,10 @@ Create `web/src/pages/settings/TagsSettings.tsx`:
 ```tsx
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { TagDto } from '@talk/shared';
+import { tagColorHex, type TagDto } from '@talk/shared';
 import { TagForm, type TagInput } from '../../components/settings/TagForm';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
 import { api, qk } from '../../lib/api';
-import { tagColorHex } from '../../lib/tag-colors';
 
 export function TagsSettings() {
   const tags = useQuery({ queryKey: qk.tags, queryFn: api.tags.list });
@@ -20351,8 +20636,8 @@ export function TagsSettings() {
         />
       )}
       {!target && <ErrorText error={save.error} />}
-      {sorted.length === 0 && <p className="text-sm text-gray-500">Nenhuma etiqueta.</p>}
-      <ul className="divide-y rounded border">
+      {sorted.length === 0 && <p className="text-sm text-muted">Nenhuma etiqueta.</p>}
+      <ul className="divide-y divide-border rounded border border-border">
         {sorted.map((t) => (
           <li key={t.id} className="flex items-center gap-2 px-3 py-2">
             <span className="flex-1">
@@ -20430,9 +20715,9 @@ export function CustomFieldsSettings() {
           value={name}
           maxLength={60}
           onChange={(e) => setName(e.target.value)}
-          className="flex-1 rounded border px-2 py-1.5 text-sm"
+          className="flex-1 rounded border border-border px-2 py-1.5 text-sm"
         />
-        <select aria-label="Tipo do novo campo" value={kind} onChange={(e) => setKind(e.target.value as CustomFieldDto['kind'])} className="rounded border px-2 py-1.5 text-sm">
+        <select aria-label="Tipo do novo campo" value={kind} onChange={(e) => setKind(e.target.value as CustomFieldDto['kind'])} className="rounded border border-border px-2 py-1.5 text-sm">
           {Object.entries(KINDS).map(([value, label]) => (
             <option key={value} value={value}>
               {label}
@@ -20444,12 +20729,12 @@ export function CustomFieldsSettings() {
         </button>
       </form>
       <ErrorText error={save.error} />
-      {sorted.length === 0 && <p className="text-sm text-gray-500">Nenhum campo personalizado.</p>}
-      <ul className="divide-y rounded border">
+      {sorted.length === 0 && <p className="text-sm text-muted">Nenhum campo personalizado.</p>}
+      <ul className="divide-y divide-border rounded border border-border">
         {sorted.map((f) => (
           <li key={f.id} className="flex items-center gap-2 px-3 py-2 text-sm">
             <span className="flex-1">{f.name}</span>
-            <span className="w-20 text-gray-500">{KINDS[f.kind]}</span>
+            <span className="w-20 text-muted">{KINDS[f.kind]}</span>
             <button type="button" onClick={() => rename(f)} className={btn}>
               Renomear
             </button>
@@ -20542,19 +20827,19 @@ export function QuickAnswersSettings() {
         />
       )}
       {!target && <ErrorText error={save.error} />}
-      {sorted.length === 0 && <p className="text-sm text-gray-500">Nenhuma resposta rápida.</p>}
-      <ul className="divide-y rounded border">
+      {sorted.length === 0 && <p className="text-sm text-muted">Nenhuma resposta rápida.</p>}
+      <ul className="divide-y divide-border rounded border border-border">
         {sorted.map((a) => (
           <li key={a.id} className="flex items-start gap-2 px-3 py-2 text-sm">
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 font-medium">
                 /{a.name}
                 {a.hasAttachment && <PaperclipIcon size={14} aria-label="Com anexo" />}
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-normal text-gray-600">
+                <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-normal text-muted">
                   {a.visibility === 'all' ? 'Para todos' : a.ownerId === me.id ? 'Apenas para mim' : 'Particular de outro atendente'}
                 </span>
               </p>
-              <p className="line-clamp-2 whitespace-pre-line text-gray-500">{a.body}</p>
+              <p className="line-clamp-2 whitespace-pre-line text-muted">{a.body}</p>
             </div>
             {canEdit(a) && (
               <>
@@ -20629,25 +20914,25 @@ function TriageForm({ settings, sectors }: { settings: SettingsDto; sectors: Sec
         </label>
         <div>
           <span className="block text-sm font-medium">Opções</span>
-          <p className="mb-2 text-xs text-gray-500">O contato responde com o número ou com o nome do setor.</p>
+          <p className="mb-2 text-xs text-muted">O contato responde com o número ou com o nome do setor.</p>
           <TriageOptionsEditor options={menu.options} sectors={sectors} onChange={(options) => set({ options })} />
         </div>
         <label className="block text-sm font-medium">
           Mensagem para resposta inválida
           <textarea rows={2} value={menu.invalidText} onChange={(e) => set({ invalidText: e.target.value })} className={field} />
-          <span className="mt-1 block text-xs font-normal text-gray-500">
+          <span className="mt-1 block text-xs font-normal text-muted">
             Enviada uma única vez. Depois disso, a conversa fica no setor padrão.
           </span>
         </label>
         {preview && (
           <div>
             <span className="block text-sm font-medium">Como o contato recebe</span>
-            <pre className="mt-1 whitespace-pre-wrap rounded bg-gray-50 p-3 font-sans text-sm">{preview}</pre>
+            <pre className="mt-1 whitespace-pre-wrap rounded bg-surface p-3 font-sans text-sm">{preview}</pre>
           </div>
         )}
-        {issue && <p className="text-sm text-amber-700">{issue}</p>}
+        {issue && <p className="text-sm text-danger">{issue}</p>}
         <ErrorText error={save.error} />
-        {save.isSuccess && <p className="text-sm text-green-700">Triagem salva.</p>}
+        {save.isSuccess && <p className="text-sm text-success">Triagem salva.</p>}
         <button type="submit" disabled={!!issue || save.isPending} className={btnPrimary}>
           Salvar
         </button>
@@ -20687,13 +20972,13 @@ function ClosingMessageForm({ settings }: { settings: SettingsDto }) {
         <label className="block text-sm font-medium">
           Mensagem de encerramento
           <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} className={field} />
-          <span className="mt-1 block text-xs font-normal text-gray-500">
+          <span className="mt-1 block text-xs font-normal text-muted">
             Enviada ao contato quando o atendente finaliza a conversa com a opção “Enviar mensagem de encerramento” marcada.
             Deixe em branco para não usar.
           </span>
         </label>
         <ErrorText error={save.error} />
-        {save.isSuccess && <p className="text-sm text-green-700">Mensagem salva.</p>}
+        {save.isSuccess && <p className="text-sm text-success">Mensagem salva.</p>}
         <button type="submit" disabled={save.isPending} className={btnPrimary}>
           Salvar
         </button>
@@ -20742,7 +21027,7 @@ Run: `npm run dev -w web`, with the server running against a seeded database. Do
 3. Under **Setores**, add one, move it up and down, set it as default, then rename it.
 4. Under **Respostas rápidas**, create one, click "Nome do contato" in the middle of the text, and attach a PDF. The 📎 icon appears in the list.
 5. Under **Triagem**, enable the menu, add two options with sectors and save. Reload the page; the options are still there.
-6. Under **Canais**, click "Gerar novo QR / Reconectar". The QR image appears and is replaced by a fresh one every 20 seconds. After you scan it, the pill turns "Conectado" and the QR disappears without reloading the page.
+6. Under **Canais**, click "Gerar novo QR / Reconectar". The QR image appears; while the channel is not connected the page polls `GET /api/channels/:id/qr` every 5 seconds and swaps in the newest `qrcode.updated` image. After you scan it, the connected number appears formatted under the channel name, the pill turns "Conectado" and the QR disappears without reloading the page.
 7. Log in as an agent. The menu shows only Perfil and Respostas rápidas. Opening `/configuracoes/canais` redirects to Perfil.
 
 - [ ] **Step 25: Commit**
@@ -20787,6 +21072,7 @@ Rules this task fixes:
     - `contactFieldValues.{contactId,fieldId,value}`
     - `quickAnswers.{id,name,body,attachmentPath,visibility,ownerId}`
   - `normalizePhoneBR(raw: string): string` and `lidFromJid(jid: string): string | null` (`server/src/whatsapp/phone.ts`, Task 3).
+  - `tagColorHex(color: string): string` from `@talk/shared` (runtime export of `shared/src/palette.ts`, Task 15; the server's `@talk/shared` dependency resolves it through `exports["."].default`).
   - `saveMedia(mediaDir: string, data: Buffer, mime: string, originalName?: string | null): Promise<{ path: string; size: number }>` (`server/src/messages/media.ts`, Task 10).
   - `convertUmblerVariables(body: string, variables: Array<{ defaultValue: string }>): { body: string; unmapped: string[] }` (`server/src/messages/quick-answers.ts`, contract). This task assumes it maps Umbler's `Contato.PrimeiroNome` to `{{contato.primeiro_nome}}`. Per spec §5.7, a `defaultValue` it cannot map is written as plain text and returned in `unmapped`.
   - Test helpers (`server/test/helpers.ts`): `makeTestDb(): Promise<Db>`, `seedBasics(ctx: { db }): Promise<Seeded>` (sectors `Atendimento` (default), `Financeiro`, `Jurídico`).
@@ -20804,9 +21090,9 @@ Rules this task fixes:
       unmappedVariables: Array<{ quickAnswer: string; variables: string[] }>;
     }
     ```
-  - The CLI `npm run import:umbler -w server -- --token <UMBLER_TOKEN> [--dry-run]`. The token may also come from env `UMBLER_TOKEN`. The CLI reads env `DATABASE_URL` and `MEDIA_DIR` (default `/data/media`). It prints the report JSON to stdout. Unless `--dry-run` is set, it also writes the report to `<dirname(MEDIA_DIR)>/import-report.json`, which is `/data/import-report.json` in production. Task 21's runbook calls it as `docker compose exec app npm run import:umbler -w server -- --token … --dry-run`, then again without `--dry-run`.
+  - The CLI `npm run import:umbler -w server -- --token <UMBLER_TOKEN> [--dry-run]`. The token may also come from env `UMBLER_TOKEN`. The CLI reads env `DATABASE_URL` and `MEDIA_DIR` (default `/data/media`). It prints the report JSON to stdout. Unless `--dry-run` is set, it also writes the report to `<dirname(MEDIA_DIR)>/import-report.json`, which is `/data/import-report.json` in production. Task 21's runbook calls it as `docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run` (token from env, never on the command line), then again without `--dry-run`, then copies `/data/import-report.json` out with `docker compose cp`.
   - Mapping decisions that the web/settings tasks should know about:
-    - Umbler `TagColor` names become hex (`Gold` → `#eab308`, etc.).
+    - Umbler `TagColor` names become hex through the shared palette: `tagColorHex(name)` from `@talk/shared` (Task 15's `TAG_COLORS`, e.g. `Gold` → `#ca8a04`, unknown → gray `#6b7280`). The importer declares no colour table of its own, so imported tags always match a Task 19 swatch.
     - Contact `address` keeps Umbler's keys (`addressLine1`, `addressLine2`, `city`, `state`, `zipCode`, `country`) and drops empty values.
     - Date field values are stored as `YYYY-MM-DD`. Number, decimal and currency values are stored as decimal strings.
     - Imported quick answers are `visibility: 'all'`, `ownerId: null`.
@@ -21047,8 +21333,8 @@ describe('importUmbler', () => {
 
     const tagRows = await db.select().from(tags).orderBy(tags.position);
     expect(tagRows.map(({ name, emoji, color }) => ({ name, emoji, color }))).toEqual([
-      { name: 'Cliente', emoji: '⭐', color: '#eab308' },
-      { name: 'Prospecção', emoji: null, color: '#3b82f6' },
+      { name: 'Cliente', emoji: '⭐', color: '#ca8a04' }, // shared TAG_COLORS (Task 15): Gold
+      { name: 'Prospecção', emoji: null, color: '#2563eb' }, // Blue
     ]);
 
     const fieldRows = await db.select().from(customFields).orderBy(customFields.position);
@@ -21198,6 +21484,7 @@ Create `server/src/importer/umbler.ts`:
 
 ```ts
 import { setTimeout as delay } from 'node:timers/promises';
+import { tagColorHex } from '@talk/shared';
 import { eq, TransactionRollbackError } from 'drizzle-orm';
 import type { Db, Tx } from '../db/client.js';
 import {
@@ -21234,31 +21521,6 @@ const FIELD_KINDS: Record<string, FieldKind> = {
   CPFCustomFieldDefinitionModel: 'cpf',
   CNPJCustomFieldDefinitionModel: 'cnpj',
 };
-
-// Umbler TagColor enum → hex stored in tags.color.
-const TAG_COLORS: Record<string, string> = {
-  Blue: '#3b82f6',
-  Skyblue: '#38bdf8',
-  Cyan: '#06b6d4',
-  Aquamarine: '#2dd4bf',
-  Green: '#22c55e',
-  Kiwi: '#84cc16',
-  Gold: '#eab308',
-  Amber: '#f59e0b',
-  Tangerine: '#f97316',
-  Chocolate: '#92400e',
-  Salmon: '#fa8072',
-  Tomato: '#ef4444',
-  Rose: '#f43f5e',
-  Pink: '#ec4899',
-  Magenta: '#d946ef',
-  Violet: '#8b5cf6',
-  Grape: '#7c3aed',
-  Gray: '#6b7280',
-  Silver: '#9ca3af',
-  Umblerito: '#2563eb',
-};
-const DEFAULT_TAG_COLOR = '#6b7280';
 
 // Only the fields we read from the Umbler public API (docs/utalk-openapi-v1.json).
 interface UmblerMe { organizations?: Array<{ id: string; name: string }> }
@@ -21408,7 +21670,8 @@ async function importTags(tx: Tx, list: UmblerTag[], r: ImportReport): Promise<M
     if (id) {
       r.tags.existing++;
     } else {
-      const color = TAG_COLORS[t.color ?? ''] ?? DEFAULT_TAG_COLOR;
+      // Umbler TagColor name → hex of the shared palette (Task 15), so the tag matches a TagForm swatch.
+      const color = tagColorHex(t.color ?? '');
       id = (await tx.insert(tags).values({ name, emoji: str(t.emoji), color, position: i }).returning({ id: tags.id }))[0].id;
       idByName.set(name, id);
       r.tags.created++;
@@ -21616,7 +21879,7 @@ import { importUmbler } from './umbler.js';
 // One-off import at go-live, after the app has started once (migrations applied):
 //   npm run import:umbler -w server -- --token <UMBLER_TOKEN> --dry-run   (simulate, prints the report)
 //   npm run import:umbler -w server -- --token <UMBLER_TOKEN>             (imports, saves the report)
-// Production: docker compose exec app npm run import:umbler -w server -- --token <UMBLER_TOKEN>
+// Production (README §5): docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run, then without --dry-run
 // UMBLER_TOKEN in the environment works too and keeps the token out of shell history and `ps`.
 const USAGE = 'Uso: npm run import:umbler -w server -- --token <UMBLER_TOKEN> [--dry-run]';
 
@@ -21695,7 +21958,7 @@ Decisions that differ from the literal requirement text:
 - `app` mounts only `./data/media`. `backup.sh` runs on the host and writes `./data/backup` directly, so no container needs the backup folder. A container that can read the backup could read the full dump of both databases.
 - The app connects as its own role `talk`, owner of database `talk`, not as the Postgres superuser. `evolution` has its own role too (§6).
 - The server is not compiled (Task 1): `tsx` is a runtime dependency that survives `npm prune --omit=dev`. The image only builds `web`, and the app, the admin seed and the importer all run as `node --import tsx server/src/….ts`.
-- No earlier task serves the SPA, so this task adds it to `buildApp` (Steps 8a–8e): `@fastify/static` on `config.webDistDir`, plus an `index.html` fallback for GET deep links outside `/api`, `/ws` and `/webhooks`.
+- The SPA (`@fastify/static` on `config.webDistDir` plus the `index.html` fallback and `server/test/spa.test.ts`) is already served by Task 14 (Steps 17–21). This task does not touch `server/src/app.ts`: a second `register(fastifyStatic)` / `setNotFoundHandler` would throw at `buildApp`.
 
 **Files:**
 - Create: `.env.example`
@@ -21710,9 +21973,7 @@ Decisions that differ from the literal requirement text:
 - Create: `.gitattributes` (if Task 1 already created it, append the two lines instead)
 - Modify: `.gitignore` (make sure `.env` and `data/` are ignored)
 - Create: `README.md` (replace any stub left by Task 1)
-- Modify: `server/src/app.ts` (SPA static + fallback, last thing before `return app;`)
 - Test: `scripts/test-scripts.sh` (shell, runs in `alpine:3.20`)
-- Test: `server/test/spa.test.ts`
 
 **Interfaces:**
 - Consumes:
@@ -21720,12 +21981,10 @@ Decisions that differ from the literal requirement text:
     - Root `package.json` has `"workspaces": ["shared", "server", "web"]`, and a `package-lock.json` is committed.
     - The server is not compiled: it has no `build` script and runs as `node --import tsx src/index.ts`. `tsx` is a runtime dependency, so `npm prune --omit=dev` keeps it.
     - `npm run build -w web` emits `web/dist/index.html` plus `web/dist/assets/*`.
-    - `@fastify/static@10.1.6` is already installed in `server`.
     - `GET /api/health` → 200.
-    - `buildApp(ctx)` in `server/src/app.ts` ends with `return app;`. `Config.webDistDir: string | null`, where `WEB_DIST_DIR=""` gives `null`.
+    - `Config.webDistDir: string | null`, where `WEB_DIST_DIR=""` gives `null`.
   - **Task 2:** `migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url))`. From `server/src/db/client.ts` this resolves to `server/drizzle`, so the image must contain `server/drizzle/`.
-  - **Task 6:** the global auth `onRequest` hook answers 401 to anonymous `/api/*`, including unknown `/api/*` paths. The SPA test therefore logs in before it checks the `/api` 404.
-  - **Tasks 12–14:** each registers its routes before the final `return app;`. The SPA fallback added here must stay the last registration.
+  - **Task 14:** `buildApp` already serves `web/dist` at `/` with the `index.html` fallback for client routes (its last block) and has `server/test/spa.test.ts`. The image only has to ship `web/dist` where `WEB_DIST_DIR` points.
   - **Contract `Config` env names:** `PORT`, `DATABASE_URL`, `APP_ORIGIN`, `COOKIE_SECURE`, `WEBHOOK_SECRET` (≥ 32 chars), `WEBHOOK_BASE_URL`, `MEDIA_DIR`, `WEB_DIST_DIR`, `EVOLUTION_URL`, `EVOLUTION_API_KEY`.
   - **Task 6:**
     - `server/src/auth/seed-admin.ts` CLI (run as `node --import tsx server/src/auth/seed-admin.ts`): `--email <e> --name <n>`, with the password from `SEED_ADMIN_PASSWORD` or a prompt. Prints `Administrador criado: <email>`.
@@ -21948,96 +22207,7 @@ git commit -m "feat(deploy): secret generation and atomic backup scripts
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 8a: Write the failing SPA fallback test**
-
-Create `server/test/spa.test.ts`:
-
-```ts
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { FastifyInstance } from 'fastify';
-import { loginAs, makeTestApp, makeTestCtx, seedBasics } from './helpers.js';
-
-let dir: string;
-let app: FastifyInstance;
-let adminEmail: string;
-
-beforeAll(async () => {
-  dir = mkdtempSync(path.join(tmpdir(), 'talk-web-'));
-  writeFileSync(path.join(dir, 'index.html'), '<!doctype html><div id="root"></div>');
-  const ctx = await makeTestCtx();
-  const s = await seedBasics(ctx);
-  adminEmail = s.admin.email;
-  ({ app } = await makeTestApp({ ...ctx, config: { ...ctx.config, webDistDir: dir } }));
-});
-
-afterAll(async () => {
-  await app.close();
-  rmSync(dir, { recursive: true, force: true });
-});
-
-describe('SPA static + fallback', () => {
-  it('serves index.html for a deep link', async () => {
-    const res = await app.inject({ method: 'GET', url: '/conversas/x' });
-    expect(res.statusCode).toBe(200);
-    expect(res.headers['content-type']).toMatch(/text\/html/);
-    expect(res.body).toContain('id="root"');
-  });
-
-  it('serves index.html at /', async () => {
-    const res = await app.inject({ method: 'GET', url: '/' });
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('id="root"');
-  });
-
-  it('keeps unknown /api routes as JSON 404', async () => {
-    const { headers } = await loginAs(app, adminEmail);
-    const res = await app.inject({ method: 'GET', url: '/api/nada', headers });
-    expect(res.statusCode).toBe(404);
-    expect(res.json()).toEqual({ error: 'Não encontrado' });
-  });
-});
-```
-
-- [ ] **Step 8b: Run it to verify it fails**
-
-Run: `npm test -w server -- test/spa.test.ts`
-
-Expected: FAIL. `serves index.html for a deep link` and `serves index.html at /` get 404 instead of 200, and the `/api/nada` test gets Fastify's default 404 body (`{"message":"Route GET:/api/nada not found",…}`) instead of `{ error: 'Não encontrado' }`.
-
-- [ ] **Step 8c: Serve the SPA from `buildApp`**
-
-In `server/src/app.ts`, insert this block as the **last thing before the final `return app;`**, after every route registration added by Tasks 1–20:
-
-```ts
-  // SPA: static files from web/dist, and index.html for GET deep links (/conversas/<id>, ...).
-  // Must stay the last registration in buildApp. WEB_DIST_DIR="" (webDistDir null) disables it.
-  if (ctx.config.webDistDir) {
-    await app.register((await import('@fastify/static')).default, { root: ctx.config.webDistDir, wildcard: false });
-    app.setNotFoundHandler((req, reply) =>
-      req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/ws') && !req.url.startsWith('/webhooks')
-        ? reply.sendFile('index.html')
-        : reply.code(404).send({ error: 'Não encontrado' }),
-    );
-  }
-```
-
-- [ ] **Step 8d: Run it to verify it passes**
-
-Run: `npm test -w server -- test/spa.test.ts`
-
-Expected: PASS (3 tests). Then run `npm test -w server`. Expected: the whole server suite still PASSES.
-
-- [ ] **Step 8e: Commit**
-
-```bash
-git add server/src/app.ts server/test/spa.test.ts
-git commit -m "feat(server): serve the SPA with an index.html fallback for deep links
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
+(No Steps 8a–8e: Task 14 already serves the SPA from `buildApp` and owns `server/test/spa.test.ts`; registering `@fastify/static` or `setNotFoundHandler` again would throw at `buildApp`.)
 
 - [ ] **Step 9: Write the Postgres init script**
 
@@ -22406,7 +22576,7 @@ Depois disso, entre em `https://talk.jvo.adv.br` e crie os demais usuários pela
 
 ## 4. Conectar o WhatsApp
 
-1. Entre como administrador e vá em **Configurações → Canal WhatsApp**.
+1. Entre como administrador e vá em **Configurações → Canais**.
 2. Crie o canal e clique em **Gerar novo QR / Reconectar**.
 3. No celular do escritório: WhatsApp → **Aparelhos conectados** → **Conectar um aparelho** → leia o QR.
 4. O status muda para **Conectado** e o banner vermelho "WhatsApp desconectado" some.
@@ -22425,11 +22595,16 @@ O importador traz contatos, setores, etiquetas, campos personalizados e resposta
 ```bash
 cd /opt/talk
 read -rs -p 'Token do Umbler: ' UMBLER_TOKEN; echo; export UMBLER_TOKEN
-docker compose exec -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts | tee data/backup/relatorio-importacao.txt
+# 1) Ensaio (--dry-run): lê tudo do Umbler, mostra as contagens e desfaz no fim. Nada é gravado.
+docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run
+# 2) Se o ensaio estiver certo, a importação real:
+docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts
 unset UMBLER_TOKEN
+# 3) Cópia do relatório da importação real no servidor:
+docker compose cp app:/data/import-report.json data/backup/relatorio-importacao.json
 ```
 
-3. Leia o relatório. Ele sai na tela, e o `tee` acima já guarda uma cópia em `data/backup/relatorio-importacao.txt`. Dentro do container, o importador também grava `/data/import-report.json`. Ele lista o que não pôde ser convertido, como variáveis `{{n}}` sem correspondência ou anexos que não baixaram. Corrija esses itens à mão na tela de Configurações.
+3. Leia o relatório: ele sai na tela nos dois passos (o `-T` evita caracteres de terminal no texto) e a importação real também o grava em `/data/import-report.json` dentro do container, copiado acima para `data/backup/relatorio-importacao.json`. Ele lista o que não pôde ser convertido, como variáveis `{{n}}` sem correspondência ou anexos que não baixaram. Corrija esses itens à mão na tela de Configurações.
 4. Apague o token no Umbler depois da importação.
 
 ## 6. Atualizar
@@ -22586,7 +22761,7 @@ curl -fsS https://talk.jvo.adv.br/api/health
 ```
 
 8. Se o IP mudou, atualize o registro DNS **A** do domínio.
-9. Entre no sistema e confira o canal em **Configurações → Canal WhatsApp**. Se não estiver **Conectado**, use **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório.
+9. Entre no sistema e confira o canal em **Configurações → Canais**. Se não estiver **Conectado**, use **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório.
 10. Reative o cron do backup (seção 7) e a cópia fora do servidor (seção 7.1).
 
 ## 10. Checklist da virada

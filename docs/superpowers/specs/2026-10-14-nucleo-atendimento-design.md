@@ -29,7 +29,7 @@ Sistema próprio do escritório para atender clientes pelo WhatsApp, substituind
 
 ```
 VPS (Docker Compose)
-  caddy (80/443, HTTPS automático) ──► app (Node 22, TypeScript, um processo)
+  caddy (80/443, HTTPS automático) ──► app (Node 24, TypeScript, um processo)
                                          ├─ API HTTP (Fastify)          /api/*
                                          ├─ Tempo real (WebSocket)       /ws
                                          ├─ Webhook da Evolution         /webhooks/evolution/:secret  (só rede interna)
@@ -191,7 +191,7 @@ Funções em `inbox/`; cada uma exige `canSee`, altera `chats` com `UPDATE … W
   - `normalizePhoneBR`: celular de 12 dígitos com DDD ≥ 31 (ganha o 9), celular de 13 dígitos (inalterado), fixo de 12 dígitos começando com 2–5 (inalterado), número DDD 11.
   - tradução de webhook (`whatsapp/`): conteúdo, reação, revoke/edit ignorados, grupo ignorado, `fromMe` do celular, LID + `senderPn`.
   - triagem, variáveis de resposta rápida (substituição e conversão `{{n}}`→nomeada), formato da assinatura, cabeçalhos da rota de mídia.
-- **Integração (Vitest + Postgres de teste em Docker; `whatsapp/` substituído por um stub em memória):**
+- **Integração (Vitest + PGlite, Postgres em processo e em memória, com as migrations aplicadas; `whatsapp/` substituído por um stub em memória):**
   - recebida: idempotência; nova conversa após finalizar; JID de 12 dígitos casa com contato importado de 13; mensagem só com LID anexa a contato existente; 👍 em conversa finalizada **não** abre conversa; resposta pelo celular **não** liga "Esperando".
   - enviada: sucesso, falha e reenvio.
   - iniciar conversa: contato existente, telefone novo, conversa já aberta.
