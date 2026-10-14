@@ -7,6 +7,7 @@ import { authRoutes } from './auth/routes.js';
 import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
 import { registerSectorRoutes } from './catalog/sectors.js';
 import { registerTagRoutes } from './catalog/tags.js';
+import { registerContactRoutes } from './contacts/routes.js';
 import { z } from 'zod';
 import type { AppCtx } from './ctx.js';
 import { HttpError } from './lib/http-error.js';
@@ -60,6 +61,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerSectorRoutes(app, ctx);
   registerTagRoutes(app, ctx);
   registerCustomFieldRoutes(app, ctx);
+  registerContactRoutes(app, ctx);
 
   return app;
 }
