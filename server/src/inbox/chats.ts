@@ -230,3 +230,79 @@ export async function reopenChat(ctx: AppCtx, user: AuthUser, chatId: string): P
     { kind: 'reopened', data: {}, authorId: user.id },
   );
 }
+
+const MAX_PINS = 3;
+
+export async function markChatRead(ctx: AppCtx, user: AuthUser, chatId: string): Promise<void> {
+  await getChatForUser(ctx, user, chatId);
+  const changed = await ctx.db
+    .update(chats)
+    .set({ unread: 0 })
+    .where(and(eq(chats.id, chatId), gt(chats.unread, 0)))
+    .returning({ id: chats.id });
+  if (changed.length) await ctx.hub.publishChat(chatId);
+}
+
+export async function pinChat(ctx: AppCtx, user: AuthUser, chatId: string, pinned: boolean): Promise<void> {
+  await getChatForUser(ctx, user, chatId);
+  if (!pinned) {
+    await ctx.db.delete(chatPins).where(and(eq(chatPins.userId, user.id), eq(chatPins.chatId, chatId)));
+  } else {
+    // Only pins of chats I still see count, so a chat transferred away never blocks a slot.
+    const pins = await ctx.db
+      .select({ chatId: chatPins.chatId })
+      .from(chatPins)
+      .innerJoin(chats, eq(chats.id, chatPins.chatId))
+      .where(and(eq(chatPins.userId, user.id), visibleChatsWhere(user)));
+    if (pins.some((p) => p.chatId === chatId)) return;
+    // ponytail: count-then-insert can race to 4 pins with two tabs clicking at once; harmless.
+    if (pins.length >= MAX_PINS) throw conflict('Você já fixou 3 conversas. Desafixe uma para fixar outra.');
+    await ctx.db.insert(chatPins).values({ userId: user.id, chatId, createdAt: new Date() }).onConflictDoNothing();
+  }
+  await ctx.hub.publishChat(chatId);
+}
+
+async function resolveContactId(tx: Tx, input: { contactId?: string; phone?: string; name?: string }): Promise<string> {
+  if (input.contactId) {
+    if (!UUID_RE.test(input.contactId)) throw notFound('Contato não encontrado.');
+    const [c] = await tx.select({ id: contacts.id }).from(contacts).where(eq(contacts.id, input.contactId));
+    if (!c) throw notFound('Contato não encontrado.');
+    return c.id;
+  }
+  if (!input.phone) throw badRequest('Informe o contato ou o telefone.');
+  const phone = normalizePhoneBR(input.phone);
+  if (!/^55\d{10,11}$/.test(phone)) throw badRequest('Telefone inválido.');
+  const now = new Date();
+  await tx
+    .insert(contacts)
+    .values({ id: randomUUID(), name: input.name?.trim() || null, phone, blocked: false, createdAt: now, updatedAt: now })
+    .onConflictDoNothing();
+  const [c] = await tx.select({ id: contacts.id }).from(contacts).where(eq(contacts.phone, phone));
+  if (!c) throw new Error('startChat: contact insert conflicted but no contact was found');
+  return c.id;
+}
+
+/** §5.3a. Owner = me, waiting=false, triage_pending=false, no triage; reuses the open (contact, channel) chat. */
+export async function startChat(
+  ctx: AppCtx,
+  user: AuthUser,
+  input: { contactId?: string; phone?: string; name?: string; sectorId?: string },
+): Promise<ChatRow> {
+  if (input.sectorId !== undefined && !(await sectorExists(ctx.db, input.sectorId))) throw badRequest('Setor inválido.');
+  const sectorId = input.sectorId ?? (await getDefaultSectorId(ctx.db));
+  // ponytail: one WhatsApp number today; take the oldest channel. Add channelId to the input when a second number exists.
+  const [channel] = await ctx.db.select({ id: channels.id }).from(channels).orderBy(asc(channels.createdAt)).limit(1);
+  if (!channel) throw conflict('Nenhum canal de WhatsApp cadastrado.');
+
+  const { chat, created } = await ctx.db.transaction(async (tx) => {
+    const contactId = await resolveContactId(tx, input);
+    return findOrOpenChat(tx, {
+      contactId,
+      channelId: channel.id,
+      init: { sectorId, ownerId: user.id, waiting: false, triagePending: false, createdBy: user.id },
+    });
+  });
+  if (!created && !canSee(user, chat)) throw conflict(BUSY_ELSEWHERE);
+  if (created) await ctx.hub.publishChat(chat.id);
+  return chat;
+}
