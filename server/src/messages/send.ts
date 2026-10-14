@@ -1,0 +1,262 @@
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import type { AppCtx } from '../ctx.js';
+import type { Db, Tx } from '../db/client.js';
+import { channels, chats, contacts, messages, sectors } from '../db/schema.js';
+import { getChatForUser, type ChatRow } from '../inbox/chats.js';
+import { addEvent } from '../inbox/events.js';
+import type { AuthUser } from '../inbox/visibility.js';
+import { badRequest, conflict, notFound } from '../lib/http-error.js';
+import type { QuotedRef, SendResult } from '../whatsapp/types.js';
+import { messagePreview, toMessageDto } from './dto.js';
+import { baseMime, saveMedia } from './media.js';
+import { formatSignature, signatureLabel } from './signature.js';
+
+type MessageRow = typeof messages.$inferSelect;
+type MessageDto = Awaited<ReturnType<typeof toMessageDto>>;
+type OutKind = 'text' | 'image' | 'video' | 'audio' | 'document';
+
+export interface SendInput {
+  text?: string;
+  file?: { buffer: Buffer; mime: string; name: string };
+  asVoice?: boolean;
+  signature: boolean;
+  replyToId?: string;
+}
+
+/**
+ * Success path of every send (agent send, resend, triage system text — spec §5.1 idempotency).
+ * Evolution's messages.upsert echo can beat the gateway response; ingest then stored an author-less copy
+ * with our external_id. Drop it so ours keeps the id (otherwise the update hits
+ * messages_channel_external_unique), then mark ours sent — one transaction.
+ */
+export async function markSent(
+  db: Db,
+  messageId: string,
+  channelId: string,
+  externalId: string,
+): Promise<{ row: MessageRow; echoDropped: boolean }> {
+  return db.transaction(async (tx) => {
+    const gone = await tx
+      .delete(messages)
+      .where(
+        and(
+          eq(messages.channelId, channelId),
+          eq(messages.externalId, externalId),
+          isNull(messages.authorId),
+          ne(messages.id, messageId),
+        ),
+      )
+      .returning({ id: messages.id });
+    const [row] = await tx
+      .update(messages)
+      .set({ externalId, status: 'sent', error: null })
+      .where(eq(messages.id, messageId))
+      .returning();
+    return { row: row!, echoDropped: gone.length > 0 };
+  });
+}
+
+function fileKind(mime: string, asVoice: boolean): Exclude<OutKind, 'text'> {
+  const type = baseMime(mime);
+  if (asVoice) return 'audio';
+  if (type === 'image/jpeg' || type === 'image/png') return 'image';
+  if (type === 'video/mp4') return 'video';
+  return 'document';
+}
+
+/** Spec §5.2 steps 2 and 5: first sender becomes owner; agent activity clears waiting/unread/triage. */
+async function touchChat(tx: Tx, user: AuthUser, chat: ChatRow, last?: { at: Date; preview: string }): Promise<void> {
+  if (chat.ownerId === null) {
+    const won = await tx
+      .update(chats)
+      .set({ ownerId: user.id })
+      .where(and(eq(chats.id, chat.id), isNull(chats.ownerId)))
+      .returning({ id: chats.id });
+    // Same data shape as Task 7's assumeChat; the conditional UPDATE above only wins when there was no owner.
+    if (won.length > 0) await addEvent(tx, chat.id, 'assigned', { ownerId: user.id, previousOwnerId: null }, user.id);
+  }
+  await tx
+    .update(chats)
+    .set({
+      waiting: false,
+      unread: 0,
+      triagePending: false,
+      ...(last
+        ? {
+            lastMessageAt: sql`greatest(${chats.lastMessageAt}, ${last.at.toISOString()}::timestamptz)`,
+            lastMessagePreview: last.preview,
+          }
+        : {}),
+    })
+    .where(eq(chats.id, chat.id));
+}
+
+async function quotedRef(db: Db, replyToId: string | null): Promise<QuotedRef | undefined> {
+  if (!replyToId) return undefined;
+  const [orig] = await db.select().from(messages).where(eq(messages.id, replyToId));
+  if (!orig?.externalId) return undefined; // ponytail: replying to a note/failed message sends without quote
+  return { externalId: orig.externalId, body: orig.body, fromMe: orig.direction === 'out' };
+}
+
+async function callGateway(ctx: AppCtx, msg: MessageRow): Promise<SendResult> {
+  const [target] = await ctx.db
+    .select({ phone: contacts.phone, instance: channels.evolutionInstance })
+    .from(chats)
+    .innerJoin(contacts, eq(contacts.id, chats.contactId))
+    .innerJoin(channels, eq(channels.id, chats.channelId))
+    .where(eq(chats.id, msg.chatId));
+  if (!target?.phone) throw new Error('Contato sem telefone');
+  const quoted = await quotedRef(ctx.db, msg.replyToId);
+
+  if (msg.kind === 'text') return ctx.wa.sendText(target.instance, target.phone, msg.body ?? '', quoted);
+
+  if (!msg.mediaPath) throw new Error('Arquivo não encontrado');
+  const base64 = (await readFile(join(ctx.config.mediaDir, msg.mediaPath))).toString('base64');
+  if (msg.kind === 'audio') return ctx.wa.sendAudio(target.instance, target.phone, base64);
+  return ctx.wa.sendMedia(
+    target.instance,
+    target.phone,
+    {
+      kind: msg.kind as 'image' | 'video' | 'document',
+      base64,
+      mime: msg.mediaMime ?? 'application/octet-stream',
+      fileName: msg.mediaName ?? 'arquivo',
+      ...(msg.body ? { caption: msg.body } : {}),
+    },
+    quoted,
+  );
+}
+
+/** Spec §5.2 step 4: call Evolution; success → external_id + sent, failure → failed + error. */
+async function deliver(ctx: AppCtx, msg: MessageRow): Promise<MessageDto> {
+  let result: SendResult | null = null;
+  let error: string | null = null;
+  try {
+    result = await callGateway(ctx, msg);
+  } catch (err) {
+    error = err instanceof Error && err.message ? err.message.slice(0, 200) : 'Falha ao enviar';
+  }
+  let updated: MessageRow;
+  let echoDropped = false;
+  if (result) {
+    ({ row: updated, echoDropped } = await markSent(ctx.db, msg.id, msg.channelId, result.externalId));
+  } else {
+    const [row] = await ctx.db.update(messages).set({ status: 'failed', error }).where(eq(messages.id, msg.id)).returning();
+    updated = row!;
+  }
+  await ctx.hub.publishMessage(msg.chatId, 'message.updated', msg.id);
+  // ponytail: triage_pending needs no restore here: touchChat already set it (and waiting) false before the
+  // gateway call, the same values the echo wrote. The echo's own message.created bubble stays on open clients
+  // until the timeline is refetched; the contract has no message.removed event. Add one if that shows up in use.
+  if (echoDropped) await ctx.hub.publishChat(msg.chatId);
+  return toMessageDto(ctx.db, updated);
+}
+
+export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: string, input: SendInput): Promise<MessageDto> {
+  const chat = await getChatForUser(ctx, user, chatId); // 404 also covers private chats of someone else
+  if (chat.state !== 'open') throw conflict('Conversa finalizada');
+
+  const file = input.file ?? null;
+  const asVoice = !!input.asVoice && file !== null;
+  if (file && asVoice && !baseMime(file.mime).startsWith('audio/')) throw badRequest('Áudio inválido');
+  const text = asVoice ? null : input.text?.trim() || null;
+  if (!text && !file) throw badRequest('Mensagem vazia');
+
+  let replyToId: string | null = null;
+  if (input.replyToId) {
+    const [orig] = await ctx.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(and(eq(messages.id, input.replyToId), eq(messages.chatId, chatId)));
+    if (!orig) throw badRequest('Mensagem citada não encontrada');
+    replyToId = orig.id;
+  }
+
+  let body = text;
+  if (text && input.signature) {
+    const [sector] = await ctx.db.select({ name: sectors.name }).from(sectors).where(eq(sectors.id, chat.sectorId));
+    body = formatSignature(text, signatureLabel(user, sector?.name ?? ''));
+  }
+
+  const kind: OutKind = file ? fileKind(file.mime, asVoice) : 'text';
+  const media = file ? await saveMedia(ctx.config.mediaDir, file.buffer, file.mime, file.name) : null;
+  const now = new Date();
+
+  const row = await ctx.db.transaction(async (tx) => {
+    await touchChat(tx, user, chat, { at: now, preview: messagePreview(kind, text) });
+    const [inserted] = await tx
+      .insert(messages)
+      .values({
+        id: randomUUID(),
+        chatId,
+        channelId: chat.channelId,
+        direction: 'out',
+        kind,
+        body,
+        mediaPath: media?.path ?? null,
+        mediaMime: file?.mime ?? null,
+        mediaSize: media?.size ?? null,
+        mediaName: file?.name ?? null,
+        authorId: user.id,
+        replyToId,
+        status: 'pending',
+        sentAt: now,
+      })
+      .returning();
+    return inserted!;
+  });
+
+  await ctx.hub.publishMessage(chatId, 'message.created', row.id);
+  await ctx.hub.publishChat(chatId);
+  return deliver(ctx, row);
+}
+
+export async function resendMessage(ctx: AppCtx, user: AuthUser, messageId: string): Promise<MessageDto> {
+  const [msg] = await ctx.db.select().from(messages).where(eq(messages.id, messageId));
+  if (!msg) throw notFound();
+  const chat = await getChatForUser(ctx, user, msg.chatId);
+  if (msg.direction !== 'out' || msg.kind === 'note' || msg.status !== 'failed') {
+    throw conflict('Só mensagens com falha podem ser reenviadas');
+  }
+  if (chat.state !== 'open') throw conflict('Conversa finalizada');
+
+  const row = await ctx.db.transaction(async (tx) => {
+    const [claimed] = await tx
+      .update(messages)
+      .set({ status: 'pending', error: null })
+      .where(and(eq(messages.id, messageId), eq(messages.status, 'failed')))
+      .returning();
+    if (!claimed) throw conflict('Só mensagens com falha podem ser reenviadas');
+    await touchChat(tx, user, chat);
+    return claimed;
+  });
+
+  await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
+  await ctx.hub.publishChat(row.chatId);
+  return deliver(ctx, row);
+}
+
+export async function addNote(ctx: AppCtx, user: AuthUser, chatId: string, text: string): Promise<MessageDto> {
+  const chat = await getChatForUser(ctx, user, chatId);
+  const body = text.trim();
+  if (!body) throw badRequest('Nota vazia');
+  const [row] = await ctx.db
+    .insert(messages)
+    .values({
+      id: randomUUID(),
+      chatId,
+      channelId: chat.channelId,
+      direction: 'out',
+      kind: 'note',
+      body,
+      authorId: user.id,
+      status: 'sent', // ponytail: notes never reach WhatsApp; 'sent' is just a non-pending value, UI hides ticks for notes
+      sentAt: new Date(),
+    })
+    .returning();
+  await ctx.hub.publishMessage(chatId, 'message.created', row!.id);
+  return toMessageDto(ctx.db, row!);
+}

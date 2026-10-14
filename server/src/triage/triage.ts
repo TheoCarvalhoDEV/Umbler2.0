@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -6,6 +6,7 @@ import { channels, chats, contacts, messages, sectors, settings } from '../db/sc
 import type { ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import { messagePreview } from '../messages/dto.js';
+import { markSent } from '../messages/send.js';
 
 export interface TriageOption { key: string; label: string; sectorId: string }
 export interface TriageMenu { enabled: boolean; welcomeText: string; invalidText: string; options: TriageOption[] }
@@ -56,37 +57,6 @@ export function matchTriageOption(text: string, menu: TriageMenu, sectorNames: M
 async function loadSectorNames(db: Db | Tx): Promise<Map<string, string>> {
   const rows = await db.select({ id: sectors.id, name: sectors.name }).from(sectors);
   return new Map(rows.map((r) => [r.id, r.name]));
-}
-
-// Success path of a send (Task 10 moves this function, unchanged, into messages/send.ts and exports it).
-// Evolution's messages.upsert echo can beat the gateway response; ingest then stored an author-less copy
-// with our external_id. Drop it so ours keeps the id (otherwise the update hits
-// messages_channel_external_unique), then mark ours sent — one transaction.
-async function markSent(
-  db: Db,
-  messageId: string,
-  channelId: string,
-  externalId: string,
-): Promise<{ row: typeof messages.$inferSelect; echoDropped: boolean }> {
-  return db.transaction(async (tx) => {
-    const gone = await tx
-      .delete(messages)
-      .where(
-        and(
-          eq(messages.channelId, channelId),
-          eq(messages.externalId, externalId),
-          isNull(messages.authorId),
-          ne(messages.id, messageId),
-        ),
-      )
-      .returning({ id: messages.id });
-    const [row] = await tx
-      .update(messages)
-      .set({ externalId, status: 'sent', error: null })
-      .where(eq(messages.id, messageId))
-      .returning();
-    return { row: row!, echoDropped: gone.length > 0 };
-  });
 }
 
 // System (bot) text: stored as an `out` message without author, signature or owner change.
