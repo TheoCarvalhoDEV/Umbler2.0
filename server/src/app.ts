@@ -1,6 +1,9 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
@@ -75,6 +78,18 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerSettingsRoutes(app, ctx);
   await chatRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
+
+  // Spec §2: the compiled React front is served at /. Any other GET outside /api, /ws and /webhooks is a
+  // client-side route, so it gets index.html. Keep this block last in buildApp.
+  const dist = ctx.config.webDistDir;
+  const spa = dist !== null && existsSync(join(dist, 'index.html'));
+  if (spa) await app.register(fastifyStatic, { root: dist, wildcard: false });
+  app.setNotFoundHandler((req, reply) => {
+    const clientRoute =
+      req.method === 'GET' && !req.url.startsWith('/api/') && !req.url.startsWith('/ws') && !req.url.startsWith('/webhooks/');
+    if (spa && clientRoute) return reply.type('text/html').sendFile('index.html');
+    return reply.code(404).send({ error: 'Não encontrado' });
+  });
 
   return app;
 }
