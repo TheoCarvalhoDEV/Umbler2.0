@@ -4,6 +4,9 @@ import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
 import { authRoutes } from './auth/routes.js';
+import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
+import { registerSectorRoutes } from './catalog/sectors.js';
+import { registerTagRoutes } from './catalog/tags.js';
 import { z } from 'zod';
 import type { AppCtx } from './ctx.js';
 import { HttpError } from './lib/http-error.js';
@@ -53,6 +56,10 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
 
   app.get('/api/health', async () => ({ ok: true }));
   // Later tasks register their routes here, passing `ctx`.
+
+  registerSectorRoutes(app, ctx);
+  registerTagRoutes(app, ctx);
+  registerCustomFieldRoutes(app, ctx);
 
   return app;
 }
