@@ -8,6 +8,7 @@ import { authRoutes } from './auth/routes.js';
 import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
 import { registerQuickAnswerRoutes } from './catalog/quick-answers.js';
 import { registerSectorRoutes } from './catalog/sectors.js';
+import { registerSettingsRoutes } from './catalog/settings.js';
 import { registerTagRoutes } from './catalog/tags.js';
 import { registerUserRoutes } from './catalog/users.js';
 import { registerContactRoutes } from './contacts/routes.js';
@@ -69,6 +70,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   // Root-level so every route module (quick answers here, chats in Task 13) can read multipart bodies.
   await app.register(multipart, { limits: { fileSize: 64 * 1024 * 1024, files: 1 } });
   registerQuickAnswerRoutes(app, ctx);
+  registerSettingsRoutes(app, ctx);
 
   return app;
 }
