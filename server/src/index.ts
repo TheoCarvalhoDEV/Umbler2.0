@@ -7,12 +7,15 @@ import { buildApp } from './app.js';
 import { syncChannelStatuses } from './channels/service.js';
 import { failInterruptedSends } from './messages/send.js';
 import { createBotRuntime } from './bots/runtime.js';
+import { failInterruptedRuns } from './bots/engine.js';
+import { createScheduler } from './bots/scheduler.js';
 import type { AppCtx } from './ctx.js';
 
 const config = loadConfig(process.env);
 const db = createPgDb(config.databaseUrl);
 await runMigrations(db);
 await failInterruptedSends(db); // before listen: nothing can be mid-send yet
+await failInterruptedRuns(db); // same: a bot run still 'running' died with the previous process; frees its chat
 
 const ctx: AppCtx = {
   db,
@@ -40,9 +43,14 @@ syncChannelStatuses(ctx).catch((err: unknown) => app.log.error({ err }, 'falha a
 
 await app.listen({ host: '0.0.0.0', port: config.port });
 
+// Waiting bot runs live in the DB; every 5 s this wakes the due ones (wait_interval timers and reply timeouts).
+const scheduler = createScheduler(ctx);
+scheduler.start();
+
 // Node as PID 1 in Docker ignores SIGTERM unless handled; close cleanly so `docker compose stop` is fast
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
+    scheduler.stop();
     void app.close().then(() => process.exit(0));
   });
 }
