@@ -274,6 +274,37 @@ describe('handleTriageReply', () => {
     expect(ctx.wa.sent).toHaveLength(2);
   });
 
+  it('keeps "Esperando" when the echo of the invalid text beats the gateway response', async () => {
+    const { ctx, chat } = await setup();
+    await startTriage(ctx, chat);
+    const realSendText = ctx.wa.sendText.bind(ctx.wa);
+    vi.spyOn(ctx.wa, 'sendText').mockImplementation(async (instance, phone, text, quoted) => {
+      const res = await realSendText(instance, phone, text, quoted);
+      // The fromMe echo's ingest while our call is pending: author-less copy, waiting/triage_pending cleared.
+      await ctx.db.insert(messages).values({
+        id: crypto.randomUUID(), chatId: chat.id, channelId: chat.channelId, direction: 'out', kind: 'text',
+        body: text, authorId: null, externalId: res.externalId, status: 'sent', sentAt: new Date(),
+      });
+      await ctx.db.update(chats).set({ waiting: false, triagePending: false }).where(eq(chats.id, chat.id));
+      return res;
+    });
+
+    expect(await handleTriageReply(ctx, await reload(ctx, chat.id), 'quero falar com alguém')).toBe(true);
+
+    const after = await reload(ctx, chat.id);
+    expect(after.waiting).toBe(true); // nobody answered the contact yet
+    expect(after.triagePending).toBe(false);
+    expect((await chatMessages(ctx, chat.id)).filter((m) => m.body === INVALID)).toHaveLength(1);
+  });
+
+  it('sends the menu to a contact known only by LID', async () => {
+    const { ctx, chat } = await setup();
+    await ctx.db.update(contacts).set({ phone: null, lid: '987654321' }).where(eq(contacts.id, chat.contactId));
+    await startTriage(ctx, chat);
+    expect(ctx.wa.sent[0]).toMatchObject({ method: 'sendText', phone: '987654321@lid' });
+    expect((await reload(ctx, chat.id)).triagePending).toBe(true);
+  });
+
   it('treats a media message (null text) as an invalid reply', async () => {
     const { ctx, seed, chat } = await setup();
     await startTriage(ctx, chat);
