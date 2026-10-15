@@ -24,9 +24,9 @@ const BAD_AVATAR = 'Envie uma imagem JPEG, PNG ou WebP de até 2 MB no campo "fi
 async function readAvatarUpload(req: FastifyRequest): Promise<{ data: Buffer; ext: string }> {
   try {
     const part = await req.file({ limits: { fileSize: AVATAR_MAX_BYTES, files: 1 } });
-    if (!part || part.fieldname !== 'file') throw badRequest(BAD_AVATAR);
-    const data = await part.toBuffer(); // throws (413) past the limit
-    if (!USER_AVATAR_TYPES.includes(part.mimetype)) throw badRequest(BAD_AVATAR);
+    if (!part) throw badRequest(BAD_AVATAR);
+    const data = await part.toBuffer(); // drains the part either way; throws (413) past the limit
+    if (part.fieldname !== 'file' || !USER_AVATAR_TYPES.includes(part.mimetype)) throw badRequest(BAD_AVATAR);
     return { data, ext: AVATAR_TYPES[part.mimetype]! };
   } catch (err) {
     // @fastify/multipart: 413 file too large, 406 not multipart, ...
