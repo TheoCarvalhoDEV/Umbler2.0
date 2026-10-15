@@ -149,4 +149,30 @@ describe('Composer', () => {
     fireEvent.keyDown(box(), { key: 'Enter' });
     await waitFor(() => expect(posts('/api/chats/c1/messages').map((c) => c.body)).toEqual([{ text: 'Sem assinatura', signature: false }]));
   });
+
+  it('clears the box as soon as the send starts and keeps what was typed while it was in flight', async () => {
+    let resolve!: (r: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => (resolve = r))));
+    const { qc } = renderComposer();
+    fireEvent.change(box(), { target: { value: 'Bom dia' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(box().value).toBe('');
+
+    fireEvent.change(box(), { target: { value: 'Seu processo' } });
+    resolve(new Response(JSON.stringify(message()), { status: 200, headers: { 'content-type': 'application/json' } }));
+    await waitFor(() => expect(qc.getQueryData<TimelineData>(qk.timeline('c1'))!.pages[0]).toHaveLength(1));
+    expect(box().value).toBe('Seu processo');
+  });
+
+  it('puts the text back when the send fails and the box is still empty', async () => {
+    let resolve!: (r: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => (resolve = r))));
+    renderComposer();
+    fireEvent.change(box(), { target: { value: 'Bom dia' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(box().value).toBe('');
+
+    resolve(new Response(JSON.stringify({ error: 'Falhou' }), { status: 500, headers: { 'content-type': 'application/json' } }));
+    await waitFor(() => expect(box().value).toBe('Bom dia'));
+  });
 });

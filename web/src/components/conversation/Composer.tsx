@@ -79,6 +79,9 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorder = useAudioRecorder();
   const isNote = mode === 'note';
+  // read after an await: a reply chip picked while a send was in flight must survive it
+  const replyRef = useRef(replyTo);
+  replyRef.current = replyTo;
 
   // "/" followed by an optional filter (no spaces) opens the quick answer picker
   const slash = /^\/(\S*)$/.exec(text);
@@ -136,17 +139,24 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
     const value = text.trim();
     if (sending || (!value && !file)) return;
     const replyToId = isNote ? undefined : replyTo?.id;
+    const sentText = text, sentFile = file, sentReply = replyTo;
+    // Clear now: the POST waits for Evolution (seconds), and the attendant keeps typing meanwhile.
+    setText('');
+    setFile(null);
     const ok = await submit(() =>
       isNote
         ? api.chats.addNote(chatId, value)
-        : file
-          ? api.chats.sendFile(chatId, { file, text: value || undefined, signature, replyToId })
+        : sentFile
+          ? api.chats.sendFile(chatId, { file: sentFile, text: value || undefined, signature, replyToId })
           : api.chats.sendText(chatId, { text: value, signature, replyToId }),
     );
-    if (!ok) return;
-    setText('');
-    setFile(null);
-    if (!isNote) onClearReply();
+    if (!ok) {
+      // put it back only where the attendant has not started something new
+      setText((cur) => (cur === '' ? sentText : cur));
+      setFile((cur) => cur ?? sentFile);
+      return;
+    }
+    if (!isNote && replyRef.current === sentReply) onClearReply();
   }
 
   async function toggleRecording() {
@@ -160,10 +170,11 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
     }
     const audio = await recorder.stop();
     if (!audio) return;
+    const sentReply = replyTo;
     const ok = await submit(() =>
-      api.chats.sendFile(chatId, { file: audio, signature: false, asVoice: true, replyToId: replyTo?.id }),
+      api.chats.sendFile(chatId, { file: audio, signature: false, asVoice: true, replyToId: sentReply?.id }),
     );
-    if (ok) onClearReply();
+    if (ok && replyRef.current === sentReply) onClearReply();
   }
 
   async function pickAnswer(qa: QuickAnswerDto) {
