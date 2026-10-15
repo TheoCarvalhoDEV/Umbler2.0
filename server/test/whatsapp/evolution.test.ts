@@ -141,6 +141,31 @@ describe('createEvolutionGateway', () => {
     });
   });
 
+  it('sendAudio sends quoted when replying', async () => {
+    const { wa, req } = setup(201, SENT_MESSAGE);
+    await wa.sendAudio('talk-abc', PHONE, 'T2dnUw==', { externalId: 'QUOTED3', body: 'Pergunta', fromMe: false });
+    expect(req().body).toEqual({
+      number: PHONE,
+      audio: 'T2dnUw==',
+      quoted: {
+        key: { id: 'QUOTED3', fromMe: false, remoteJid: `${PHONE}@s.whatsapp.net` },
+        message: { conversation: 'Pergunta' },
+      },
+    });
+  });
+
+  it('addresses a LID contact as-is, including the quoted remoteJid', async () => {
+    const { wa, req } = setup(201, SENT_MESSAGE);
+    await wa.sendText('talk-abc', '123456789@lid', 'Oi', { externalId: 'Q4', body: 'x', fromMe: false });
+    expect(req().body).toMatchObject({ number: '123456789@lid', quoted: { key: { remoteJid: '123456789@lid' } } });
+  });
+
+  it('every call carries an abort signal (timeout)', async () => {
+    const { wa, fetchMock } = setup(201, SENT_MESSAGE);
+    await wa.sendText('talk-abc', PHONE, 'Oi');
+    expect(fetchMock.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('downloadMedia posts the raw webhook message and maps the response', async () => {
     const raw = { key: { id: 'IN1', remoteJid: `${PHONE}@s.whatsapp.net`, fromMe: false }, message: { imageMessage: { mimetype: 'image/jpeg' } } };
     const { wa, req } = setup(201, {

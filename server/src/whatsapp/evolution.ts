@@ -16,7 +16,7 @@
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/dto/instance.dto.ts
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/integrations/event/event.manager.ts
 // - SendTextDto { number, text, quoted? }, SendMediaDto { number, mediatype, mimetype, caption, fileName, media },
-//   SendAudioDto { number, audio }, Quoted { key, message }:
+//   SendAudioDto { number, audio, quoted? } (quoted comes from the shared Metadata base), Quoted { key, message }:
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/dto/sendMessage.dto.ts
 // - getBase64FromMediaMessageDto { message, convertToMp4 }:
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/dto/chat.dto.ts
@@ -44,6 +44,8 @@ export function createEvolutionGateway(
       method,
       headers: { apikey: cfg.apiKey, 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      // ponytail: one timeout for every call, just above Baileys' 60 s default query timeout; split per route if media uploads need longer
+      signal: AbortSignal.timeout(90_000),
     });
     const text = await res.text();
     if (!res.ok) throw new Error(`Evolution ${method} ${path} failed: ${res.status} ${text.slice(0, 300)}`);
@@ -52,12 +54,13 @@ export function createEvolutionGateway(
 
   const seg = (instance: string) => encodeURIComponent(instance);
 
+  // `phone` is our canonical digits or, for a LID-only contact, an already-complete '<lid>@lid' address.
   function quotedPayload(phone: string, q: QuotedRef | undefined) {
     if (!q) return undefined;
     // ponytail: remoteJid uses our canonical 13-digit phone. If WhatsApp knows the contact by its 12-digit JID,
     // the quote still threads by key.id; only the quoted author label may differ. Upgrade: store the real JID per contact.
     return {
-      key: { id: q.externalId, fromMe: q.fromMe, remoteJid: `${phone}@s.whatsapp.net` },
+      key: { id: q.externalId, fromMe: q.fromMe, remoteJid: phone.includes('@') ? phone : `${phone}@s.whatsapp.net` },
       message: { conversation: q.body ?? '' },
     };
   }
@@ -109,8 +112,8 @@ export function createEvolutionGateway(
       });
     },
 
-    sendAudio(instance, phone, base64) {
-      return send(`/message/sendWhatsAppAudio/${seg(instance)}`, { number: phone, audio: base64 });
+    sendAudio(instance, phone, base64, quoted) {
+      return send(`/message/sendWhatsAppAudio/${seg(instance)}`, { number: phone, audio: base64, quoted: quotedPayload(phone, quoted) });
     },
 
     async downloadMedia(instance, rawMessage): Promise<DownloadedMedia> {

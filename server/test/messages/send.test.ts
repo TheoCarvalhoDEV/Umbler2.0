@@ -7,7 +7,7 @@ import { and, eq } from 'drizzle-orm';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 import { chatEvents, chats, contacts, messages } from '../../src/db/schema.js';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
-import { addNote, resendMessage, sendAgentMessage } from '../../src/messages/send.js';
+import { addNote, failInterruptedSends, markSent, resendMessage, sendAgentMessage } from '../../src/messages/send.js';
 import { handleInbound } from '../../src/messages/ingest.js';
 import type { AuthUser } from '../../src/inbox/visibility.js';
 
@@ -135,6 +135,85 @@ describe('sendAgentMessage — webhook echo arriving before the gateway returns'
   });
 });
 
+describe('markSent — echo committing while our UPDATE waits (real Postgres, READ COMMITTED)', () => {
+  it('retries once on a unique violation and keeps only our row, sent', async () => {
+    const chatId = await openChat();
+    const ourId = randomUUID();
+    await ctx.db.insert(messages).values({
+      id: ourId, chatId, channelId: seed.channelId, direction: 'out', kind: 'text', body: 'Oi',
+      authorId: agentA.id, status: 'pending', sentAt: new Date(),
+    });
+    // PGlite serializes transactions, so simulate the interleaving: the first attempt's DELETE missed the
+    // uncommitted echo, the echo then committed and the UPDATE hit messages_channel_external_unique.
+    vi.spyOn(ctx.db, 'transaction').mockImplementationOnce(async () => {
+      await ctx.db.insert(messages).values({
+        id: randomUUID(), chatId, channelId: seed.channelId, direction: 'out', kind: 'text', body: 'Oi',
+        authorId: null, externalId: 'EXT-R', status: 'sent', sentAt: new Date(),
+      });
+      throw Object.assign(new Error('Failed query'), { cause: { code: '23505' } });
+    });
+
+    const res = await markSent(ctx.db, ourId, seed.channelId, 'EXT-R');
+
+    expect(res.echoDropped).toBe(true);
+    const rows = await ctx.db.select().from(messages).where(eq(messages.chatId, chatId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: ourId, status: 'sent', externalId: 'EXT-R' });
+  });
+
+  it('rethrows any other error', async () => {
+    vi.spyOn(ctx.db, 'transaction').mockRejectedValueOnce(new Error('boom'));
+    await expect(markSent(ctx.db, randomUUID(), seed.channelId, 'X')).rejects.toThrow('boom');
+  });
+});
+
+describe('failInterruptedSends', () => {
+  it('marks every pending row failed so it can be resent after a restart', async () => {
+    const chatId = await openChat();
+    const pendingId = randomUUID();
+    await ctx.db.insert(messages).values({
+      id: pendingId, chatId, channelId: seed.channelId, direction: 'out', kind: 'text', body: 'Oi',
+      authorId: agentA.id, status: 'pending', sentAt: new Date(),
+    });
+    const sent = await sendAgentMessage(ctx, agentA, chatId, { text: 'ok', signature: false });
+
+    await failInterruptedSends(ctx.db);
+
+    const [row] = await ctx.db.select().from(messages).where(eq(messages.id, pendingId));
+    expect(row).toMatchObject({ status: 'failed', error: 'Envio interrompido' });
+    expect((await ctx.db.select().from(messages).where(eq(messages.id, sent.id)))[0]!.status).toBe('sent');
+    expect((await resendMessage(ctx, agentA, pendingId)).status).toBe('sent');
+  });
+});
+
+describe('sendAgentMessage — contact known only by LID', () => {
+  it('addresses the contact as <lid>@lid', async () => {
+    const contactId = randomUUID();
+    await ctx.db.insert(contacts).values({ id: contactId, name: null, phone: null, lid: '123456789' });
+    const { chat } = await findOrOpenChat(ctx.db, {
+      contactId, channelId: seed.channelId,
+      init: { sectorId: seed.sectorA, ownerId: null, waiting: true, triagePending: false, createdBy: null },
+    });
+    const sendText = vi.spyOn(ctx.wa, 'sendText');
+
+    const dto = await sendAgentMessage(ctx, agentA, chat.id, { text: 'Oi', signature: false });
+
+    expect(sendText).toHaveBeenCalledWith('talk-test', '123456789@lid', 'Oi', undefined);
+    expect(dto.status).toBe('sent');
+  });
+
+  it('fails with "Contato sem telefone" when there is neither phone nor lid', async () => {
+    const contactId = randomUUID();
+    await ctx.db.insert(contacts).values({ id: contactId, name: 'Sem nada', phone: null, lid: null });
+    const { chat } = await findOrOpenChat(ctx.db, {
+      contactId, channelId: seed.channelId,
+      init: { sectorId: seed.sectorA, ownerId: null, waiting: true, triagePending: false, createdBy: null },
+    });
+    const dto = await sendAgentMessage(ctx, agentA, chat.id, { text: 'Oi', signature: false });
+    expect(dto).toMatchObject({ status: 'failed', error: 'Contato sem telefone' });
+  });
+});
+
 describe('sendAgentMessage — visibility and privacy', () => {
   it('agent of another sector gets 404', async () => {
     const chatId = await openChat();
@@ -207,7 +286,7 @@ describe('sendAgentMessage — files', () => {
       file: { buffer, mime: 'audio/ogg; codecs=opus', name: 'gravacao.ogg' },
     });
 
-    expect(sendAudio).toHaveBeenCalledWith('talk-test', PHONE, buffer.toString('base64'));
+    expect(sendAudio).toHaveBeenCalledWith('talk-test', PHONE, buffer.toString('base64'), undefined);
     expect(dto).toMatchObject({ kind: 'audio', body: null, status: 'sent' });
     expect((await getChat(chatId)).lastMessagePreview).toBe('🎤 Áudio');
   });
@@ -252,6 +331,25 @@ describe('sendAgentMessage — reply', () => {
 
     expect(sendText).toHaveBeenCalledWith('talk-test', PHONE, 'Amanhã.', { externalId: 'EXT-1', body: 'Qual o prazo?', fromMe: false });
     expect(dto.replyTo?.id).toBe(inboundId);
+  });
+
+  it('voice note reply sends the quoted key too', async () => {
+    const chatId = await openChat();
+    const inboundId = randomUUID();
+    await ctx.db.insert(messages).values({
+      id: inboundId, chatId, channelId: seed.channelId, direction: 'in', kind: 'text',
+      body: 'Me manda um áudio', externalId: 'EXT-2', status: 'sent', sentAt: new Date(),
+    });
+    const sendAudio = vi.spyOn(ctx.wa, 'sendAudio');
+    const buffer = Buffer.from('ogg');
+
+    await sendAgentMessage(ctx, agentA, chatId, {
+      signature: false, asVoice: true, replyToId: inboundId, file: { buffer, mime: 'audio/ogg', name: 'a.ogg' },
+    });
+
+    expect(sendAudio).toHaveBeenCalledWith('talk-test', PHONE, buffer.toString('base64'), {
+      externalId: 'EXT-2', body: 'Me manda um áudio', fromMe: false,
+    });
   });
 
   it('replyToId from another chat is 400', async () => {

@@ -38,7 +38,7 @@ export async function markSent(
   channelId: string,
   externalId: string,
 ): Promise<{ row: MessageRow; echoDropped: boolean }> {
-  return db.transaction(async (tx) => {
+  const attempt = () => db.transaction(async (tx) => {
     const gone = await tx
       .delete(messages)
       .where(
@@ -57,6 +57,28 @@ export async function markSent(
       .returning();
     return { row: row!, echoDropped: gone.length > 0 };
   });
+  try {
+    return await attempt();
+  } catch (err) {
+    // drizzle wraps the postgres-js error, so the SQLSTATE may sit on `cause`.
+    const e = err as { code?: string; cause?: { code?: string } } | null;
+    if ((e?.code ?? e?.cause?.code) !== '23505') throw err;
+    // ponytail: one retry covers the echo committing mid-markSent (our DELETE missed it, our UPDATE then waited on
+    // the unique index); Postgres only raises 23505 after that commit, so the echo is visible on the second pass.
+    return attempt();
+  }
+}
+
+/** Boot sweep: a row still 'pending' was interrupted (restart/kill mid-send); 'failed' lets the agent resend it. */
+export async function failInterruptedSends(db: Db): Promise<void> {
+  // ponytail: single app process, so every row still pending at boot was interrupted by a restart;
+  // needs an age/owner guard if the app ever runs more than one replica. Nothing is published: clients refetch on reconnect.
+  await db.update(messages).set({ status: 'failed', error: 'Envio interrompido' }).where(eq(messages.status, 'pending'));
+}
+
+/** WhatsApp address: canonical phone digits, or '<lid>@lid' for a contact known only by LID. */
+export function waAddress(c: { phone: string | null; lid: string | null } | undefined): string | null {
+  return c?.phone ?? (c?.lid ? `${c.lid}@lid` : null);
 }
 
 function fileKind(mime: string, asVoice: boolean): Exclude<OutKind, 'text'> {
@@ -103,22 +125,23 @@ async function quotedRef(db: Db, replyToId: string | null): Promise<QuotedRef | 
 
 async function callGateway(ctx: AppCtx, msg: MessageRow): Promise<SendResult> {
   const [target] = await ctx.db
-    .select({ phone: contacts.phone, instance: channels.evolutionInstance })
+    .select({ phone: contacts.phone, lid: contacts.lid, instance: channels.evolutionInstance })
     .from(chats)
     .innerJoin(contacts, eq(contacts.id, chats.contactId))
     .innerJoin(channels, eq(channels.id, chats.channelId))
     .where(eq(chats.id, msg.chatId));
-  if (!target?.phone) throw new Error('Contato sem telefone');
+  const to = waAddress(target);
+  if (!target || !to) throw new Error('Contato sem telefone');
   const quoted = await quotedRef(ctx.db, msg.replyToId);
 
-  if (msg.kind === 'text') return ctx.wa.sendText(target.instance, target.phone, msg.body ?? '', quoted);
+  if (msg.kind === 'text') return ctx.wa.sendText(target.instance, to, msg.body ?? '', quoted);
 
   if (!msg.mediaPath) throw new Error('Arquivo não encontrado');
   const base64 = (await readFile(join(ctx.config.mediaDir, msg.mediaPath))).toString('base64');
-  if (msg.kind === 'audio') return ctx.wa.sendAudio(target.instance, target.phone, base64);
+  if (msg.kind === 'audio') return ctx.wa.sendAudio(target.instance, to, base64, quoted);
   return ctx.wa.sendMedia(
     target.instance,
-    target.phone,
+    to,
     {
       kind: msg.kind as 'image' | 'video' | 'document',
       base64,

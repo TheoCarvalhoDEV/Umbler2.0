@@ -11,7 +11,7 @@ export interface WhatsAppGateway {
   connectionState(instance: string): Promise<ChannelStatus>;
   sendText(instance: string, phone: string, text: string, quoted?: QuotedRef): Promise<SendResult>;
   sendMedia(instance: string, phone: string, media: OutgoingMedia, quoted?: QuotedRef): Promise<SendResult>;
-  sendAudio(instance: string, phone: string, base64: string): Promise<SendResult>;
+  sendAudio(instance: string, phone: string, base64: string, quoted?: QuotedRef): Promise<SendResult>;
   downloadMedia(instance: string, rawMessage: unknown): Promise<DownloadedMedia>;
 }
 

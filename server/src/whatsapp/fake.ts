@@ -54,8 +54,8 @@ export function createFakeGateway(): WhatsAppGateway & {
     async sendMedia(instance, phone, media, quoted) {
       return send('sendMedia', instance, phone, { media, quoted });
     },
-    async sendAudio(instance, phone, base64) {
-      return send('sendAudio', instance, phone, { base64 });
+    async sendAudio(instance, phone, base64, quoted) {
+      return send('sendAudio', instance, phone, { base64, quoted });
     },
     async downloadMedia() {
       guard();

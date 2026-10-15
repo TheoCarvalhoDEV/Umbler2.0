@@ -5,11 +5,13 @@ import { createEvolutionGateway } from './whatsapp/evolution.js';
 import { createHub } from './realtime/hub.js';
 import { buildApp } from './app.js';
 import { syncChannelStatuses } from './channels/service.js';
+import { failInterruptedSends } from './messages/send.js';
 import type { AppCtx } from './ctx.js';
 
 const config = loadConfig(process.env);
 const db = createPgDb(config.databaseUrl);
 await runMigrations(db);
+await failInterruptedSends(db); // before listen: nothing can be mid-send yet
 
 const ctx: AppCtx = {
   db,
