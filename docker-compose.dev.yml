@@ -1,6 +1,6 @@
 # Ambiente de DESENVOLVIMENTO local: só Postgres e Evolution em Docker.
 # O app (API + telas) roda no seu computador com `npm run dev`.
-# Uso: veja README › "Rodar localmente". Nunca use este arquivo em produção.
+# Uso: veja README.md › "Rodar localmente". Nunca use este arquivo em produção.
 name: talk-dev
 
 services:

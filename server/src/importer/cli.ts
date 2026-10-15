@@ -7,7 +7,7 @@ import { importUmbler } from './umbler.js';
 // One-off import at go-live, after the app has started once (migrations applied):
 //   npm run import:umbler -w server -- --token <UMBLER_TOKEN> --dry-run   (simulate, prints the report)
 //   npm run import:umbler -w server -- --token <UMBLER_TOKEN>             (imports, saves the report)
-// Production (README §5): docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run, then without --dry-run
+// Production (docs/IMPLANTACAO.md §5): docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run, then without --dry-run
 // UMBLER_TOKEN in the environment works too and keeps the token out of shell history and `ps`.
 const USAGE = 'Uso: npm run import:umbler -w server -- --token <UMBLER_TOKEN> [--dry-run]';
 

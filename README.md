@@ -1,306 +1,128 @@
-# Atendimento WhatsApp do escritório
+# Umbler 2.0 — atendimento WhatsApp do escritório
 
-Sistema próprio de atendimento pelo WhatsApp que substitui o Umbler Talk.
+Sistema próprio de atendimento a clientes pelo WhatsApp, feito para substituir o Umbler Talk no escritório. Vários atendentes usam o mesmo número, organizados por setores, com transferência, notas internas, respostas rápidas e triagem automática.
 
-Um VPS roda, via Docker Compose:
+> **Repositório privado.** O código vai guardar dados de clientes de um escritório de advocacia (LGPD). Nunca versione `.env`, `data/` ou `screenshots/`. O `.gitignore` já bloqueia esses caminhos.
 
-- **caddy**: HTTPS automático, a única porta aberta;
-- **app**: API, tempo real e telas;
-- **postgres**: bancos `talk` e `evolution`;
-- **evolution**: a ponte com o WhatsApp, conectada por QR Code.
+## O que já funciona (núcleo, v0.1)
 
-A mídia fica em `/opt/talk/data/media` e os backups em `/opt/talk/data/backup`.
+- **Conexão WhatsApp** por QR Code, via [Evolution API](https://github.com/EvolutionAPI/evolution-api) v2.3.7. A tela mostra o status do canal e tem o botão de reconectar.
+- **Caixa de conversas:**
+  - abas Entrada, Esperando e Finalizados;
+  - busca e filtros por setor, atendente, etiqueta e período;
+  - não lidas e conversas fixadas;
+  - botão de nova conversa.
+- **Conversa:**
+  - texto, imagem, áudio (ouvir e gravar), vídeo e documento;
+  - resposta citada, reações, status ✓✓ e notas internas;
+  - linha do tempo de eventos e assinatura `*Setor - Nome:*`.
+- **Atendimento:** assumir, transferir (setor e/ou atendente), privar ou liberar, finalizar (com mensagem de encerramento) e reabrir.
+- **Contatos:** ficha, campos personalizados (ex.: CPF), observações, etiquetas, bloqueio e histórico.
+- **Cadastros:**
+  - setores, etiquetas e campos personalizados;
+  - usuários (admin ou atendente);
+  - respostas rápidas com `/` e variáveis como `{{contato.nome}}`.
+- **Triagem:** menu de boas-vindas com opções numeradas que encaminham a conversa para o setor.
+- **Tempo real e notificações:** atualização ao vivo pelo WebSocket, som e notificação do navegador.
+- **Importador do Umbler Talk:** traz contatos, setores, etiquetas, respostas rápidas e campos, com simulação antes de gravar (`--dry-run`).
 
-> Segurança:
-> - O arquivo `.env` contém todos os segredos. Ele nunca vai para o git.
-> - Guarde uma cópia do `.env` fora do servidor, num gerenciador de senhas. Sem ela não há restauração.
-> - O banco `evolution` também guarda cópias de mensagens de clientes. Ele entra no backup e segue as mesmas regras da LGPD do banco `talk`.
+Fica para os próximos módulos (sub-projetos 2 e 3): editor visual de chatbot, horários, agendamentos, relatórios, logs de atividade, webhooks e permissões finas.
 
-## 1. Requisitos do VPS
+## Arquitetura
 
-- Ubuntu 24.04 LTS, 2 vCPU, 4 GB de RAM, 40 GB de disco ou mais (a mídia cresce com o uso).
-- Um domínio, por exemplo `talk.jvo.adv.br`, com registro DNS **A** apontando para o IP do VPS.
-- Portas 80 e 443 liberadas no firewall do provedor. Só o Caddy publica portas: Postgres e Evolution ficam na rede interna do Docker.
-- Backup automático ou snapshot do provedor ativado. Confirme no painel que a cópia fica **fora** do VPS e anote a retenção. Se o provedor não oferecer, use o restic (seção 7.1).
-
-## 2. Instalação passo a passo
-
-```bash
-# 1. Docker
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker "$USER"   # saia e entre de novo no SSH
-
-# 2. Firewall
-sudo ufw allow OpenSSH && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw enable
-
-# 3. Código
-sudo mkdir -p /opt/talk && sudo chown "$USER" /opt/talk
-git clone URL-DO-REPOSITORIO /opt/talk
-cd /opt/talk
-
-# 4. Segredos (gera .env com chmod 600; troque pelo seu domínio)
-sh scripts/gen-secrets.sh talk.jvo.adv.br
-
-# 5. Pastas de dados (o app roda como usuário 1000 dentro do container).
-#    700: dumps e mídia têm dados de clientes; nenhuma outra conta do VPS deve lê-los.
-mkdir -p data/media data/backup && chmod 700 data/backup
-sudo chown -R 1000:1000 data/media && sudo chmod 700 data/media
-
-# 6. Subir tudo (a primeira vez compila a imagem: alguns minutos)
-docker compose up -d --build
-docker compose ps
-curl -fsS https://talk.jvo.adv.br/api/health
+```
+navegador ──HTTPS──► caddy ──► app (Node 24 · TypeScript · um processo)
+                                 ├─ API REST (Fastify)        /api/*
+                                 ├─ tempo real (WebSocket)    /ws
+                                 ├─ webhook da Evolution      /webhooks/evolution/:segredo  (só rede interna)
+                                 └─ telas React compiladas    /
+                               ├──► postgres 16  (bancos talk e evolution)
+                               └──► evolution-api v2.3.7 ──► WhatsApp (QR Code)
 ```
 
-- O Postgres cria os bancos `talk` e `evolution` na primeira subida (`scripts/init-db.sh`).
-- O app aplica as migrations sozinho toda vez que inicia.
-- Se o `curl` falhar logo no início, espere um minuto: o Caddy ainda está emitindo o certificado.
+| Camada | Tecnologia |
+|---|---|
+| Servidor | Node 24, Fastify 5, Drizzle ORM, postgres.js, Zod 4, argon2id |
+| Telas | React 19, Vite 8, Tailwind 4, TanStack Query 5, React Router 8, Phosphor Icons |
+| Testes | Vitest 5, PGlite (Postgres em memória), Testing Library |
+| Implantação | Docker Compose, Caddy (HTTPS automático), Postgres 16, Evolution API |
 
-## 3. Primeiro administrador
+## Estrutura do repositório
 
-```bash
-cd /opt/talk
-read -rs -p 'Senha do administrador (mín. 8): ' SEED_ADMIN_PASSWORD; echo; export SEED_ADMIN_PASSWORD
-docker compose exec -e SEED_ADMIN_PASSWORD app node --import tsx server/src/auth/seed-admin.ts --email voce@jvo.adv.br --name "Seu Nome"
-unset SEED_ADMIN_PASSWORD
+```
+shared/        tipos compartilhados entre servidor e telas (DTOs, eventos do WebSocket, paleta)
+server/        API, tempo real, regras de atendimento, integração com a Evolution
+  src/whatsapp/   único módulo que conhece a Evolution (envio, webhook, telefones BR)
+  src/inbox/      regras de conversa e visibilidade (canSee)
+  src/messages/   entrada, envio, mídia, respostas rápidas
+  src/importer/   importação única do Umbler Talk
+  drizzle/        migrations SQL
+  test/           testes (rodam sem rede e sem Docker)
+web/           telas (caixa de entrada, conversa, contatos, configurações)
+scripts/       init do banco, backup, geração de segredos, ambiente de dev
+docs/
+  IMPLANTACAO.md   instalação no VPS, atualização, backup, restauração e checklist da virada
+  superpowers/     especificação, plano de implementação e decisões
+  umbler/          engenharia reversa do Umbler Talk (telas, endpoints, modelo de dados)
 ```
 
-Saída esperada: `Administrador criado: voce@jvo.adv.br`.
+## Rodar localmente (desenvolvimento)
 
-Depois disso, entre em `https://talk.jvo.adv.br` e crie os demais usuários pela tela de Configurações.
-
-## 4. Conectar o WhatsApp
-
-1. Entre como administrador e vá em **Configurações → Canais**.
-2. Crie o canal e clique em **Gerar novo QR / Reconectar**.
-3. No celular do escritório: WhatsApp → **Aparelhos conectados** → **Conectar um aparelho** → leia o QR.
-4. O status muda para **Conectado** e o banner vermelho "WhatsApp desconectado" some.
-
-Atenção: conectar o mesmo número aqui desconecta o número do Umbler Talk. Faça isso só no dia da virada (seção 10).
-
-Se o canal cair (logout pelo celular, QR expirado), repita os passos 2 e 3. O botão **Gerar novo QR / Reconectar** serve para isso.
-
-## 5. Importar do Umbler Talk
-
-O importador traz contatos, setores, etiquetas, campos personalizados e respostas rápidas, com anexos e variáveis. O histórico de conversas fica no Umbler.
-
-1. No Umbler Talk: **Conta → Perfil → Tokens de acesso** → crie um token.
-2. No servidor:
+Requisitos: **Node 24.15+**, **Docker Desktop** e Git.
 
 ```bash
-cd /opt/talk
-read -rs -p 'Token do Umbler: ' UMBLER_TOKEN; echo; export UMBLER_TOKEN
-# 1) Ensaio (--dry-run): lê tudo do Umbler, mostra as contagens e desfaz no fim. Nada é gravado.
-docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run
-# 2) Se o ensaio estiver certo, a importação real:
-docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts
-unset UMBLER_TOKEN
-# 3) Cópia do relatório da importação real no servidor:
-docker compose cp app:/data/import-report.json data/backup/relatorio-importacao.json
+git clone https://github.com/TheoCarvalhoDEV/Umbler2.0.git
+cd Umbler2.0
+npm install
+
+# 1. Variáveis do ambiente local (senhas só para o Docker local)
+cp .env.dev.example .env.dev
+
+# 2. Postgres + Evolution API em Docker (portas presas em 127.0.0.1)
+npm run dev:up
+
+# 3. API (porta 3000) + telas (porta 5173), com recarga automática
+npm run dev
+
+# 4. Em outro terminal, crie o primeiro administrador (a senha é pedida no terminal)
+npm run dev:admin -- --email voce@exemplo.com --name "Seu Nome"
 ```
 
-3. Leia o relatório: ele sai na tela nos dois passos (o `-T` evita caracteres de terminal no texto) e a importação real também o grava em `/data/import-report.json` dentro do container, copiado acima para `data/backup/relatorio-importacao.json`. Ele lista o que não pôde ser convertido, como variáveis `{{n}}` sem correspondência ou anexos que não baixaram. Corrija esses itens à mão na tela de Configurações.
-4. Apague o token no Umbler depois da importação.
+Abra **http://localhost:5173** e entre com o admin. Primeiros passos:
 
-## 6. Atualizar
+1. **Configurações › Setores:** crie os setores. O primeiro vira o padrão, para onde caem as conversas novas.
+2. **Configurações › Canais:** clique em *Novo canal* e depois em *Conectar*. Leia o QR Code no WhatsApp do celular (*Aparelhos conectados*).
+   > ⚠️ Use um **número de teste**. Ao ler o QR com o número do escritório, ele **sai do Umbler Talk** na hora.
+3. Mande uma mensagem de outro celular para o número conectado. Ela aparece na caixa de entrada.
 
-### 6.1 Atualizar o sistema
+Para desligar: `Ctrl+C` no `npm run dev` e `npm run dev:down` (os dados ficam no volume do Docker). Para apagar tudo: `docker compose -f docker-compose.dev.yml --env-file .env.dev down -v`.
+
+## Testes
 
 ```bash
-cd /opt/talk
-sh scripts/backup.sh                       # sempre antes de atualizar
-git log -1 --format=%h > data/backup/versao-anterior.txt
-git pull
-docker compose up -d --build app
-docker compose logs --tail 50 app          # migrations aplicadas, sem erro
-curl -fsS https://talk.jvo.adv.br/api/health
+npm test            # servidor + telas (não precisa de Docker: o banco de teste é o PGlite em memória)
+npm run typecheck
+npm run build
 ```
 
-**Voltar a versão** se algo quebrar:
+## Produção
 
-```bash
-git checkout "$(cat data/backup/versao-anterior.txt)"
-docker compose up -d --build app
-```
+Veja **[docs/IMPLANTACAO.md](docs/IMPLANTACAO.md)**: requisitos do VPS, instalação passo a passo, primeiro admin, conexão do WhatsApp, importação do Umbler, atualização (com volta), backup, ensaio de restauração e checklist da virada.
 
-Se a atualização tinha migration de banco, restaure também o banco da hora do backup. Pare antes o app e a Evolution: com conexões abertas, o `DROP DATABASE` do dump falha e o banco fica pela metade.
+## Branches e fluxo de trabalho
 
-```bash
-docker compose stop app evolution
-docker compose exec -T postgres psql -U postgres -d postgres < data/backup/db.sql > /dev/null
-docker compose up -d
-curl -fsS https://talk.jvo.adv.br/api/health
-```
+| Branch | Papel |
+|---|---|
+| `main` | Versão estável, a que roda em produção. Só recebe merge de `develop` por Pull Request, e cada versão leva uma tag (`v0.1.0`, …). |
+| `develop` | Integração: onde as funcionalidades prontas se juntam antes de virar versão. |
+| `feat/<nome>` | Uma funcionalidade nova, criada a partir de `develop` (ex.: `feat/nucleo-atendimento`, `feat/chatbot-fluxo`). |
+| `fix/<nome>` | Correção, criada a partir de `develop`. Para uma urgência em produção, crie a partir de `main` e leve a correção para as duas branches. |
 
-Até dois erros sobre o papel `postgres` (`current user cannot be dropped`, `role "postgres" already exists`) são normais. Qualquer outro erro deve ser investigado. Mensagens recebidas depois do backup se perdem nesse caso.
+Fluxo: `feat/*` → PR para `develop` → testes passando → PR `develop` → `main` → tag da versão → deploy.
+Mensagens de commit no padrão [Conventional Commits](https://www.conventionalcommits.org/pt-br/) (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 
-### 6.2 Atualizar a Evolution API (com volta)
+## Documentação do projeto
 
-A Evolution usa tag fixa no `docker-compose.yml` (hoje `evoapicloud/evolution-api:v2.3.7`). Nunca use `latest`.
-
-1. Leia as notas da nova versão em https://github.com/EvolutionAPI/evolution-api/releases.
-2. Anote a tag atual e faça um dump só do banco da Evolution:
-
-```bash
-cd /opt/talk
-grep 'evolution-api:' docker-compose.yml | tee -a data/backup/evolution-tags.txt
-docker compose exec -T postgres pg_dump -U postgres -Fc evolution > data/backup/evolution-antes-da-atualizacao.dump
-```
-
-3. Troque a tag no `docker-compose.yml`, por exemplo `v2.3.7` por `v2.3.8`, e suba:
-
-```bash
-docker compose pull evolution
-docker compose up -d evolution
-docker compose logs --tail 50 evolution
-```
-
-4. Teste: o canal continua **Conectado**, e uma mensagem enviada e uma recebida funcionam (texto e uma imagem).
-
-**Voltar** se algo falhar:
-
-```bash
-docker compose stop evolution
-# devolva a tag anterior no docker-compose.yml (está em data/backup/evolution-tags.txt)
-docker compose exec -T postgres psql -U postgres -c 'DROP DATABASE evolution' -c 'CREATE DATABASE evolution OWNER evolution'
-docker compose exec -T postgres pg_restore -U postgres -d evolution < data/backup/evolution-antes-da-atualizacao.dump
-docker compose up -d evolution
-```
-
-Se o canal não voltar a **Conectado**, use **Gerar novo QR / Reconectar** (seção 4).
-
-## 7. Backup
-
-`scripts/backup.sh` faz o dump do banco:
-
-- **Banco:** `pg_dumpall` dos bancos `talk` e `evolution`. O dump vai para `data/backup/db.sql`, gravado primeiro como `.tmp` e só renomeado no fim. Um dump com falha nunca apaga o último bom. A pasta `data/backup` fica com permissão 700.
-- O dump da Evolution guarda as credenciais e as mensagens, mas não as chaves de criptografia (volume `evolution_instances`). Depois de restaurar em servidor novo, gere um novo QR (seção 9, passo 9).
-- **Mídia:** `data/media` **não** é copiada localmente (uma cópia no mesmo disco ocuparia o dobro do espaço e se perderia junto com ele). Ela é coberta pelo snapshot do provedor ou pelo restic (seção 7.1).
-
-Agende uma vez:
-
-```bash
-sudo crontab -e
-# adicione a linha:
-30 3 * * * sh /opt/talk/scripts/backup.sh >> /var/log/talk-backup.log 2>&1
-```
-
-Confira no dia seguinte:
-
-```bash
-tail -n 3 /var/log/talk-backup.log
-ls -l /opt/talk/data/backup
-```
-
-O log deve ter `backup ok`, com data de hoje.
-
-### 7.1 Cópia fora do servidor
-
-O backup acima fica **no mesmo VPS**: se o VPS for perdido, ele se perde junto. Use uma das opções:
-
-- **Backup do provedor** (preferido, se existir): ative o backup ou snapshot diário automático do VPS. Confirme que é armazenado fora da máquina e com retenção de pelo menos 7 dias.
-- **restic** (se o provedor não oferecer): siga as instruções comentadas no fim de `scripts/backup.sh`. Elas enviam `db.sql` e `data/media`, criptografados, para o Backblaze B2. Guarde a `RESTIC_PASSWORD` fora do VPS.
-
-Os backups contêm dados pessoais de clientes (LGPD). Restrinja o acesso ao bucket e ao painel do provedor a quem administra o sistema.
-
-## 8. Ensaio de restauração (obrigatório antes da virada)
-
-Faça uma vez, num VPS descartável ou numa máquina com Docker, seguindo a seção 9 com o backup real. Só considere o ensaio concluído quando:
-
-- o login funcionar;
-- as conversas, contatos e cadastros aparecerem;
-- uma mídia antiga abrir;
-- depois de **Gerar novo QR / Reconectar** (com um número de teste), uma mensagem enviada por um contato que já existia chegar na caixa de entrada.
-
-Depois, destrua a máquina de ensaio: ela contém dados de clientes.
-
-## 9. Restauração (runbook)
-
-Use este roteiro se perder o VPS ou o banco.
-
-1. Crie o novo VPS e faça as etapas 1 a 3 da seção 2: Docker, firewall e código.
-2. Restaure o `.env` guardado fora do servidor:
-
-```bash
-cd /opt/talk
-nano .env          # cole o conteúdo guardado
-chmod 600 .env
-```
-
-3. Traga `db.sql` e a mídia para `/opt/talk/data`:
-   - **Do restic:**
-
-```bash
-sudo sh -c '. /root/.restic-env && restic restore latest --target /tmp/restauracao'
-mkdir -p data/backup
-sudo cp /tmp/restauracao/opt/talk/data/backup/db.sql data/backup/
-sudo cp -a /tmp/restauracao/opt/talk/data/media data/
-```
-
-   - **Do snapshot do provedor:** restaure o snapshot inteiro ou copie dele `data/backup/db.sql` e `data/media`.
-4. Ajuste o dono e as permissões:
-
-```bash
-sudo chown -R 1000:1000 data/media && sudo chmod 700 data/media
-chmod 700 data/backup
-```
-
-5. Suba **só** o Postgres e espere ficar pronto:
-
-```bash
-docker compose up -d postgres
-until docker compose exec -T postgres pg_isready -h 127.0.0.1 -U postgres; do sleep 2; done
-```
-
-6. Restaure os dois bancos. Num servidor que já está rodando, pare antes o app e a Evolution (`docker compose stop app evolution`): com conexões abertas o restore falha.
-
-```bash
-docker compose exec -T postgres psql -U postgres -d postgres < data/backup/db.sql > /dev/null
-```
-
-   Até dois erros sobre o papel `postgres` (`current user cannot be dropped`, `role "postgres" already exists`) são normais. Qualquer outro erro deve ser investigado.
-
-7. Suba o resto e confira:
-
-```bash
-docker compose up -d --build
-curl -fsS https://talk.jvo.adv.br/api/health
-```
-
-8. Se o IP mudou, atualize o registro DNS **A** do domínio.
-9. Entre no sistema, vá em **Configurações → Canais** e, depois de restaurar em servidor novo, **sempre** use **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório, mesmo que o canal mostre **Conectado**. As chaves de criptografia do WhatsApp ficam no volume `evolution_instances`, que o backup não copia: sem novo QR, as mensagens dos clientes não chegam.
-10. Reative o cron do backup (seção 7) e a cópia fora do servidor (seção 7.1).
-
-## 10. Checklist da virada
-
-**Antes do dia:**
-
-- [ ] Sistema instalado, HTTPS funcionando, primeiro administrador criado.
-- [ ] Usuários criados, cada um com seus setores e sua assinatura.
-- [ ] Cadastros importados do Umbler (seção 5) e relatório de importação revisado.
-- [ ] Menu de triagem e mensagem de encerramento configurados.
-- [ ] Cron de backup rodando (`backup ok` no log) e cópia fora do servidor confirmada (seção 7.1).
-- [ ] `.env` guardado fora do servidor.
-- [ ] Ensaio de restauração feito (seção 8).
-
-**Teste manual com um número de teste, antes de conectar o número oficial:**
-
-- [ ] Conectar pelo QR e ver o status **Conectado**.
-- [ ] Receber e enviar: texto, imagem, áudio (ouvir e gravar), documento e vídeo.
-- [ ] Responder citando uma mensagem, nos dois sentidos.
-- [ ] Reação do contato aparece na mensagem. Um 👍 numa conversa **finalizada** não reabre a conversa.
-- [ ] Mensagem digitada no celular do escritório aparece como enviada, sem ligar "Esperando" e sem menu de triagem.
-- [ ] Transferir para outro setor: o atendente do setor antigo deixa de ver a conversa.
-- [ ] Finalizar com e sem a mensagem de encerramento; reabrir.
-- [ ] Iniciar conversa: com um contato existente e com um telefone novo.
-- [ ] Responder um contato que aparece sem telefone (só LID): a mensagem chega. Se a Evolution recusar o endereço `@lid`, anote para tratar.
-- [ ] Triagem: o contato novo recebe o menu, escolhe uma opção e a conversa vai para o setor certo.
-- [ ] Anexo `.html` enviado pelo contato é baixado, não aberto no navegador.
-- [ ] Desconectar pelo celular → banner vermelho → **Gerar novo QR / Reconectar** volta a conectar.
-
-**Virada:**
-
-1. [ ] Importar os cadastros mais recentes do Umbler (seção 5), se mudaram desde o teste.
-2. [ ] Conectar o **número oficial** no sistema novo (seção 4). Isso desconecta o número do Umbler.
-3. [ ] Durante uma semana, consultar o histórico antigo no Umbler quando preciso.
-4. [ ] Cancelar a assinatura do Umbler Talk.
+- [Especificação do núcleo](docs/superpowers/specs/2026-10-14-nucleo-atendimento-design.md): o que o sistema faz, regras e segurança.
+- [Plano de implementação](docs/superpowers/plans/2026-10-14-nucleo-atendimento.md) e [decisões tomadas](docs/superpowers/plans/2026-10-14-nucleo-atendimento-decisoes.md).
+- [Mapa do Umbler Talk](docs/umbler/MAPA-UMBLER-TALK.md), [endpoints internos](docs/umbler/ENDPOINTS-INTERNOS.md) e [modelo de dados](docs/umbler/MODELO-DE-DADOS.md): a referência usada para reproduzir o sistema.

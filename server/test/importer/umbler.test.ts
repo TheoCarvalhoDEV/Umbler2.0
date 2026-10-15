@@ -17,7 +17,7 @@ import { importUmbler, type ImportDeps, type ImportReport } from '../../src/impo
 import { convertUmblerVariables } from '../../src/messages/quick-answers.js';
 import { makeTestDb, seedBasics } from '../helpers.js';
 
-// ---------- synthetic Umbler fixtures (shapes from docs/utalk-openapi-v1.json) ----------
+// ---------- synthetic Umbler fixtures (shapes from docs/umbler/utalk-openapi-v1.json) ----------
 const ORG = 'ORG_TESTE_00001';
 const ATTACHMENT_URL = 'https://files.example.test/procuracao.pdf';
 const PDF = new TextEncoder().encode('%PDF-1.4 anexo sintetico');

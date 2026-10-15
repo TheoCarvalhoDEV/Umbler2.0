@@ -37,7 +37,7 @@ const FIELD_KINDS: Record<string, FieldKind> = {
   CNPJCustomFieldDefinitionModel: 'cnpj',
 };
 
-// Only the fields we read from the Umbler public API (docs/utalk-openapi-v1.json).
+// Only the fields we read from the Umbler public API (docs/umbler/utalk-openapi-v1.json).
 interface UmblerMe { organizations?: Array<{ id: string; name: string }> }
 interface UmblerSector { id: string; name: string; default: boolean; order: number }
 interface UmblerTag { id: string; name: string; emoji?: string | null; color?: string | null; order: number }

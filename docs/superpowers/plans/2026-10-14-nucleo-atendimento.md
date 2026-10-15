@@ -17823,7 +17823,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 18: Web contacts: list, contact panel and contact page
 
-Mirrors Umbler's `/contacts` table, the **Contato** side drawer (tabs **Contato** / **Detalhes da conversa**) and the **Novo contato** page (spec §3 item 5, §5.3a; `docs/MAPA-UMBLER-TALK.md` §3 and §4). The contact panel is one component, used from the contact list and from the conversation page.
+Mirrors Umbler's `/contacts` table, the **Contato** side drawer (tabs **Contato** / **Detalhes da conversa**) and the **Novo contato** page (spec §3 item 5, §5.3a; `docs/umbler/MAPA-UMBLER-TALK.md` §3 and §4). The contact panel is one component, used from the contact list and from the conversation page.
 
 **Files:**
 - Create: `web/src/components/contacts/phone.ts`: the input mask for BR phones (display formatting is Task 15's `formatPhone` in `web/src/lib/format.ts`; this task does not write another formatter)
@@ -21122,7 +21122,7 @@ import { importUmbler, type ImportDeps, type ImportReport } from '../../src/impo
 import { convertUmblerVariables } from '../../src/messages/quick-answers.js';
 import { makeTestDb, seedBasics } from '../helpers.js';
 
-// ---------- synthetic Umbler fixtures (shapes from docs/utalk-openapi-v1.json) ----------
+// ---------- synthetic Umbler fixtures (shapes from docs/umbler/utalk-openapi-v1.json) ----------
 const ORG = 'ORG_TESTE_00001';
 const ATTACHMENT_URL = 'https://files.example.test/procuracao.pdf';
 const PDF = new TextEncoder().encode('%PDF-1.4 anexo sintetico');
@@ -21522,7 +21522,7 @@ const FIELD_KINDS: Record<string, FieldKind> = {
   CNPJCustomFieldDefinitionModel: 'cnpj',
 };
 
-// Only the fields we read from the Umbler public API (docs/utalk-openapi-v1.json).
+// Only the fields we read from the Umbler public API (docs/umbler/utalk-openapi-v1.json).
 interface UmblerMe { organizations?: Array<{ id: string; name: string }> }
 interface UmblerSector { id: string; name: string; default: boolean; order: number }
 interface UmblerTag { id: string; name: string; emoji?: string | null; color?: string | null; order: number }

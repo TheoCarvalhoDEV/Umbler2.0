@@ -64,7 +64,7 @@ services:
     logging: *logging
 
   evolution:
-    # Tag exata, nunca latest. Ao atualizar, anote a tag anterior (README › Atualizar a Evolution API).
+    # Tag exata, nunca latest. Ao atualizar, anote a tag anterior (docs/IMPLANTACAO.md › Atualizar a Evolution API).
     image: evoapicloud/evolution-api:v2.3.7
     restart: unless-stopped
     environment:

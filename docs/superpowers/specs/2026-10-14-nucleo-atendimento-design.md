@@ -3,7 +3,7 @@
 - **Data:** 14/10/2026
 - **Status:** seções 1–3 aprovadas em conversa; demais com "total liberdade" do usuário; revisada por workflow multi-lente (19 achados confirmados e aplicados, rev. 2)
 - **Sub-projeto:** 1 de 3 (Núcleo → Automação → Gestão)
-- **Referências:** `docs/MAPA-UMBLER-TALK.md`, `docs/ENDPOINTS-INTERNOS.md`, `docs/MODELO-DE-DADOS.md`, `docs/utalk-openapi-v1.json`
+- **Referências:** `docs/umbler/MAPA-UMBLER-TALK.md`, `docs/umbler/ENDPOINTS-INTERNOS.md`, `docs/umbler/MODELO-DE-DADOS.md`, `docs/umbler/utalk-openapi-v1.json`
 
 ## 1. Objetivo e critério de sucesso
 
