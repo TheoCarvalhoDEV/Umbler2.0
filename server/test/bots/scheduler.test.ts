@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import type { BotEdge, BotGraph, BotNode } from '@talk/shared';
+import type { BotEdge, BotGraph, BotNode, BotRunState } from '@talk/shared';
 import { botRuns, bots, messages } from '../../src/db/schema.js';
 import { createBot } from '../../src/bots/repo.js';
-import { resumeOnReply, startRun } from '../../src/bots/engine.js';
+import { failInterruptedRuns, resumeOnReply, runningRunsForChat, startRun } from '../../src/bots/engine.js';
 import type { InboundReply } from '../../src/bots/registry.js';
 import { createBotRuntime, createFakeClock } from '../../src/bots/runtime.js';
 import { createScheduler } from '../../src/bots/scheduler.js';
 import { makeTestCtx, seedBasics, type Seeded } from '../helpers.js';
-import { insertChat, newContact } from '../inbox/fixtures.js';
+import { eventsOf, insertChat, newContact } from '../inbox/fixtures.js';
 
 type Ctx = Awaited<ReturnType<typeof makeTestCtx>>;
 const MIN = 60_000;
@@ -283,5 +283,65 @@ describe('scheduler start/stop', () => {
     vi.advanceTimersByTime(1);
     expect(tick).toHaveBeenCalledTimes(1);
     sched.stop();
+  });
+});
+
+describe('failInterruptedRuns', () => {
+  const INTERRUPTED = 'Interrompido por reinício do servidor';
+
+  it('failInterruptedRuns fails runs left running and frees the chat', async () => {
+    const { botId, chatId, runId } = await startManual(menuGraph(null));
+    // the process died mid-step: the run is stuck in 'running'
+    await ctx.db.update(botRuns).set({ state: 'running' }).where(eq(botRuns.id, runId));
+
+    expect(await failInterruptedRuns(ctx.db)).toBe(1);
+
+    const run = await runOf(runId);
+    expect(run.state).toBe('failed');
+    expect(run.error).toBe(INTERRUPTED);
+    expect(run.finishedAt).not.toBeNull();
+    expect(run.waitingSince).toBeNull();
+    const failed = (await eventsOf(ctx, chatId)).filter((e) => e.kind === 'bot_failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].data).toEqual({ botId, botName: 'Bot teste', runId, reason: INTERRUPTED });
+    expect(failed[0].authorId).toBeNull();
+
+    // the one-active-run index no longer blocks the chat
+    const again = await startRun(ctx, { botId, chatId, entry: 'manual', startedBy: s.admin.id });
+    expect((await runningRunsForChat(ctx.db, chatId)).map((r) => r.id)).toEqual([again.id]);
+    expect(await failInterruptedRuns(ctx.db)).toBe(0);
+  });
+
+  it('also fails call_flow parents left waiting on a dead child chain, and leaves healthy waits alone', async () => {
+    const { botId, versionId } = await activeBot(timerGraph(false));
+    const a = await openChat();
+    const b = await openChat();
+    const insertRun = async (chat: { chatId: string; contactId: string }, state: BotRunState, depth: number, parentRunId: string | null) => {
+      const [row] = await ctx.db
+        .insert(botRuns)
+        .values({
+          botId, versionId, chatId: chat.chatId, contactId: chat.contactId, state, currentNodeId: 'espera', depth, parentRunId,
+          wakeAt: state === 'waiting_timer' ? new Date(ctx.clock.now().getTime() + HOUR) : null,
+        })
+        .returning({ id: botRuns.id });
+      return row.id;
+    };
+    const grand = await insertRun(a, 'waiting_flow', 0, null);
+    const parent = await insertRun(a, 'waiting_flow', 1, grand);
+    const child = await insertRun(a, 'running', 2, parent);
+    const okParent = await insertRun(b, 'waiting_flow', 0, null);
+    const okChild = await insertRun(b, 'waiting_timer', 1, okParent);
+
+    expect(await failInterruptedRuns(ctx.db)).toBe(3);
+
+    for (const id of [child, parent, grand]) {
+      const run = await runOf(id);
+      expect(run.state).toBe('failed');
+      expect(run.error).toBe(INTERRUPTED);
+    }
+    expect((await runOf(okParent)).state).toBe('waiting_flow');
+    expect((await runOf(okChild)).state).toBe('waiting_timer');
+    expect((await eventsOf(ctx, a.chatId)).filter((e) => e.kind === 'bot_failed')).toHaveLength(3);
+    expect((await eventsOf(ctx, b.chatId)).filter((e) => e.kind === 'bot_failed')).toHaveLength(0);
   });
 });
