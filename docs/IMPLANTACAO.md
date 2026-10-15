@@ -116,6 +116,10 @@ docker compose logs --tail 50 app          # migrations aplicadas, sem erro
 curl -fsS https://talk.jvo.adv.br/api/health
 ```
 
+Chatbots durante a atualização:
+- Uma execução que espera resposta do contato ou um tempo continua sozinha depois que o app volta.
+- Uma execução que estava no meio de um passo quando o app parou fica como falhou, com o motivo "Interrompido por reinício do servidor". A conversa segue com os atendentes.
+
 **Voltar a versão** se algo quebrar:
 
 ```bash
@@ -279,6 +283,13 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Usuários criados, cada um com seus setores e sua assinatura.
 - [ ] Cadastros importados do Umbler (seção 5) e relatório de importação revisado.
 - [ ] Menu de triagem e mensagem de encerramento configurados.
+- [ ] Chatbot: em Configurações › Chatbots, clicar em **Criar a partir do modelo** e preencher:
+  - o nome do escritório;
+  - o canal;
+  - os três destinos (Atendimento, Financeiro e Processos), cada um com o seu setor e o seu atendente. O campo personalizado **CPF** é reaproveitado, ou criado se não existir.
+- [ ] Chatbot: abrir o **Fluxo do escritório** no editor e conferir os textos e o bloco **Horário** com o horário real do escritório. O modelo vem com seg–sex, 08:00–12:00 e 14:00–18:00, no horário de Cuiabá. Se mudar algo, clicar em **Salvar e publicar**.
+- [ ] Chatbot: clicar em **Ativar** na lista, porque o modelo é criado pausado. Com ele ativo, a triagem simples deixa de rodar nesse canal.
+- [ ] Configurações › Conversas: escolher o que acontece quando o atendente escreve com o chatbot rodando. O padrão é Perguntar.
 - [ ] Cron de backup rodando (`backup ok` no log) e cópia fora do servidor confirmada (seção 7.1).
 - [ ] `.env` guardado fora do servidor.
 - [ ] Ensaio de restauração feito (seção 8).
@@ -292,12 +303,13 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Receber e enviar: texto, imagem, áudio (ouvir e gravar), documento e vídeo.
 - [ ] Responder citando uma mensagem, nos dois sentidos.
 - [ ] Reação do contato aparece na mensagem. Um 👍 numa conversa **finalizada** não reabre a conversa.
-- [ ] Mensagem digitada no celular do escritório aparece como enviada, sem ligar "Esperando" e sem menu de triagem.
+- [ ] Mensagem digitada no celular do escritório aparece como enviada, sem ligar "Esperando", sem menu de triagem e sem iniciar o chatbot.
 - [ ] Transferir para outro setor: o atendente do setor antigo deixa de ver a conversa.
 - [ ] Finalizar com e sem a mensagem de encerramento; reabrir.
 - [ ] Iniciar conversa: com um contato existente e com um telefone novo.
 - [ ] Responder um contato que aparece sem telefone (só LID): a mensagem chega. Se a Evolution recusar o endereço `@lid`, anote para tratar.
-- [ ] Triagem: o contato novo recebe o menu, escolhe uma opção e a conversa vai para o setor certo.
+- [ ] Triagem (com o chatbot pausado): o contato novo recebe o menu, escolhe uma opção e a conversa vai para o setor certo.
+- [ ] Chatbot (ativo): o [roteiro de aceite](superpowers/plans/2026-10-15-chatbot-fluxos-2a-aceite.md) passa inteiro, com todas as partes, de A a F, marcadas.
 - [ ] Anexo `.html` enviado pelo contato é baixado, não aberto no navegador.
 - [ ] Desconectar pelo celular → banner vermelho → **Gerar novo QR / Reconectar** volta a conectar.
 
@@ -305,5 +317,6 @@ curl -fsS https://talk.jvo.adv.br/api/health
 
 1. [ ] Importar os cadastros mais recentes do Umbler (seção 5), se mudaram desde o teste.
 2. [ ] Conectar o **número oficial** no sistema novo (seção 4). Isso desconecta o número do Umbler.
-3. [ ] Durante uma semana, consultar o histórico antigo no Umbler quando preciso.
-4. [ ] Cancelar a assinatura do Umbler Talk.
+3. [ ] Se o número oficial ficou num canal diferente do canal de teste: no **Fluxo do escritório**, marcar esse canal no bloco **Iniciar por um canal** e clicar em **Salvar e publicar**. Em seguida, conferir na lista que o fluxo está ativo e mandar um `Oi` de um celular de teste para ver as boas-vindas.
+4. [ ] Durante uma semana, consultar o histórico antigo no Umbler quando preciso.
+5. [ ] Cancelar a assinatura do Umbler Talk.
