@@ -6,6 +6,7 @@ import { createHub } from './realtime/hub.js';
 import { buildApp } from './app.js';
 import { syncChannelStatuses } from './channels/service.js';
 import { failInterruptedSends } from './messages/send.js';
+import { createBotRuntime } from './bots/runtime.js';
 import type { AppCtx } from './ctx.js';
 
 const config = loadConfig(process.env);
@@ -18,6 +19,7 @@ const ctx: AppCtx = {
   wa: createEvolutionGateway(config.evolution),
   hub: createHub(() => db),
   config,
+  botRuntime: createBotRuntime(),
 };
 const app = await buildApp(ctx, {
   // Only Caddy is in front (§6), over the private Docker network: req.ip is the client's, so the login limit is
