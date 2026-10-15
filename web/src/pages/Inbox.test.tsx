@@ -143,3 +143,26 @@ it('does not show the toggle to an agent', async () => {
   await screen.findByText('Ana Souza');
   expect(screen.queryByRole('button', { name: 'Ver todos os setores' })).toBeNull();
 });
+
+it('shows an error banner when toggling the view fails', async () => {
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  const base = fetch as unknown as (i: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  vi.stubGlobal('fetch', vi.fn(async (i: RequestInfo | URL, init?: RequestInit) =>
+    String(i) === '/api/auth/me/view' ? json({ error: 'falhou' }, 500) : base(i, init)));
+  fireEvent.click(screen.getByRole('button', { name: 'Ver todos os setores' }));
+  expect((await screen.findByRole('alert')).textContent).toBe('Não foi possível alterar a visualização. Tente novamente.');
+});
+
+it('hints a sectorless admin with an empty list to enable "Ver todos os setores"', async () => {
+  renderInbox({ ...adminMe, sectorIds: [] });
+  fireEvent.click(await screen.findByRole('tab', { name: /Esperando/ }));
+  expect(await screen.findByText(/Você não está em nenhum setor/)).toBeTruthy();
+});
+
+it('does not show the sectorless hint to an admin with sectors', async () => {
+  renderInbox(adminMe);
+  fireEvent.click(await screen.findByRole('tab', { name: /Esperando/ }));
+  await screen.findByText('Nenhuma conversa');
+  expect(screen.queryByText(/Você não está em nenhum setor/)).toBeNull();
+});

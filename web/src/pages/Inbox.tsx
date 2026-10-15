@@ -52,6 +52,7 @@ export function Inbox() {
   const [showFilters, setShowFilters] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
   const me = useMe().data;
 
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
@@ -84,7 +85,9 @@ export function Inbox() {
   // Admin-only "Ver todos os setores": the server re-reads it on every request, so refetch what it filters.
   const view = useMutation({
     mutationFn: api.auth.setView,
+    onError: () => setViewError('Não foi possível alterar a visualização. Tente novamente.'),
     onSuccess: (next) => {
+      setViewError(null);
       qc.setQueryData(qk.me, next);
       return Promise.all([qc.invalidateQueries({ queryKey: qk.chats }), qc.invalidateQueries({ queryKey: qk.contacts })]);
     },
@@ -185,9 +188,9 @@ export function Inbox() {
             tags={tags.data ?? []}
           />
         )}
-        {pinError && (
+        {(pinError ?? viewError) && (
           <p role="alert" className="mx-3 mb-2 rounded bg-danger/15 px-3 py-2 text-sm text-danger">
-            {pinError}
+            {pinError ?? viewError}
           </p>
         )}
 
@@ -206,6 +209,11 @@ export function Inbox() {
           {list.isPending && <li className="p-4 text-sm text-muted">Carregando…</li>}
           {list.isError && <li className="p-4 text-sm text-danger">Não foi possível carregar as conversas.</li>}
           {list.isSuccess && chats.length === 0 && <li className="p-4 text-sm text-muted">Nenhuma conversa</li>}
+          {list.isSuccess && chats.length === 0 && me?.role === 'admin' && !me.seeAllSectors && me.sectorIds.length === 0 && (
+            <li className="px-4 pb-4 text-sm text-muted">
+              Você não está em nenhum setor. Ative “Ver todos os setores” para ver as conversas do escritório.
+            </li>
+          )}
           {list.isFetchingNextPage && <li className="p-4 text-sm text-muted">Carregando…</li>}
         </ul>
       </aside>

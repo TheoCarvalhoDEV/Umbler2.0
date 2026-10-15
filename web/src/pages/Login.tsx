@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { ChatsCircleIcon } from '@phosphor-icons/react';
-import { useLogin, useMe } from '../lib/auth';
+import { useLogin, useMe, useSessionSync } from '../lib/auth';
 
 const inputClass =
   'w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-fg outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/30';
@@ -9,6 +9,7 @@ const inputClass =
 export default function Login() {
   const me = useMe();
   const login = useLogin();
+  useSessionSync();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? '/chats';
 
