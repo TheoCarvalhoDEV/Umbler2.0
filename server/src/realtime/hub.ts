@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import type { WsEvent } from '@talk/shared';
+import type { NotificationDto, WsEvent } from '@talk/shared';
 import type { Db } from '../db/client.js';
 import { channels, chats, messages } from '../db/schema.js';
 import { toChatListItem } from '../inbox/queries.js';
@@ -14,6 +14,8 @@ export interface Hub {
   publishChat(chatId: string): Promise<void>;
   publishMessage(chatId: string, type: 'message.created' | 'message.updated', messageId: string): Promise<void>;
   publishChannel(channelId: string): Promise<void>;
+  /** Chatbot "Notificar atendente": WS only, to the listed users who can see the chat. */
+  publishNotification(chatId: string, userIds: string[], notification: NotificationDto): Promise<void>;
 }
 
 function send(socket: Socket, event: WsEvent): void {
@@ -91,6 +93,21 @@ export function createHub(getDb: () => Db): Hub {
       };
       for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, event);
     },
+
+    // ponytail: WS-only; offline agents miss it — add a notifications table when 2b's "notificar só se online" lands.
+    async publishNotification(chatId, userIds, notification) {
+      if (byUser.size === 0) return;
+      const db = getDb();
+      const [chat] = await db.select().from(chats).where(eq(chats.id, chatId));
+      if (!chat) return;
+      const event: WsEvent = { type: 'notification', notification };
+      for (const userId of new Set(userIds)) {
+        const sockets = byUser.get(userId);
+        if (!sockets) continue;
+        const user = await loadAuthUser(db, userId);
+        if (user && canSee(user, chat)) for (const socket of [...sockets]) send(socket, event);
+      }
+    },
   };
 }
 
@@ -105,5 +122,8 @@ export function createRecordingHub(): Hub & {
     publishChat: async (chatId) => { events.push({ type: 'chat', chatId }); },
     publishMessage: async (chatId, type, messageId) => { events.push({ type, chatId, messageId }); },
     publishChannel: async (channelId) => { events.push({ type: 'channel', channelId }); },
+    publishNotification: async (chatId, userIds) => {
+      for (const userId of userIds) events.push({ type: 'notification', chatId, userId });
+    },
   };
 }
