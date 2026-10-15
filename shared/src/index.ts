@@ -1,7 +1,7 @@
 // DTOs and WebSocket event types shared by server and web, plus two runtime modules: the tag palette (palette.ts)
 // and the chatbot block catalog (bots.ts). There is no build step: tsx (server) and Vite (web) load this
 // TypeScript source directly. Use `import type` for everything except the values re-exported below.
-import type { NotificationDto } from './bots.js';
+import type { BotRunningBehavior, NotificationDto } from './bots.js';
 export { TAG_COLORS, tagColorHex } from './palette.js';
 export {
   BLOCK_TYPES, WEEKDAYS, WEEKDAY_LABELS, DEFAULT_TIMEZONE, RULE_OPERATOR_LABELS, NATIVE_CONTACT_FIELDS, BLOCK_CATALOG,
@@ -35,7 +35,7 @@ export interface ContactNoteDto { id: string; body: string; pinned: boolean; aut
 export interface CustomFieldDto { id: string; name: string; kind: 'text' | 'number' | 'date' | 'cpf' | 'cnpj'; position: number }
 export interface QuickAnswerDto { id: string; name: string; body: string; hasAttachment: boolean; visibility: 'all' | 'owner'; ownerId: string | null }
 export interface TriageMenuDto { enabled: boolean; welcomeText: string; invalidText: string; options: Array<{ key: string; label: string; sectorId: string }> }
-export interface SettingsDto { closingMessage: string; triageMenu: TriageMenuDto }
+export interface SettingsDto { closingMessage: string; triageMenu: TriageMenuDto; botRunningBehavior: BotRunningBehavior }
 export type WsEvent =
   | { type: 'chat.updated'; chat: ChatListItem }
   | { type: 'chat.removed'; chatId: string }

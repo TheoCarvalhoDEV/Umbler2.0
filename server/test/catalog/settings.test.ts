@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
+import { getBotRunningBehavior } from '../../src/catalog/settings.js';
 import { settings } from '../../src/db/schema.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -59,11 +60,11 @@ it('saves the closing message and triage menu (admin only) and validates the men
 
   const saved = await put(admin, body);
   expect(saved.statusCode).toBe(200);
-  expect(saved.json()).toEqual(body);
+  expect(saved.json()).toEqual({ ...body, botRunningBehavior: 'ask' }); // omitted → default
 
   const got = await app.inject({ method: 'GET', url: '/api/settings', headers: agent });
   expect(got.statusCode).toBe(200);
-  expect(got.json()).toEqual(body);
+  expect(got.json()).toEqual({ ...body, botRunningBehavior: 'ask' });
 
   // Stored as spec §4 snake_case, which triage/getTriageMenu reads.
   const [row] = await ctx.db.select().from(settings).where(eq(settings.key, 'triage_menu'));
@@ -78,4 +79,31 @@ it('saves the closing message and triage menu (admin only) and validates the men
   });
   const [closing] = await ctx.db.select().from(settings).where(eq(settings.key, 'closing_message'));
   expect(closing.value).toBe('Atendimento finalizado. Obrigado!');
+});
+
+it('stores bot_running_behavior, defaults to ask and rejects unknown values', async () => {
+  const base = { closingMessage: '', triageMenu: { enabled: false, welcomeText: '', invalidText: '', options: [] } };
+
+  const fresh = await app.inject({ method: 'GET', url: '/api/settings', headers: agent });
+  expect(fresh.json().botRunningBehavior).toBe('ask'); // key missing
+  expect(await getBotRunningBehavior(ctx.db)).toBe('ask');
+
+  expect((await put(admin, { ...base, botRunningBehavior: 'sempre' })).statusCode).toBe(400);
+  expect((await put(agent, { ...base, botRunningBehavior: 'stop' })).statusCode).toBe(403);
+
+  const saved = await put(admin, { ...base, botRunningBehavior: 'stop' });
+  expect(saved.statusCode).toBe(200);
+  expect(saved.json().botRunningBehavior).toBe('stop');
+  const [row] = await ctx.db.select().from(settings).where(eq(settings.key, 'bot_running_behavior'));
+  expect(row.value).toBe('stop');
+  expect(await getBotRunningBehavior(ctx.db)).toBe('stop');
+
+  await put(admin, { ...base, botRunningBehavior: 'keep' });
+  expect(await getBotRunningBehavior(ctx.db)).toBe('keep');
+
+  // A value that is not one of the three (hand-edited DB, older build) reads as the default.
+  await ctx.db.update(settings).set({ value: 'talvez' }).where(eq(settings.key, 'bot_running_behavior'));
+  expect(await getBotRunningBehavior(ctx.db)).toBe('ask');
+  const got = await app.inject({ method: 'GET', url: '/api/settings', headers: agent });
+  expect(got.json().botRunningBehavior).toBe('ask');
 });
