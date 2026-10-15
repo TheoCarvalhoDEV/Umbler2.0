@@ -1,19 +1,10 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
 import { contacts } from '../db/schema.js';
+import { AVATAR_MAX_BYTES, AVATAR_TYPES, removeAvatarFile, writeAvatarFile } from '../media/avatar-files.js';
 import { baseMime } from '../messages/media.js';
 import { waAddress } from '../messages/send.js';
 
-// Raster types only: the spec says image/*, but image/svg+xml served from our origin could carry script.
-export const AVATAR_TYPES: Record<string, string> = {
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-  'image/gif': '.gif',
-};
-const MAX_BYTES = 2 * 1024 * 1024;
 const RECHECK_AFTER = sql`now() - interval '7 days'`;
 
 type AvatarFields = { id: string; avatarPath: string | null; avatarCheckedAt: Date | null };
@@ -29,17 +20,22 @@ class AvatarRejected extends Error {
 }
 
 async function download(url: string): Promise<{ data: Buffer; ext: string }> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (new URL(url).protocol !== 'https:') throw new AvatarRejected();
+  const res = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: 'error' });
   const ext = AVATAR_TYPES[baseMime(res.headers.get('content-type') ?? '')];
-  if (!res.ok || !ext || Number(res.headers.get('content-length') ?? 0) > MAX_BYTES) {
+  if (!res.ok || !ext || !res.body || Number(res.headers.get('content-length') ?? 0) > AVATAR_MAX_BYTES) {
     await res.body?.cancel();
     throw new AvatarRejected();
   }
-  // ponytail: reads the whole body before the size check; the URL comes from WhatsApp's CDN via Evolution.
-  // Stream with a byte cap if that source ever becomes untrusted.
-  const data = Buffer.from(await res.arrayBuffer());
-  if (data.length > MAX_BYTES) throw new AvatarRejected();
-  return { data, ext };
+  // Counts while streaming: a body without (or lying about) content-length is cut at the cap.
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of res.body) {
+    size += chunk.length;
+    if (size > AVATAR_MAX_BYTES) throw new AvatarRejected(); // leaving the loop cancels the stream
+    chunks.push(chunk);
+  }
+  return { data: Buffer.concat(chunks), ext };
 }
 
 /**
@@ -62,10 +58,9 @@ export async function refreshContactAvatar(ctx: AppCtx, instance: string, contac
   if (url) {
     const { data, ext } = await download(url);
     path = `avatars/${contactId}${ext}`;
-    await mkdir(join(ctx.config.mediaDir, 'avatars'), { recursive: true });
-    await writeFile(join(ctx.config.mediaDir, path), data);
+    await writeAvatarFile(ctx.config.mediaDir, path, data);
   }
   await ctx.db.update(contacts).set({ avatarPath: path, avatarCheckedAt: sql`now()` }).where(eq(contacts.id, contactId));
-  if (c.avatarPath && c.avatarPath !== path) await rm(join(ctx.config.mediaDir, c.avatarPath), { force: true });
+  if (c.avatarPath && c.avatarPath !== path) await removeAvatarFile(ctx.config.mediaDir, c.avatarPath);
   return c.avatarPath !== null || path !== null;
 }

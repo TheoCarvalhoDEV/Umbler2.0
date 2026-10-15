@@ -1,13 +1,9 @@
-import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
-import { extname, resolve, sep } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
 import { contacts } from '../db/schema.js';
-import { notFound } from '../lib/http-error.js';
-import { AVATAR_TYPES } from './avatar.js';
+import { sendAvatarFile } from '../media/avatar-files.js';
 import {
   createContact,
   createContactNote,
@@ -83,21 +79,7 @@ export function registerContactRoutes(app: FastifyInstance, ctx: AppCtx): void {
   app.get('/api/contacts/:id/avatar', async (req, reply) => {
     const { id } = IdParams.parse(req.params);
     const [row] = await ctx.db.select({ path: contacts.avatarPath }).from(contacts).where(eq(contacts.id, id));
-    if (!row?.path) throw notFound();
-    const root = resolve(ctx.config.mediaDir);
-    const file = resolve(root, row.path);
-    const type = Object.keys(AVATAR_TYPES).find((t) => AVATAR_TYPES[t] === extname(file));
-    const info = await stat(file).catch(() => null);
-    if (!file.startsWith(root + sep) || !type || !info?.isFile()) throw notFound();
-    return reply
-      .headers({
-        'Content-Type': type,
-        'Content-Length': String(info.size),
-        'Cache-Control': 'private, max-age=86400',
-        'X-Content-Type-Options': 'nosniff',
-        'Content-Security-Policy': 'sandbox',
-      })
-      .send(createReadStream(file));
+    return sendAvatarFile(reply, ctx.config.mediaDir, row?.path);
   });
 
   app.get('/api/contacts/:id/chats', async (req) => listContactChats(ctx, req.user, IdParams.parse(req.params).id));

@@ -178,6 +178,51 @@ describe('avatar refresh on inbound messages', () => {
     expect(logged).toHaveBeenCalledTimes(2);
     expect(logged.mock.calls.map((call: unknown[]) => (call[1] as { err: string }).err)).toEqual(['AvatarRejected', 'AvatarRejected']);
   });
+
+  it('stops reading a body without content-length once it passes 2 MB', async () => {
+    ctx.wa.profilePictures.set(PHONE, PIC_URL);
+    const c = await insertContact();
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024);
+    const body = new ReadableStream<Uint8Array>({
+      pull(ctrl) {
+        pulled += chunk.length;
+        if (pulled > 10 * 1024 * 1024) ctrl.close();
+        else ctrl.enqueue(chunk);
+      },
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'content-type': 'image/jpeg' } }));
+
+    await ingest(msg());
+    expect((await contactRow(c.id)).avatarPath).toBeNull();
+    expect(pulled).toBeLessThan(3 * 1024 * 1024);
+    expect(logged).toHaveBeenCalledWith('avatar refresh failed', { contactId: c.id, err: 'AvatarRejected' });
+  });
+
+  it('only fetches https URLs and refuses redirects', async () => {
+    const c = await insertContact();
+    ctx.wa.profilePictures.set(PHONE, 'http://pps.whatsapp.test/v/maria.jpg');
+    await ingest(msg());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logged).toHaveBeenCalledWith('avatar refresh failed', { contactId: c.id, err: 'AvatarRejected' });
+
+    await ctx.db.update(contacts).set({ avatarCheckedAt: null }).where(eq(contacts.id, c.id));
+    ctx.wa.profilePictures.set(PHONE, PIC_URL);
+    await ingest(msg());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]![1]?.redirect).toBe('error');
+    expect((await contactRow(c.id)).avatarPath).toBe(`avatars/${c.id}.png`);
+  });
+
+  it('writes the file atomically (no .tmp left behind, existing picture replaced)', async () => {
+    ctx.wa.profilePictures.set(PHONE, PIC_URL);
+    const c = await insertContact();
+    await mkdir(join(ctx.config.mediaDir, 'avatars'), { recursive: true });
+    await writeFile(join(ctx.config.mediaDir, `avatars/${c.id}.png`), 'old');
+    await ingest(msg());
+    expect(await readFile(join(ctx.config.mediaDir, `avatars/${c.id}.png`))).toEqual(PNG);
+    expect(existsSync(join(ctx.config.mediaDir, `avatars/${c.id}.png.tmp`))).toBe(false);
+  });
 });
 
 describe('GET /api/contacts/:id/avatar and avatarUrl', () => {
