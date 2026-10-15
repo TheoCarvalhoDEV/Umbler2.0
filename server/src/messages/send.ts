@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import type { BotAttachment } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { channels, chats, contacts, messages, sectors } from '../db/schema.js';
@@ -176,6 +177,82 @@ async function deliver(ctx: AppCtx, msg: MessageRow): Promise<MessageDto> {
   // until the timeline is refetched; the contract has no message.removed event. Add one if that shows up in use.
   if (echoDropped) await ctx.hub.publishChat(msg.chatId);
   return toMessageDto(ctx.db, updated);
+}
+
+export interface SystemSendInput { text?: string; attachment?: BotAttachment | null; botRunId?: string | null }
+
+/**
+ * System send (triage, chatbot): an `out` message without author, signature or owner change. It does not touch
+ * waiting/unread (`chat.waiting` is restored when a dropped echo cleared it); the caller publishes chat.updated.
+ * An attachment is a file under config.mediaDir (bot library: 'bots/…'); `text` becomes its caption.
+ * Returns ok = gateway accepted it, messageId = stored row (null when the contact has no address), echoDropped.
+ */
+export async function sendSystemMessage(
+  ctx: AppCtx,
+  chat: ChatRow,
+  input: SystemSendInput,
+): Promise<{ ok: boolean; messageId: string | null; echoDropped: boolean }> {
+  const [contact] = await ctx.db
+    .select({ phone: contacts.phone, lid: contacts.lid })
+    .from(contacts)
+    .where(eq(contacts.id, chat.contactId));
+  if (!waAddress(contact)) return { ok: false, messageId: null, echoDropped: false };
+
+  const attachment = input.attachment ?? null;
+  const text = input.text || null;
+  const kind: OutKind = attachment ? fileKind(attachment.mime, false) : 'text';
+  const now = new Date();
+  const row = await ctx.db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(messages)
+      .values({
+        id: randomUUID(),
+        chatId: chat.id,
+        channelId: chat.channelId,
+        direction: 'out',
+        kind,
+        body: text,
+        mediaPath: attachment?.path ?? null,
+        mediaMime: attachment?.mime ?? null,
+        mediaSize: attachment?.size ?? null,
+        mediaName: attachment?.name ?? null,
+        authorId: null,
+        botRunId: input.botRunId ?? null,
+        status: 'pending',
+        sentAt: now,
+        createdAt: now,
+      })
+      .returning();
+    await tx
+      .update(chats)
+      .set({
+        lastMessageAt: sql`greatest(${chats.lastMessageAt}, ${now.toISOString()}::timestamptz)`,
+        lastMessagePreview: messagePreview(kind, text),
+      })
+      .where(eq(chats.id, chat.id));
+    return inserted!;
+  });
+  await ctx.hub.publishMessage(chat.id, 'message.created', row.id);
+
+  let result: SendResult | null = null;
+  let error = 'Falha ao enviar';
+  try {
+    result = await callGateway(ctx, row);
+  } catch (err) {
+    if (err instanceof Error && err.message) error = err.message.slice(0, 200);
+  }
+  let echoDropped = false;
+  if (result) {
+    ({ echoDropped } = await markSent(ctx.db, row.id, chat.channelId, result.externalId));
+    // The dropped echo's ingest (fromMe → out) cleared waiting; system messages never touch it.
+    if (echoDropped) {
+      await ctx.db.update(chats).set({ waiting: chat.waiting }).where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
+    }
+  } else {
+    await ctx.db.update(messages).set({ status: 'failed', error }).where(eq(messages.id, row.id));
+  }
+  await ctx.hub.publishMessage(chat.id, 'message.updated', row.id);
+  return { ok: result !== null, messageId: row.id, echoDropped };
 }
 
 export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: string, input: SendInput): Promise<MessageDto> {

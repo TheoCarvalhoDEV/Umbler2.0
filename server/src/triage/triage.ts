@@ -1,12 +1,11 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
-import { channels, chats, contacts, messages, sectors, settings } from '../db/schema.js';
+import { chats, sectors, settings } from '../db/schema.js';
 import type { ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
-import { messagePreview } from '../messages/dto.js';
-import { markSent, waAddress } from '../messages/send.js';
+import { sendSystemMessage } from '../messages/send.js';
 
 export interface TriageOption { key: string; label: string; sectorId: string }
 export interface TriageMenu { enabled: boolean; welcomeText: string; invalidText: string; options: TriageOption[] }
@@ -59,67 +58,6 @@ async function loadSectorNames(db: Db | Tx): Promise<Map<string, string>> {
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
-// System (bot) text: stored as an `out` message without author, signature or owner change.
-// Does not touch waiting/unread (`chat.waiting` is restored if a dropped echo cleared it); the caller publishes chat.updated.
-// Returns { ok: gateway accepted it, echoDropped: an echo copy was removed (its ingest cleared triage_pending) }.
-async function sendSystemText(ctx: AppCtx, chat: ChatRow, text: string): Promise<{ ok: boolean; echoDropped: boolean }> {
-  const [contact] = await ctx.db
-    .select({ phone: contacts.phone, lid: contacts.lid })
-    .from(contacts)
-    .where(eq(contacts.id, chat.contactId));
-  const [channel] = await ctx.db
-    .select({ instance: channels.evolutionInstance })
-    .from(channels)
-    .where(eq(channels.id, chat.channelId));
-  const to = waAddress(contact);
-  if (!to || !channel) return { ok: false, echoDropped: false };
-
-  const now = new Date();
-  const id = crypto.randomUUID();
-  await ctx.db.transaction(async (tx) => {
-    await tx.insert(messages).values({
-      id,
-      chatId: chat.id,
-      channelId: chat.channelId,
-      direction: 'out',
-      kind: 'text',
-      body: text,
-      authorId: null,
-      status: 'pending',
-      sentAt: now,
-      createdAt: now,
-    });
-    await tx
-      .update(chats)
-      .set({
-        lastMessageAt: sql`greatest(${chats.lastMessageAt}, ${now.toISOString()}::timestamptz)`,
-        lastMessagePreview: messagePreview('text', text),
-      })
-      .where(eq(chats.id, chat.id));
-  });
-  await ctx.hub.publishMessage(chat.id, 'message.created', id);
-
-  let result: { externalId: string } | null = null;
-  let error = '';
-  try {
-    result = await ctx.wa.sendText(channel.instance, to, text);
-  } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
-  }
-  let echoDropped = false;
-  if (result) {
-    ({ echoDropped } = await markSent(ctx.db, id, chat.channelId, result.externalId));
-    // The dropped echo's ingest (fromMe → out) cleared waiting; system messages never touch it.
-    if (echoDropped) {
-      await ctx.db.update(chats).set({ waiting: chat.waiting }).where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
-    }
-  } else {
-    await ctx.db.update(messages).set({ status: 'failed', error }).where(eq(messages.id, id));
-  }
-  await ctx.hub.publishMessage(chat.id, 'message.updated', id);
-  return { ok: result !== null, echoDropped };
-}
-
 export async function startTriage(ctx: AppCtx, chat: ChatRow): Promise<void> {
   const menu = await getTriageMenu(ctx.db);
   if (!menu.enabled) return;
@@ -139,10 +77,10 @@ export async function startTriage(ctx: AppCtx, chat: ChatRow): Promise<void> {
   const welcome = menu.welcomeText.trim();
   const text = welcome ? `${welcome}\n\n${lines}` : lines;
 
-  const sent = await sendSystemText(ctx, chat, text);
+  const sent = await sendSystemMessage(ctx, chat, { text });
   // The contact never saw the options, so do not interpret their next message as an answer.
   if (!sent.ok) await ctx.db.update(chats).set({ triagePending: false }).where(eq(chats.id, chat.id));
-  // The dropped echo's ingest (fromMe → out) also cleared triage_pending (sendSystemText restored waiting).
+  // The dropped echo's ingest (fromMe → out) also cleared triage_pending (sendSystemMessage restored waiting).
   // Not from the snapshot: `chat` predates the flag armed above.
   else if (sent.echoDropped) {
     await ctx.db.update(chats).set({ triagePending: true }).where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
@@ -169,7 +107,7 @@ export async function handleTriageReply(ctx: AppCtx, chat: ChatRow, text: string
   });
   if (!consumed) return false;
 
-  if (!option && menu.enabled && menu.invalidText.trim()) await sendSystemText(ctx, chat, menu.invalidText.trim());
+  if (!option && menu.enabled && menu.invalidText.trim()) await sendSystemMessage(ctx, chat, { text: menu.invalidText.trim() });
   await ctx.hub.publishChat(chat.id);
   return true;
 }
