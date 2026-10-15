@@ -130,7 +130,7 @@ export async function assumeChat(ctx: AppCtx, user: AuthUser, chatId: string): P
     ctx,
     chatId,
     and(eq(chats.state, 'open'), sameOwner(chat.ownerId)),
-    { ownerId: user.id },
+    { ownerId: user.id, triagePending: false }, // a human took it: the contact's next reply is no triage answer
     { kind: 'assigned', data: { ownerId: user.id, previousOwnerId: chat.ownerId }, authorId: user.id },
   );
 }
@@ -153,7 +153,8 @@ export async function transferChat(
     ctx,
     chatId,
     and(eq(chats.state, 'open'), eq(chats.sectorId, chat.sectorId), sameOwner(chat.ownerId)),
-    ownerId === null ? { sectorId, ownerId, private: false } : { sectorId, ownerId },
+    // triage ends too, or the contact's next reply would re-route the chat away from this manual transfer
+    ownerId === null ? { sectorId, ownerId, private: false, triagePending: false } : { sectorId, ownerId, triagePending: false },
     {
       kind: 'transferred',
       data: { fromSectorId: chat.sectorId, toSectorId: sectorId, fromOwnerId: chat.ownerId, toOwnerId: ownerId },
@@ -180,13 +181,14 @@ export async function setChatPrivacy(ctx: AppCtx, user: AuthUser, chatId: string
 
 /**
  * opts.sendClosing is wired by the route (Task 13) to sendAgentMessage(ctx, user, chatId, { text, signature: false }).
- * It runs before the UPDATE so the message goes out while the chat is still open.
+ * It runs before the UPDATE so the message goes out while the chat is still open, and resolves false when the
+ * gateway failed: the chat then stays open so the failed bubble can still be resent.
  */
 export async function closeChat(
   ctx: AppCtx,
   user: AuthUser,
   chatId: string,
-  opts: { sendClosingMessage: boolean; sendClosing?: (text: string) => Promise<void> },
+  opts: { sendClosingMessage: boolean; sendClosing?: (text: string) => Promise<boolean> },
 ): Promise<ChatRow> {
   const chat = await getChatForUser(ctx, user, chatId);
   if (chat.state !== 'open') throw conflict('A conversa já está finalizada.');
@@ -195,7 +197,7 @@ export async function closeChat(
     const text = await getClosingMessage(ctx.db);
     if (text) {
       if (!opts.sendClosing) throw new Error('closeChat: sendClosing was not provided');
-      await opts.sendClosing(text);
+      if (!(await opts.sendClosing(text))) throw conflict('Mensagem de encerramento não enviada; a conversa continua aberta.');
       closingMessageSent = true;
     }
   }

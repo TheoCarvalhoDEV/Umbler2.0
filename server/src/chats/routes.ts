@@ -113,9 +113,8 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
       closeChat(ctx, user, id, {
         sendClosingMessage: closeBody.parse(body ?? {}).sendClosingMessage,
         // Closing text is the office's canned message, so it goes without the agent signature.
-        sendClosing: async (text: string) => {
-          await sendAgentMessage(ctx, user, id, { text, signature: false });
-        },
+        sendClosing: async (text: string) =>
+          (await sendAgentMessage(ctx, user, id, { text, signature: false })).status !== 'failed',
       }),
     );
 

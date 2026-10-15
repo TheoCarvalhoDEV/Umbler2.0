@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { settings } from '../../src/db/schema.js';
+import { eq } from 'drizzle-orm';
+import { chats, messages, settings } from '../../src/db/schema.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 import { seedChat } from './seed.js';
 
@@ -100,6 +101,27 @@ describe('chat action routes', () => {
     const sent = ctx.wa.sent.find((x) => x.method === 'sendText');
     expect(sent?.phone).toBe('5565999990001');
     expect(JSON.stringify(sent?.payload)).toContain('Obrigado pelo contato!');
+  });
+
+  it('close with sendClosingMessage is 409 and keeps the chat open when the gateway fails', async () => {
+    await ctx.db
+      .insert(settings)
+      .values({ key: 'closing_message', value: 'Obrigado pelo contato!' })
+      .onConflictDoUpdate({ target: settings.key, set: { value: 'Obrigado pelo contato!' } });
+    const { chatId } = await seedChat(ctx, {
+      channelId: s.channelId, sectorId: s.sectorA, ownerId: s.agentA.id, phone: '5565999990001',
+    });
+    const { headers } = await loginAs(app, s.agentA.email);
+    ctx.wa.failNext(new Error('Evolution fora do ar'));
+
+    const res = await app.inject({
+      method: 'POST', url: `/api/chats/${chatId}/close`, headers, payload: { sendClosingMessage: true },
+    });
+    expect(res.statusCode).toBe(409);
+    const [chat] = await ctx.db.select().from(chats).where(eq(chats.id, chatId));
+    expect(chat!.state).toBe('open');
+    const msgs = await ctx.db.select().from(messages).where(eq(messages.chatId, chatId));
+    expect(msgs.find((m) => m.body === 'Obrigado pelo contato!')?.status).toBe('failed');
   });
 
   it('pin and unpin answer 204; a fourth pin is 409', async () => {

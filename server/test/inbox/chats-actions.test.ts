@@ -38,6 +38,23 @@ describe('assumeChat', () => {
   });
 });
 
+describe('a human taking the chat ends a pending triage', () => {
+  const armed = async (ownerId: string | null = null) => {
+    const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, ownerId });
+    await ctx.db.update(chats).set({ triagePending: true }).where(eq(chats.id, id));
+    return id;
+  };
+
+  it('assume clears triage_pending', async () => {
+    expect((await assumeChat(ctx, s.agentA, await armed())).triagePending).toBe(false);
+  });
+
+  it('transfer to a sector (no owner) and to an agent both clear triage_pending', async () => {
+    expect((await transferChat(ctx, s.agentA, await armed(), { sectorId: s.sectorB, ownerId: null })).triagePending).toBe(false);
+    expect((await transferChat(ctx, s.agentA, await armed(s.agentA.id), { ownerId: s.agentB.id })).triagePending).toBe(false);
+  });
+});
+
 describe('transferChat', () => {
   it('moves to another sector, clears owner and privacy, and publishes so the old sector drops it', async () => {
     const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, ownerId: s.agentA.id, private: true });
@@ -111,7 +128,7 @@ describe('private chats', () => {
 describe('closeChat', () => {
   it('closes without sending when not asked', async () => {
     const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
-    const sendClosing = vi.fn(async (_text: string) => {});
+    const sendClosing = vi.fn(async (_text: string) => true);
     ctx.hub.events.length = 0;
     const chat = await closeChat(ctx, s.agentA, id, { sendClosingMessage: false, sendClosing });
     expect(chat.state).toBe('closed');
@@ -134,12 +151,25 @@ describe('closeChat', () => {
     const sendClosing = async (t: string) => {
       const [c] = await ctx.db.select().from(chats).where(eq(chats.id, id));
       seen.push(`${c!.state}:${t}`);
+      return true;
     };
     const chat = await closeChat(ctx, s.agentA, id, { sendClosingMessage: true, sendClosing });
     expect(seen).toEqual(['open:Obrigado pelo contato!']);
     expect(chat.state).toBe('closed');
     const [ev] = await eventsOf(ctx, id);
     expect(ev?.data).toEqual({ closingMessageSent: true });
+  });
+
+  it('409 and stays open when the closing message was not sent', async () => {
+    await ctx.db
+      .insert(settings)
+      .values({ key: 'closing_message', value: 'Tchau' })
+      .onConflictDoUpdate({ target: settings.key, set: { value: 'Tchau' } });
+    const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    expect(await statusOf(closeChat(ctx, s.agentA, id, { sendClosingMessage: true, sendClosing: async () => false }))).toBe(409);
+    const [c] = await ctx.db.select().from(chats).where(eq(chats.id, id));
+    expect(c!.state).toBe('open');
+    expect(await eventsOf(ctx, id)).toHaveLength(0);
   });
 
   it('409 when already closed', async () => {
