@@ -1,9 +1,11 @@
 import multipart from '@fastify/multipart';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { stopRunsForChat } from '../bots/engine.js';
+import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
 import {
-  assumeChat, closeChat, markChatRead, pinChat, reopenChat, setChatPrivacy, startChat, transferChat,
+  assumeChat, closeChat, getChatForUser, markChatRead, pinChat, reopenChat, setChatPrivacy, startChat, transferChat,
   type ChatRow,
 } from '../inbox/chats.js';
 import { getChatDetail, getTimeline, listChats, toChatDetail } from '../inbox/queries.js';
@@ -37,8 +39,10 @@ const startBody = z
     sectorId: z.uuid().optional(),
   })
   .refine((b) => b.contactId !== undefined || b.phone !== undefined, 'Informe o contato ou o telefone');
+/** Spec §5.5: the answer to a BOT_RUNNING 409, sent back with the retried request. */
+const botActionField = z.enum(['stop', 'keep']).optional();
 const transferBody = z
-  .object({ sectorId: z.uuid().optional(), ownerId: z.uuid().nullable().optional() })
+  .object({ sectorId: z.uuid().optional(), ownerId: z.uuid().nullable().optional(), botAction: botActionField })
   .refine((b) => b.sectorId !== undefined || b.ownerId !== undefined, 'Informe o setor ou o atendente');
 const privacyBody = z.object({ private: z.boolean() });
 const closeBody = z.object({ sendClosingMessage: z.boolean().default(false) });
@@ -46,12 +50,14 @@ const textBody = z.object({
   text: z.string().trim().min(1).max(4096),
   signature: z.boolean().default(true),
   replyToId: z.uuid().optional(),
+  botAction: botActionField,
 });
 const multipartFields = z.object({
   text: z.string().trim().max(4096).optional(),
   signature: z.stringbool().default(true),
   asVoice: z.stringbool().default(false),
   replyToId: z.uuid().optional(),
+  botAction: botActionField,
 });
 const noteBody = z.object({ text: z.string().trim().min(1).max(4096) });
 
@@ -75,7 +81,9 @@ async function readMultipart(req: FastifyRequest): Promise<SendInput> {
   }
   if (!file) throw badRequest('Arquivo ausente');
   const f = multipartFields.parse(fields);
-  return { file, text: f.text || undefined, signature: f.signature, asVoice: f.asVoice, replyToId: f.replyToId };
+  return {
+    file, text: f.text || undefined, signature: f.signature, asVoice: f.asVoice, replyToId: f.replyToId, botAction: f.botAction,
+  };
 }
 
 export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<void> {
@@ -107,16 +115,27 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
 
     action('assume', (user, id) => assumeChat(ctx, user, id));
     action('reopen', (user, id) => reopenChat(ctx, user, id));
-    action('transfer', (user, id, body) => transferChat(ctx, user, id, transferBody.parse(body)));
+    action('transfer', async (user, id, body) => {
+      const { botAction, ...to } = transferBody.parse(body);
+      await getChatForUser(ctx, user, id); // 404 before a 409 could reveal bot names
+      // ponytail: 'stop' runs before transferChat validates the destination, so a transfer that then fails (400/409)
+      // has still stopped the bot; split the ask check from the stop if that ever matters.
+      await applyBotRunningBehavior(ctx, user, id, botAction, 'transfer');
+      return transferChat(ctx, user, id, to);
+    });
     action('privacy', (user, id, body) => setChatPrivacy(ctx, user, id, privacyBody.parse(body).private));
-    action('close', (user, id, body) =>
-      closeChat(ctx, user, id, {
+    action('close', async (user, id, body) => {
+      const closed = await closeChat(ctx, user, id, {
         sendClosingMessage: closeBody.parse(body ?? {}).sendClosingMessage,
         // Closing text is the office's canned message, so it goes without the agent signature.
+        // botAction 'keep': closing never asks, the runs are stopped right below.
         sendClosing: async (text: string) =>
-          (await sendAgentMessage(ctx, user, id, { text, signature: false })).status !== 'failed',
-      }),
-    );
+          (await sendAgentMessage(ctx, user, id, { text, signature: false, botAction: 'keep' })).status !== 'failed',
+      });
+      // Spec §5.5: closing the chat stops every bot run in it.
+      await stopRunsForChat(ctx, id, { userId: user.id, reason: 'chat_closed' });
+      return closed;
+    });
 
     r.post('/api/chats/:id/read', async (req, reply) => {
       await markChatRead(ctx, req.user, idParams.parse(req.params).id);

@@ -30,7 +30,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   app.setErrorHandler((err: unknown, req, reply) => {
-    if (err instanceof HttpError) return reply.status(err.status).send({ error: err.message });
+    if (err instanceof HttpError) return reply.status(err.status).send({ error: err.message, ...err.body });
     if (err instanceof z.ZodError) return reply.status(400).send({ error: 'Requisição inválida' });
     // Fastify's own client errors (malformed JSON, body too large, rate limit, ...)
     const status = (err as { statusCode?: unknown }).statusCode;

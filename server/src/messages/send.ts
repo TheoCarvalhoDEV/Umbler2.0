@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
-import type { BotAttachment } from '@talk/shared';
+import type { BotAction, BotAttachment } from '@talk/shared';
+import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { channels, chats, contacts, messages, sectors } from '../db/schema.js';
@@ -25,6 +26,8 @@ export interface SendInput {
   asVoice?: boolean;
   signature: boolean;
   replyToId?: string;
+  /** Spec §5.5: the agent's answer to BOT_RUNNING; absent = settings.bot_running_behavior decides. */
+  botAction?: BotAction;
 }
 
 /**
@@ -274,6 +277,9 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
     if (!orig) throw badRequest('Mensagem citada não encontrada');
     replyToId = orig.id;
   }
+
+  // Spec §5.5, after input validation and before anything is saved or sent: 'ask' → 409 BOT_RUNNING, 'stop' stops the bots.
+  await applyBotRunningBehavior(ctx, user, chatId, input.botAction, 'agent_message');
 
   let body = text;
   if (text && input.signature) {

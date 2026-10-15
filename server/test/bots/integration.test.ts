@@ -1,12 +1,14 @@
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BotGraph } from '@talk/shared';
 import type { InboundReply } from '../../src/bots/registry.js';
 import { createBot } from '../../src/bots/repo.js';
-import { botRuns, bots, chats, contacts, messages } from '../../src/db/schema.js';
+import { botRuns, bots, chats, contacts, messages, settings } from '../../src/db/schema.js';
 import { handleInbound, type IngestHooks } from '../../src/messages/ingest.js';
 import type { InboundEvent } from '../../src/whatsapp/types.js';
-import { makeTestCtx, seedBasics } from '../helpers.js';
+import { enableSeeAll, loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
+import { eventsOf } from '../inbox/fixtures.js';
 
 type Ctx = Awaited<ReturnType<typeof makeTestCtx>>;
 type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
@@ -201,5 +203,160 @@ describe('ingest and bots', () => {
     expect(after[0]!.steps).toEqual(run!.steps);
     expect(ctx.wa.sent.length).toBe(sentBefore);
     expect(triage.calls).toEqual([]);
+  });
+});
+
+function multipart(fields: Record<string, string>, file: { name: string; mime: string; data: Buffer }) {
+  const boundary = '----talkbotboundary';
+  const chunks: Buffer[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+  }
+  chunks.push(
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.name}"\r\nContent-Type: ${file.mime}\r\n\r\n`),
+    file.data,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  );
+  return { payload: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+describe('agents and running bots (bot_running_behavior)', () => {
+  let app: FastifyInstance;
+  let admin: Record<string, string>;
+  let chatId: string;
+  let runId: string;
+
+  beforeEach(async () => {
+    await enableSeeAll(ctx, seed.admin); // the chat sits in the default sector, which no seeded agent belongs to
+    await activeChannelBot();
+    await ingest(msg({ body: 'Bom dia' }));
+    chatId = (await chatOf(PHONE)).id;
+    runId = (await allRuns())[0]!.id;
+    ({ app } = await makeTestApp(ctx));
+    admin = (await loginAs(app, seed.admin.email)).headers;
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  const post = (path: string, payload: object, headers = admin) =>
+    app.inject({ method: 'POST', url: `/api/chats/${chatId}/${path}`, headers, payload });
+  const runState = async () =>
+    (await ctx.db.select({ state: botRuns.state }).from(botRuns).where(eq(botRuns.id, runId)))[0]!.state;
+  const stops = async () => (await eventsOf(ctx, chatId)).filter((e) => e.kind === 'bot_stopped');
+  const agentMessages = () =>
+    ctx.db.select().from(messages).where(and(eq(messages.chatId, chatId), eq(messages.authorId, seed.admin.id)));
+  const botRunning = () => ({
+    error: 'O chatbot está em execução nesta conversa',
+    code: 'BOT_RUNNING',
+    runs: [{ id: runId, botName: 'Recepção' }],
+  });
+  async function setBehavior(value: 'ask' | 'stop' | 'keep') {
+    await ctx.db
+      .insert(settings)
+      .values({ key: 'bot_running_behavior', value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } });
+  }
+
+  it('asks with 409 BOT_RUNNING by default and sends nothing until botAction comes', async () => {
+    const asked = await post('messages', { text: 'Olá, sou a atendente' });
+    expect(asked.statusCode).toBe(409);
+    expect(asked.json()).toEqual(botRunning());
+    expect(await agentMessages()).toHaveLength(0);
+    expect(sentTexts()).toEqual([MENU_TEXT]);
+    expect(await runState()).toBe('waiting_reply');
+
+    const kept = await post('messages', { text: 'Olá, sou a atendente', botAction: 'keep' });
+    expect(kept.statusCode).toBe(200);
+    expect(await agentMessages()).toHaveLength(1);
+    expect(await runState()).toBe('waiting_reply');
+    expect(await stops()).toEqual([]);
+  });
+
+  it('botAction stop stops the run as the agent, then sends', async () => {
+    const res = await post('messages', { text: 'Assumo daqui', botAction: 'stop' });
+    expect(res.statusCode).toBe(200);
+    expect(await runState()).toBe('stopped');
+    expect(await stops()).toMatchObject([
+      { authorId: seed.admin.id, data: { reason: 'agent_message', runId, botName: 'Recepção' } },
+    ]);
+    expect(sentTexts().at(-1)).toContain('Assumo daqui');
+
+    // No run left: the next send goes straight through, even under 'ask'.
+    expect((await post('messages', { text: 'Mais uma' })).statusCode).toBe(200);
+  });
+
+  it('the keep and stop settings decide without asking', async () => {
+    await setBehavior('keep');
+    expect((await post('messages', { text: 'Primeira' })).statusCode).toBe(200);
+    expect(await runState()).toBe('waiting_reply');
+
+    await setBehavior('stop');
+    expect((await post('messages', { text: 'Segunda' })).statusCode).toBe(200);
+    expect(await runState()).toBe('stopped');
+    expect(await stops()).toMatchObject([{ authorId: seed.admin.id, data: { reason: 'agent_message' } }]);
+  });
+
+  it('a multipart send carries botAction', async () => {
+    const file = { name: 'doc.pdf', mime: 'application/pdf', data: Buffer.from('%PDF-1.4 teste') };
+    const upload = (fields: Record<string, string>) => {
+      const { payload, contentType } = multipart(fields, file);
+      return app.inject({
+        method: 'POST', url: `/api/chats/${chatId}/messages`, headers: { ...admin, 'content-type': contentType }, payload,
+      });
+    };
+
+    const asked = await upload({ signature: 'false' });
+    expect(asked.statusCode).toBe(409);
+    expect(asked.json().code).toBe('BOT_RUNNING');
+
+    const stopped = await upload({ signature: 'false', botAction: 'stop' });
+    expect(stopped.statusCode).toBe(200);
+    expect(await runState()).toBe('stopped');
+    expect(ctx.wa.sent.filter((s) => s.method === 'sendMedia')).toHaveLength(1);
+  });
+
+  it('internal notes never touch the bot', async () => {
+    const res = await post('notes', { text: 'Cliente ligou antes' });
+    expect(res.statusCode).toBe(200);
+    expect(await runState()).toBe('waiting_reply');
+  });
+
+  it('a user who cannot see the chat gets 404, never the bot names', async () => {
+    const ana = (await loginAs(app, seed.agentA.email)).headers; // sector Financeiro; the chat is in Atendimento
+    expect((await post('messages', { text: 'Oi' }, ana)).statusCode).toBe(404);
+    expect((await post('transfer', { sectorId: seed.sectorA }, ana)).statusCode).toBe(404);
+    expect(await runState()).toBe('waiting_reply');
+  });
+
+  it('a manual transfer follows the setting: ask answers 409, then keep or stop', async () => {
+    const asked = await post('transfer', { sectorId: seed.sectorA });
+    expect(asked.statusCode).toBe(409);
+    expect(asked.json()).toEqual(botRunning());
+    const [still] = await ctx.db.select().from(chats).where(eq(chats.id, chatId));
+    expect(still!.sectorId).toBe(seed.defaultSector);
+
+    const kept = await post('transfer', { sectorId: seed.sectorA, botAction: 'keep' });
+    expect(kept.statusCode).toBe(200);
+    expect(kept.json().sectorId).toBe(seed.sectorA);
+    expect(await runState()).toBe('waiting_reply');
+
+    const stopped = await post('transfer', { sectorId: seed.sectorB, botAction: 'stop' });
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.json().sectorId).toBe(seed.sectorB);
+    expect(await runState()).toBe('stopped');
+    expect(await stops()).toMatchObject([{ authorId: seed.admin.id, data: { reason: 'transfer', runId } }]);
+  });
+
+  it('closing the chat stops its bots without asking, also when the closing message is sent', async () => {
+    await ctx.db.insert(settings).values({ key: 'closing_message', value: 'Atendimento finalizado.' });
+
+    const res = await post('close', { sendClosingMessage: true });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().state).toBe('closed');
+    expect(sentTexts().at(-1)).toBe('Atendimento finalizado.');
+    expect(await runState()).toBe('stopped');
+    expect(await stops()).toMatchObject([{ authorId: seed.admin.id, data: { reason: 'chat_closed', runId } }]);
   });
 });
