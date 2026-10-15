@@ -195,6 +195,11 @@ export function Inbox() {
         )}
 
         <ul className="min-h-0 flex-1 overflow-y-auto" onScroll={onScroll}>
+          {me?.role === 'admin' && !me.seeAllSectors && me.sectorIds.length === 0 && (
+            <li className="px-4 pb-4 text-sm text-muted">
+              Você não está em nenhum setor. Ative “Ver todos os setores” para ver as conversas do escritório.
+            </li>
+          )}
           {chats.map((c) => (
             <ChatListItem
               key={c.id}
@@ -209,11 +214,6 @@ export function Inbox() {
           {list.isPending && <li className="p-4 text-sm text-muted">Carregando…</li>}
           {list.isError && <li className="p-4 text-sm text-danger">Não foi possível carregar as conversas.</li>}
           {list.isSuccess && chats.length === 0 && <li className="p-4 text-sm text-muted">Nenhuma conversa</li>}
-          {list.isSuccess && chats.length === 0 && me?.role === 'admin' && !me.seeAllSectors && me.sectorIds.length === 0 && (
-            <li className="px-4 pb-4 text-sm text-muted">
-              Você não está em nenhum setor. Ative “Ver todos os setores” para ver as conversas do escritório.
-            </li>
-          )}
           {list.isFetchingNextPage && <li className="p-4 text-sm text-muted">Carregando…</li>}
         </ul>
       </aside>

@@ -90,6 +90,7 @@ it('renders chat items with preview, unread, owner, sector, lock and pin', async
   expect(screen.getByLabelText('Não lidas: 3')).toBeTruthy();
   expect(screen.getByLabelText('Conversa privada')).toBeTruthy();
   expect(screen.getByLabelText('Fixada')).toBeTruthy();
+  expect(screen.getByRole('img', { name: 'Responsável: Maria Lima' })).toBeTruthy();
   expect((await screen.findByTitle('Maria Lima')).querySelector('img')?.getAttribute('src')).toBe('/api/users/u1/avatar?v=abc'); // owner picture
   expect(document.querySelector('img[src="/api/contacts/ct1/avatar?v=1"]')).toBeTruthy(); // contact picture
   expect((await screen.findAllByText('Financeiro')).length).toBe(2);
@@ -155,10 +156,16 @@ it('shows an error banner when toggling the view fails', async () => {
   expect((await screen.findByRole('alert')).textContent).toBe('Não foi possível alterar a visualização. Tente novamente.');
 });
 
-it('hints a sectorless admin with an empty list to enable "Ver todos os setores"', async () => {
+it('hints a sectorless admin to enable "Ver todos os setores", even with a non-empty list', async () => {
   renderInbox({ ...adminMe, sectorIds: [] });
-  fireEvent.click(await screen.findByRole('tab', { name: /Esperando/ }));
-  expect(await screen.findByText(/Você não está em nenhum setor/)).toBeTruthy();
+  await screen.findByText('Ana Souza');
+  expect(screen.getByText(/Você não está em nenhum setor/)).toBeTruthy();
+});
+
+it('hides the sectorless hint when the admin sees all sectors', async () => {
+  renderInbox({ ...adminMe, sectorIds: [], seeAllSectors: true });
+  await screen.findByText('Ana Souza');
+  expect(screen.queryByText(/Você não está em nenhum setor/)).toBeNull();
 });
 
 it('does not show the sectorless hint to an admin with sectors', async () => {

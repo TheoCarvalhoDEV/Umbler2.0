@@ -46,7 +46,7 @@ export function ChatListItem({ chat, sectorName, owner, active, onOpen, onToggle
           <span className="mt-1 flex items-center gap-1">
             {sectorName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{sectorName}</span>}
             {owner && (
-              <span title={owner.name}>
+              <span title={owner.name} role="img" aria-label={`Responsável: ${owner.name}`}>
                 <Avatar name={owner.name} src={owner.avatarUrl} className="size-5 text-[10px] bg-primary text-white" />
               </span>
             )}
