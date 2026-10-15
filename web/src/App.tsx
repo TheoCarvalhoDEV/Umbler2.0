@@ -7,6 +7,7 @@ import ConversationPage from './pages/Conversation';
 import { Inbox } from './pages/Inbox';
 import Login from './pages/Login';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { BotEditorPage } from './pages/settings/bots/BotEditorPage';
 
 function NotFound() {
   return <div className="flex h-full items-center justify-center text-muted">Página não encontrada.</div>;
@@ -14,6 +15,14 @@ function NotFound() {
 
 export const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
+  {
+    path: '/configuracoes/chatbots/:id',
+    element: (
+      <RequireAuth>
+        <BotEditorPage />
+      </RequireAuth>
+    ),
+  },
   {
     path: '/',
     element: (
