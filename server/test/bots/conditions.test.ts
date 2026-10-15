@@ -20,7 +20,7 @@ import {
   type WaitIntervalConfig,
   type Weekday,
 } from '@talk/shared';
-import { compareValues, conditionBlocks, evalRule, operandValue } from '../../src/bots/blocks/conditions.js';
+import { compareValues, conditionBlocks, evalRule, operandValue, zonedParts } from '../../src/bots/blocks/conditions.js';
 import { resumeOnReply, resumeOnTimer, startRun } from '../../src/bots/engine.js';
 import { defaultRegistry, type BlockResult, type BotCtx, type ResumeEvent } from '../../src/bots/registry.js';
 import { createBot, latestVersion, type BotRunRow } from '../../src/bots/repo.js';
@@ -523,5 +523,231 @@ describe('parallel_bot', () => {
     expect(await nextOf(grandchild, node('parallel_bot', {}))).toBe('no');
     await seedRun(chatId, { state: 'waiting_timer' });
     expect(await nextOf(grandchild, node('parallel_bot', {}))).toBe('yes');
+  });
+});
+
+// ---------- cycle 3: time blocks, registry, engine ----------
+
+const MON_FRI: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
+
+describe('conditionBlocks registry', () => {
+  it('registers exactly the 17 condition types, also in defaultRegistry', () => {
+    const types = BLOCK_CATALOG.filter((e) => e.category === 'condition').map((e) => e.type);
+    expect(types).toHaveLength(17);
+    expect(Object.keys(conditionBlocks).sort()).toEqual([...types].sort());
+    for (const t of types) {
+      expect(conditionBlocks[t]?.type).toBe(t);
+      expect(defaultRegistry[t]).toBe(conditionBlocks[t]);
+    }
+  });
+});
+
+describe('zonedParts', () => {
+  it.each<[string, string, Weekday, number]>([
+    ['2026-10-14T13:00:00Z', 'America/Cuiaba', 'wed', 9 * 60],
+    ['2026-10-15T03:30:00Z', 'America/Cuiaba', 'wed', 23 * 60 + 30], // still Wednesday in Cuiabá, already Thursday in UTC
+    ['2026-10-15T03:30:00Z', 'UTC', 'thu', 3 * 60 + 30],
+    ['2026-10-15T04:00:00Z', 'America/Cuiaba', 'thu', 0], // midnight is 0, never 24:00
+    ['2026-10-14T16:00:00Z', 'Asia/Tokyo', 'thu', 60],
+  ])('%s in %s is %s minute %d', (iso, tz, weekday, minutes) => {
+    expect(zonedParts(at(iso), tz)).toEqual({ weekday, minutes });
+  });
+});
+
+describe('weekdays', () => {
+  it.each<[string, string, string]>([
+    ['2026-10-14T13:00:00Z', 'America/Cuiaba', 'day:wed'],
+    ['2026-10-15T03:30:00Z', 'America/Cuiaba', 'day:wed'],
+    ['2026-10-15T03:30:00Z', 'UTC', 'day:thu'],
+    ['2026-10-15T04:00:00Z', 'America/Cuiaba', 'day:thu'],
+    ['2026-10-14T16:00:00Z', 'Asia/Tokyo', 'day:thu'],
+    ['2026-10-17T12:00:00Z', 'America/Cuiaba', 'day:sat'],
+    ['2026-10-19T03:59:00Z', 'America/Cuiaba', 'day:sun'],
+    ['2026-10-19T04:00:00Z', 'America/Cuiaba', 'day:mon'],
+  ])('%s in %s follows %s', async (iso, timezone, expected) => {
+    const { run } = await scene();
+    expect(await nextOf(run, node('weekdays', { timezone }), { now: at(iso) })).toBe(expected);
+  });
+
+  it('falls back to America/Cuiaba when the time zone is empty', async () => {
+    const { run } = await scene();
+    expect(await nextOf(run, node('weekdays', { timezone: '' }), { now: at('2026-10-15T03:30:00Z') })).toBe('day:wed');
+  });
+});
+
+describe('hours', () => {
+  const OFFICE: HoursConfig = {
+    timezone: 'America/Cuiaba',
+    intervals: [
+      { from: '08:00', to: '12:00', days: MON_FRI },
+      { from: '14:00', to: '18:00', days: MON_FRI },
+    ],
+  };
+
+  it.each<[string, string, 'in' | 'out']>([
+    ['2026-10-14T11:59:00Z', 'qua 07:59', 'out'],
+    ['2026-10-14T12:00:00Z', 'qua 08:00, início incluído', 'in'],
+    ['2026-10-14T15:59:00Z', 'qua 11:59', 'in'],
+    ['2026-10-14T16:00:00Z', 'qua 12:00, fim excluído', 'out'],
+    ['2026-10-14T17:30:00Z', 'qua 13:30, almoço', 'out'],
+    ['2026-10-14T18:00:00Z', 'qua 14:00', 'in'],
+    ['2026-10-14T21:59:00Z', 'qua 17:59', 'in'],
+    ['2026-10-14T22:00:00Z', 'qua 18:00', 'out'],
+    ['2026-10-16T21:00:00Z', 'sex 17:00', 'in'],
+    ['2026-10-17T14:00:00Z', 'sáb 10:00', 'out'],
+    ['2026-10-19T12:00:00Z', 'seg 08:00', 'in'],
+  ])('office hours at %s (%s em Cuiabá) → %s', async (iso, _label, expected) => {
+    const { run } = await scene();
+    expect(await nextOf(run, node('hours', OFFICE), { now: at(iso) })).toBe(expected);
+  });
+
+  it('uses the weekday of the block time zone across midnight UTC', async () => {
+    const { run } = await scene();
+    const lateFriday = (timezone: string) => node('hours', { timezone, intervals: [{ from: '22:00', to: '23:59', days: ['fri'] }] });
+    const now = at('2026-10-17T03:00:00Z'); // Friday 23:00 in Cuiabá, Saturday 03:00 in UTC
+    expect(await nextOf(run, lateFriday('America/Cuiaba'), { now })).toBe('in');
+    expect(await nextOf(run, lateFriday('UTC'), { now })).toBe('out');
+  });
+
+  it('applies an interval without days on every day', async () => {
+    const { run } = await scene();
+    const night = node('hours', { timezone: 'America/Cuiaba', intervals: [{ from: '00:00', to: '06:00' }] });
+    expect(await nextOf(run, night, { now: at('2026-10-18T07:00:00Z') })).toBe('in'); // Sunday 03:00
+    expect(await nextOf(run, night, { now: at('2026-10-18T10:00:00Z') })).toBe('out'); // Sunday 06:00
+  });
+});
+
+describe('wait_interval', () => {
+  const now = at('2026-10-14T13:00:00Z');
+  const wait = (c: Partial<WaitIntervalConfig>) =>
+    node('wait_interval', { mode: 'fixed', amount: 5, unit: 'minutes', resumeOnReply: false, ...c });
+  const after = (ms: number) => new Date(now.getTime() + ms);
+
+  it.each<[number, TimeUnit, number]>([
+    [30, 'seconds', 30_000],
+    [10, 'minutes', 600_000],
+    [3, 'hours', 10_800_000],
+    [2, 'days', 172_800_000],
+  ])('fixed %d %s waits on the timer', async (amount, unit, ms) => {
+    const { run } = await scene();
+    expect(await runBlock(run, wait({ amount, unit }), { now })).toEqual({ wait: 'timer', wakeAt: after(ms) });
+  });
+
+  it('with resumeOnReply waits for a reply until the same moment', async () => {
+    const { run } = await scene();
+    expect(await runBlock(run, wait({ amount: 10, resumeOnReply: true }), { now })).toEqual({ wait: 'reply', timeoutAt: after(600_000) });
+  });
+
+  it.each<[string, number]>([
+    ['2', 7_200_000],
+    ['1,5', 5_400_000],
+    [' 0.25 ', 900_000],
+  ])('variable %j hours reads the rendered text', async (prazo, ms) => {
+    const { run } = await scene({ run: { vars: { prazo: { raw: prazo, value: prazo } } } });
+    const n = wait({ mode: 'variable', variable: '{{contexto.prazo}}', unit: 'hours' });
+    expect(await runBlock(run, n, { now })).toEqual({ wait: 'timer', wakeAt: after(ms) });
+  });
+
+  it.each<[string]>([['amanhã'], ['0'], ['-3'], ['']])('variable %j fails the run', async (prazo) => {
+    const { run } = await scene({ run: { vars: { prazo: { raw: prazo, value: prazo } } } });
+    const n = wait({ mode: 'variable', variable: '{{contexto.prazo}}', unit: 'hours' });
+    expect(await runBlock(run, n, { now })).toEqual({ end: 'failed', error: 'O tempo de espera precisa ser um número maior que zero' });
+  });
+
+  it('fixed 0 fails the run', async () => {
+    const { run } = await scene();
+    expect(await runBlock(run, wait({ amount: 0 }), { now })).toEqual({ end: 'failed', error: 'O tempo de espera precisa ser um número maior que zero' });
+  });
+
+  const reply: ResumeEvent = {
+    kind: 'reply',
+    reply: { messageId: randomUUID(), kind: 'text', body: 'oi', mediaMime: null, mediaName: null, createdAt: now },
+  };
+  it.each<[string, ResumeEvent, string]>([
+    ['timer', { kind: 'timer' }, 'next'],
+    ['timeout', { kind: 'timeout' }, 'next'],
+    ['reply', reply, 'replied'],
+  ])('resume on %s follows %s', async (_label, ev, handle) => {
+    const { run } = await scene();
+    const n = wait({ resumeOnReply: true });
+    const def = definition('wait_interval');
+    if (!def.resume) throw new Error('wait_interval precisa de resume');
+    expect(await def.resume(await botCtx(run, { now }), run, n, ev)).toEqual({ next: handle });
+    expect(outputsOf('wait_interval', n.config).map((o) => o.id)).toContain(handle);
+  });
+});
+
+describe('wait_interval inside the engine', () => {
+  const tenPast = at('2026-10-14T13:10:00Z'); // fake clock starts at 13:00Z
+  const alwaysYes: Rule = { left: lit('a'), operator: 'eq', right: lit('a') };
+
+  async function setup(resumeOnReply: boolean) {
+    const ectx = await makeTestCtx();
+    const es = await seedBasics(ectx);
+    // The real start_manual block arrives in Task 8; a pass-through stands in for it here.
+    ectx.botRuntime = createBotRuntime({
+      now: () => ectx.clock.now(),
+      registry: { start_manual: { type: 'start_manual', run: async () => ({ next: 'next' }) } },
+    });
+    const graph: BotGraph = {
+      nodes: [
+        node('start_manual', {}, 'inicio'),
+        node('wait_interval', { mode: 'fixed', amount: 10, unit: 'minutes', resumeOnReply }, 'espera'),
+        node('condition', { logic: 'and', rules: [alwaysYes] }, 'passou'),
+        node('condition', { logic: 'and', rules: [alwaysYes] }, 'respondeu'),
+      ],
+      edges: [
+        { id: 'e1', source: 'inicio', sourceHandle: 'next', target: 'espera' },
+        { id: 'e2', source: 'espera', sourceHandle: 'next', target: 'passou' },
+        ...(resumeOnReply ? [{ id: 'e3', source: 'espera', sourceHandle: 'replied', target: 'respondeu' }] : []),
+      ],
+    };
+    const bot = await createBot(ectx.db, { name: 'Espera', graph, valid: true, publish: true, createdBy: null, manualStart: true });
+    await ectx.db.update(bots).set({ status: 'active' }).where(eq(bots.id, bot.id));
+    const { chatId } = await seedChat(ectx, { channelId: es.channelId, sectorId: es.defaultSector, name: 'Maria' });
+    const started = await startRun(ectx, { botId: bot.id, chatId, entry: 'manual', startedBy: null });
+    const load = async () => (await ectx.db.select().from(botRuns).where(eq(botRuns.id, started.id)))[0];
+    return { ectx, es, chatId, runId: started.id, load };
+  }
+
+  it('fixed: waits on the timer and continues by next only once it is due', async () => {
+    const { ectx, runId, load } = await setup(false);
+    const waiting = await load();
+    expect(waiting.state).toBe('waiting_timer');
+    expect(waiting.wakeAt).toEqual(tenPast);
+
+    expect(await resumeOnTimer(ectx, runId, at('2026-10-14T13:05:00Z'))).toBeNull();
+    expect((await load()).state).toBe('waiting_timer');
+
+    await resumeOnTimer(ectx, runId, tenPast);
+    const done = await load();
+    expect(done.state).toBe('finished');
+    expect(done.steps.map((st) => st.node)).toContain('passou');
+  });
+
+  it('resumeOnReply: a reply before the time follows replied', async () => {
+    const { ectx, es, chatId, load } = await setup(true);
+    const waiting = await load();
+    expect(waiting.state).toBe('waiting_reply');
+    expect(waiting.timeoutAt).toEqual(tenPast);
+
+    // waiting_since is the DB clock_timestamp(); the reply must be stored after it (Review Focus 1).
+    const createdAt = new Date(Date.now() + 1000);
+    const messageId = await seedMessage(ectx, chatId, es.channelId, createdAt, { body: 'oi' });
+    expect(await resumeOnReply(ectx, chatId, { messageId, kind: 'text', body: 'oi', mediaMime: null, mediaName: null, createdAt })).toBe(1);
+
+    const done = await load();
+    expect(done.state).toBe('finished');
+    expect(done.steps.map((st) => st.node)).toContain('respondeu');
+    expect(done.steps.map((st) => st.node)).not.toContain('passou');
+  });
+
+  it('resumeOnReply: no reply until the time follows next', async () => {
+    const { ectx, runId, load } = await setup(true);
+    await resumeOnTimer(ectx, runId, tenPast);
+    const done = await load();
+    expect(done.state).toBe('finished');
+    expect(done.steps.map((st) => st.node)).toContain('passou');
+    expect(done.steps.map((st) => st.node)).not.toContain('respondeu');
   });
 });

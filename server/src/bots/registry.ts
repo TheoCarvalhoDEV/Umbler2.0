@@ -3,6 +3,7 @@ import type { AppCtx } from '../ctx.js';
 import type { ChatRow } from '../inbox/chats.js';
 import type { MessageKind } from '../whatsapp/types.js';
 import type { BotRunRow } from './repo.js';
+import { conditionBlocks } from './blocks/conditions.js';
 
 // Block modules import BlockError from './block-error.js', never from here: this file imports the block
 // families, so a runtime import back into it is an ESM cycle (TDZ ReferenceError on `...xBlocks`).
@@ -55,4 +56,6 @@ export interface BlockDefinition {
 export type BlockRegistry = Partial<Record<BlockType, BlockDefinition>>;
 
 // Tasks 6–8 add `...conditionBlocks`, `...actionBlocks`, `...startBlocks`, `...finishBlocks` here.
-export const defaultRegistry: BlockRegistry = {};
+export const defaultRegistry: BlockRegistry = {
+  ...conditionBlocks,
+};

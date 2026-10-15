@@ -116,6 +116,25 @@ async function evalRules(ctx: BotCtx, run: BotRunRow, logic: Logic, rules: Rule[
 }
 
 const DAY_MS = 86_400_000;
+const UNIT_MS: Record<TimeUnit, number> = { seconds: 1_000, minutes: 60_000, hours: 3_600_000, days: DAY_MS };
+
+/** Weekday and minutes since midnight of `d` in `timeZone`. Throws RangeError on an unknown zone (validateGraph rejects those). */
+export function zonedParts(d: Date, timeZone: string): { weekday: Weekday; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+  return {
+    weekday: part('weekday').toLowerCase() as Weekday, // 'Wed' → 'wed'
+    minutes: (Number(part('hour')) % 24) * 60 + Number(part('minute')),
+  };
+}
+
+/** 'HH:MM' → minutes since midnight (NaN when malformed, which matches no interval). */
+function hhmm(s: string): number {
+  const [h = '', m = ''] = s.split(':');
+  return Number(h) * 60 + Number(m);
+}
 
 export const conditionBlocks: BlockRegistry = {
   condition: {
@@ -254,5 +273,38 @@ export const conditionBlocks: BlockRegistry = {
       for (let p = run.parentRunId; p && !chain.has(p); p = byId.get(p) ?? null) chain.add(p);
       return yesNo(active.some((r) => !chain.has(r.id)));
     },
+  },
+  weekdays: {
+    type: 'weekdays',
+    run: async (ctx, _run, node) => {
+      const { weekday } = zonedParts(ctx.now, conf<WeekdaysConfig>(node).timezone || DEFAULT_TIMEZONE);
+      return { next: `day:${weekday}` };
+    },
+  },
+  hours: {
+    type: 'hours',
+    run: async (ctx, _run, node) => {
+      const c = conf<HoursConfig>(node);
+      const { weekday, minutes } = zonedParts(ctx.now, c.timezone || DEFAULT_TIMEZONE);
+      const inside = (c.intervals ?? []).some(
+        (i) => (!i.days || i.days.includes(weekday)) && minutes >= hhmm(i.from) && minutes < hhmm(i.to), // `to` exclusive
+      );
+      return { next: inside ? 'in' : 'out' };
+    },
+  },
+  wait_interval: {
+    type: 'wait_interval',
+    run: async (ctx, _run, node) => {
+      const c = conf<WaitIntervalConfig>(node);
+      const amount = c.mode === 'variable' ? toNumber(await ctx.render(c.variable ?? '')) : c.amount;
+      const ms = amount * UNIT_MS[c.unit];
+      const wake = new Date(ctx.now.getTime() + ms);
+      if (!(ms > 0) || Number.isNaN(wake.getTime())) {
+        return { end: 'failed', error: 'O tempo de espera precisa ser um número maior que zero' };
+      }
+      return c.resumeOnReply ? { wait: 'reply', timeoutAt: wake } : { wait: 'timer', wakeAt: wake };
+    },
+    // timer (plain wait) and timeout (resumeOnReply, nobody answered) both mean the time ran out.
+    resume: async (_ctx, _run, _node, ev) => ({ next: ev.kind === 'reply' ? 'replied' : 'next' }),
   },
 };
