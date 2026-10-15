@@ -45,7 +45,7 @@ describe('writeAvatarFile', () => {
   it('refuses a path outside mediaDir', async () => {
     const dir = await tempDir();
     vi.mocked(fsp.writeFile).mockClear();
-    await expect(writeAvatarFile(join(dir, 'media'), '../fora.png', Buffer.from('img'))).rejects.toThrow();
+    await expect(writeAvatarFile(join(dir, 'media'), '../fora.png', Buffer.from('img'))).rejects.toThrow('avatar path outside mediaDir');
     expect(vi.mocked(fsp.writeFile)).not.toHaveBeenCalled();
     expect(existsSync(join(dir, 'fora.png'))).toBe(false);
   });
@@ -55,7 +55,7 @@ describe('removeAvatarFile', () => {
   it('refuses a path outside mediaDir', async () => {
     const dir = await tempDir();
     writeFileSync(join(dir, 'fora.png'), 'x');
-    await expect(removeAvatarFile(join(dir, 'media'), '../fora.png')).rejects.toThrow();
+    await expect(removeAvatarFile(join(dir, 'media'), '../fora.png')).rejects.toThrow('avatar path outside mediaDir');
     expect(existsSync(join(dir, 'fora.png'))).toBe(true);
   });
 });

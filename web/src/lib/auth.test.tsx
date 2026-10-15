@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
+import { qk } from './api';
 import { useLogout, useSessionSync } from './auth';
 
 afterEach(() => {
@@ -28,10 +29,9 @@ it('keeps listening for session changes when "me" failed to load', async () => {
   vi.stubGlobal('location', { reload });
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'x' }), { status: 500, headers: { 'content-type': 'application/json' } })));
   const client = newClient();
-  const { result } = renderHook(() => ({ s: useSessionSync(), q: client.getQueryState(['me']) }), { wrapper: wrapper(client) });
+  renderHook(() => useSessionSync(), { wrapper: wrapper(client) });
   // useSessionSync itself reads `me` via useMe, which fetches and fails
-  await waitFor(() => expect(client.getQueryState(['me'])?.status).toBe('error'));
-  expect(result.current).toBeTruthy();
+  await waitFor(() => expect(client.getQueryState(qk.me)?.status).toBe('error'));
   act(() => {
     window.dispatchEvent(new StorageEvent('storage', { key: 'talk:session', newValue: 'u2:1' }));
   });

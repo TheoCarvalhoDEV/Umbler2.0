@@ -89,6 +89,16 @@ it('updates sectors and signature and drops live sockets on visibility changes',
   expect((await call('GET', '/api/auth/me', agent)).statusCode).toBe(200);
 });
 
+it('does not drop sockets when role and sectors are sent but unchanged; does on a real role change', async () => {
+  const spy = vi.spyOn(ctx.hub, 'disconnectUser');
+  const cur = (await call('GET', '/api/users', admin)).json().find((u: { id: string }) => u.id === seed.agentA.id);
+  const same = await call('PATCH', `/api/users/${seed.agentA.id}`, admin, { role: cur.role, sectorIds: cur.sectorIds, name: 'Novo Nome' });
+  expect(same.statusCode).toBe(200);
+  expect(spy).not.toHaveBeenCalled();
+  expect((await call('PATCH', `/api/users/${seed.agentA.id}`, admin, { role: 'admin' })).statusCode).toBe(200);
+  expect(spy).toHaveBeenCalledWith(seed.agentA.id);
+});
+
 it('deactivating a user kills their sessions and live sockets', async () => {
   const spy = vi.spyOn(ctx.hub, 'disconnectUser');
   expect((await call('GET', '/api/auth/me', agent)).statusCode).toBe(200);

@@ -4,12 +4,18 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { removeAvatarFile } from '../../src/media/avatar-files.js';
 import { readAvatarUpload } from '../../src/auth/routes.js';
 import { messages, users } from '../../src/db/schema.js';
 import { HttpError } from '../../src/lib/http-error.js';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
 import { TEST_ORIGIN, loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
+
+vi.mock('../../src/media/avatar-files.js', async (orig) => {
+  const m = await orig<typeof import('../../src/media/avatar-files.js')>();
+  return { ...m, removeAvatarFile: vi.fn(m.removeAvatarFile) };
+});
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
@@ -101,6 +107,25 @@ describe('POST /api/auth/me/avatar', () => {
     expect((await upload({ mime: 'image/jpeg', data: PNG })).statusCode).toBe(500);
     expect((await userRow(seed.agentA.id)).avatarPath).toBe(before);
     expect((await userFiles(seed.agentA.id)).map((f) => `avatars/users/${f}`)).toEqual([before]);
+  });
+
+  it('keeps the original error when removing the new file also fails', async () => {
+    await ctx.db.execute(sql`CREATE FUNCTION fail_avatar() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$`);
+    await ctx.db.execute(sql`CREATE TRIGGER fail_avatar BEFORE UPDATE OF avatar_path ON users FOR EACH ROW EXECUTE FUNCTION fail_avatar()`);
+    vi.mocked(removeAvatarFile).mockRejectedValueOnce(new Error('cleanup failed'));
+    const res = await upload({ mime: 'image/png', data: PNG });
+    expect(res.statusCode).toBe(500);
+    expect(res.body).not.toContain('cleanup failed');
+  });
+
+  it('succeeds and still announces users.changed when removing the old file fails', async () => {
+    await upload({ mime: 'image/png', data: PNG });
+    ctx.hub.events.length = 0;
+    vi.mocked(removeAvatarFile).mockRejectedValueOnce(new Error('EPERM'));
+    const res = await upload({ mime: 'image/jpeg', data: PNG });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().avatarUrl).toMatch(URL_RE(seed.agentA.id));
+    expect(ctx.hub.events.filter((e) => e.type === 'users.changed')).toHaveLength(1);
   });
 
   it('tells every connected screen that the users changed, on upload and on removal', async () => {

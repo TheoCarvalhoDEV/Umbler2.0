@@ -16,7 +16,7 @@ const STALE = 'A conversa foi alterada por outra pessoa. Recarregue e tente de n
 const busyElsewhere = (user: AuthUser) =>
   conflict(
     user.role === 'admin'
-      ? 'Já existe uma conversa aberta com este contato em outro setor. Ative “Ver todos os setores” para acessá-la.'
+      ? 'Já existe uma conversa aberta com este contato que você não pode ver. Ative “Ver todos os setores” para acessá-la.'
       : 'Este contato já está em atendimento em outro setor.',
   );
 

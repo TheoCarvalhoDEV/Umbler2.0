@@ -113,12 +113,14 @@ export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx
         return row?.path;
       });
     } catch (err) {
-      if (path) await removeAvatarFile(ctx.config.mediaDir, path);
+      // Cleanup must not replace the original error.
+      if (path) await removeAvatarFile(ctx.config.mediaDir, path).catch(() => {});
       throw err;
     }
-    if (old && old !== path) await removeAvatarFile(ctx.config.mediaDir, old);
     // Colleagues' screens show this picture in the agent list and on the chats.
     ctx.hub.publishUsersChanged();
+    // Best-effort: the swap is committed, a leftover old file must not fail the request.
+    if (old && old !== path) await removeAvatarFile(ctx.config.mediaDir, old).catch((e) => app.log.warn({ err: (e as Error).name }, 'old avatar not removed'));
     return loadAuthUser(ctx.db, id);
   };
 

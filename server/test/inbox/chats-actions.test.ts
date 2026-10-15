@@ -218,7 +218,7 @@ describe('reopenChat', () => {
     await ctx.db.insert(userSectors).values({ userId: s.admin.id, sectorId: s.sectorA });
     const admin = { ...s.admin, sectorIds: [s.sectorA] };
     await expect(reopenChat(ctx, s.agentA, closed)).rejects.toMatchObject({ status: 409, message: 'Este contato já está em atendimento em outro setor.' });
-    await expect(reopenChat(ctx, admin, closed)).rejects.toMatchObject({ status: 409, message: 'Já existe uma conversa aberta com este contato em outro setor. Ative “Ver todos os setores” para acessá-la.' });
+    await expect(reopenChat(ctx, admin, closed)).rejects.toMatchObject({ status: 409, message: 'Já existe uma conversa aberta com este contato que você não pode ver. Ative “Ver todos os setores” para acessá-la.' });
   });
 
   it('409 when the chat is already open', async () => {

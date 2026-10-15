@@ -65,6 +65,7 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
   }
   const passwordHash = p.password ? await hashPassword(p.password) : undefined;
   const killSessions = p.active === false || passwordHash !== undefined;
+  let scopeChanged = false;
   await ctx.db.transaction(async (tx) => {
     const [current] = await tx.select({ role: users.role }).from(users).where(eq(users.id, id));
     if (!current) throw notFound('Usuário não encontrado');
@@ -82,11 +83,19 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
       throw conflict('E-mail já cadastrado');
     }
     if (Object.values(set).some((v) => v !== undefined)) await tx.update(users).set(set).where(eq(users.id, id));
-    if (p.sectorIds) await setSectors(tx, id, p.sectorIds);
+    const roleChanged = p.role !== undefined && p.role !== current.role;
+    let sectorsChanged = false;
+    if (p.sectorIds) {
+      const before = (await tx.select({ s: userSectors.sectorId }).from(userSectors).where(eq(userSectors.userId, id))).map((r) => r.s);
+      const next = new Set(p.sectorIds);
+      sectorsChanged = before.length !== next.size || before.some((x) => !next.has(x));
+      await setSectors(tx, id, p.sectorIds);
+    }
+    scopeChanged = roleChanged || sectorsChanged;
     if (killSessions) await deleteUserSessions(tx, id);
   });
   // A live socket keeps the role/sectors it had at connect time: drop it so the client reconnects fresh.
-  if (killSessions || p.role !== undefined || p.sectorIds !== undefined) ctx.hub.disconnectUser(id);
+  if (killSessions || scopeChanged) ctx.hub.disconnectUser(id);
   return getUserDto(ctx.db, id);
 }
 

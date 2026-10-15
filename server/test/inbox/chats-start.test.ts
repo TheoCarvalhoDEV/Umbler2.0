@@ -130,7 +130,7 @@ describe('startChat', () => {
     const contactId = await newContact(ctx);
     await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorB });
     await expect(startChat(ctx, s.agentA, { contactId })).rejects.toMatchObject({ status: 409, message: 'Este contato já está em atendimento em outro setor.' });
-    await expect(startChat(ctx, s.admin, { contactId })).rejects.toMatchObject({ status: 409, message: 'Já existe uma conversa aberta com este contato em outro setor. Ative “Ver todos os setores” para acessá-la.' });
+    await expect(startChat(ctx, s.admin, { contactId })).rejects.toMatchObject({ status: 409, message: 'Já existe uma conversa aberta com este contato que você não pode ver. Ative “Ver todos os setores” para acessá-la.' });
   });
 
   it('validates the input', async () => {
