@@ -1,14 +1,18 @@
 import { posix } from 'node:path';
 import { eq } from 'drizzle-orm';
-import type { BotAttachment, EditTagsConfig, NoteConfig, SendMessageConfig, SetContactFieldConfig } from '@talk/shared';
+import type {
+  AskChoiceConfig, AskInputConfig, BotAttachment, BotNode, EditTagsConfig, NoteConfig, SendMessageConfig, SetContactFieldConfig,
+} from '@talk/shared';
 import { setContactFields, setContactTags, updateContact, type ContactInput } from '../../contacts/service.js';
 import { contactTags, contacts } from '../../db/schema.js';
 import { addEvent } from '../../inbox/events.js';
 import { HttpError } from '../../lib/http-error.js';
 import { sendSystemMessage, type SystemSendInput } from '../../messages/send.js';
+import { normalize } from '../../triage/triage.js';
 import type { BotRunRow } from '../repo.js';
 import { BlockError } from '../block-error.js';
-import type { BlockDefinition, BlockRegistry, BotCtx } from '../registry.js';
+import type { BlockDefinition, BlockRegistry, BlockResult, BotCtx } from '../registry.js';
+import { validateAnswer } from '../validators.js';
 
 // Action blocks (spec §4 "Ação"). Blocks never write bot_runs: they mutate run.vars / run.retries and return a BlockResult.
 // BlockError comes from block-error.ts, not registry.ts: registry.ts imports this module at load time, so a value import back from it would hit a TDZ error.
@@ -116,9 +120,89 @@ const editTags: BlockDefinition = {
   },
 };
 
+const HOUR_MS = 3_600_000;
+const varName = (node: BotNode) => node.name ?? node.id;
+
+function timeoutFrom(ctx: BotCtx, hours: number | null | undefined): Date | null {
+  return hours && hours > 0 ? new Date(ctx.now.getTime() + hours * HOUR_MS) : null;
+}
+
+function menuText(cfg: AskChoiceConfig): string {
+  return `${cfg.text ?? ''}\n\n${(cfg.options ?? []).map((o) => `${o.key}: ${o.label}`).join('\n')}`;
+}
+
+/** Invalid answer: with retries left, send the invalid text (and `repeat`, if any) and wait again on the same deadline. */
+async function retryOrInvalid(
+  ctx: BotCtx,
+  run: BotRunRow,
+  cfg: { invalidText?: string; invalidRetries?: number; timeoutHours?: number | null },
+  fallback: string,
+  repeat: string | null,
+): Promise<BlockResult> {
+  if (run.retries >= (cfg.invalidRetries ?? 1)) return { next: 'invalid' };
+  run.retries += 1;
+  await send(ctx, run, { text: await ctx.render(cfg.invalidText?.trim() || fallback) });
+  if (repeat !== null) await send(ctx, run, { text: repeat });
+  return { wait: 'reply', timeoutAt: run.timeoutAt ?? timeoutFrom(ctx, cfg.timeoutHours) };
+}
+
+const askChoice: BlockDefinition = {
+  type: 'ask_choice',
+  async run(ctx, run, node) {
+    const cfg = node.config as unknown as AskChoiceConfig;
+    await send(ctx, run, { text: await ctx.render(menuText(cfg)) });
+    return { wait: 'reply', timeoutAt: timeoutFrom(ctx, cfg.timeoutHours) };
+  },
+  async resume(ctx, run, node, ev) {
+    const cfg = node.config as unknown as AskChoiceConfig;
+    if (ev.kind === 'timeout') return { next: 'timeout' };
+    if (ev.kind !== 'reply') throw new BlockError('Evento inesperado no bloco "Pedir para escolher"');
+    // Same matching as the triage: key or label, no accents, no case, surrounding punctuation dropped. Media (body null) never matches.
+    const answer = ev.reply.body === null ? '' : normalize(ev.reply.body);
+    const option = answer
+      ? (cfg.options ?? []).find((o) => normalize(o.key) === answer || normalize(o.label) === answer)
+      : undefined;
+    if (option) {
+      run.vars[varName(node)] = { raw: ev.reply.body ?? '', value: option.key, label: option.label };
+      return { next: `opt:${option.key}` };
+    }
+    return retryOrInvalid(ctx, run, cfg, 'Opção inválida.', await ctx.render(menuText(cfg)));
+  },
+};
+
+async function acceptAnswer(ctx: BotCtx, run: BotRunRow, node: BotNode, cfg: AskInputConfig, answer: { raw: string; value: string }): Promise<BlockResult> {
+  run.vars[varName(node)] = { raw: answer.raw, value: answer.value };
+  if (cfg.saveToField) await saveContactField(ctx, cfg.saveToField, answer.value);
+  return { next: 'next' };
+}
+
+const askInput: BlockDefinition = {
+  type: 'ask_input',
+  async run(ctx, run, node) {
+    const cfg = node.config as unknown as AskInputConfig;
+    if (cfg.useLastMessage) {
+      const last = await ctx.lastInbound();
+      const result = last ? validateAnswer(cfg, last) : null;
+      if (result && result.ok) return acceptAnswer(ctx, run, node, cfg, result);
+    }
+    await send(ctx, run, { text: await ctx.render(cfg.text ?? '') });
+    return { wait: 'reply', timeoutAt: timeoutFrom(ctx, cfg.timeoutHours) };
+  },
+  async resume(ctx, run, node, ev) {
+    const cfg = node.config as unknown as AskInputConfig;
+    if (ev.kind === 'timeout') return { next: 'timeout' };
+    if (ev.kind !== 'reply') throw new BlockError('Evento inesperado no bloco "Pedir informação"');
+    const result = validateAnswer(cfg, ev.reply);
+    if (result.ok) return acceptAnswer(ctx, run, node, cfg, result);
+    return retryOrInvalid(ctx, run, cfg, 'Resposta inválida. Tente de novo.', null);
+  },
+};
+
 export const actionBlocks: BlockRegistry = {
   send_message: sendMessage,
   note,
+  ask_choice: askChoice,
+  ask_input: askInput,
   set_contact_field: setContactField,
   edit_tags: editTags,
 };

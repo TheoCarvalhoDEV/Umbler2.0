@@ -287,3 +287,240 @@ describe('edit_tags', () => {
     expect(rows.map((r) => r.tagId)).toEqual([vip]);
   });
 });
+
+const MENU = {
+  text: 'Escolha uma opção:',
+  options: [{ key: '1', label: 'Atendimento' }, { key: '2', label: 'Financeiro' }, { key: '3', label: 'Jurídico' }],
+  invalidRetries: 1,
+  timeoutHours: 24,
+};
+const MENU_TEXT = 'Escolha uma opção:\n\n1: Atendimento\n2: Financeiro\n3: Jurídico';
+
+const askInput = (over: Record<string, unknown>) => ({
+  text: 'Informe:', validator: 'any', useLastMessage: false, invalidRetries: 1, timeoutHours: null, saveToField: null, ...over,
+});
+
+describe('ask_choice', () => {
+  it('sends the numbered menu and waits with a timeout', async () => {
+    const run = await runFlow([node('menu', 'ask_choice', MENU)]);
+
+    expect(texts()).toEqual([MENU_TEXT]);
+    expect(run).toMatchObject({ state: 'waiting_reply', waitNodeId: 'menu' });
+    expect(run.timeoutAt?.getTime()).toBe(ctx.clock.now().getTime() + 24 * HOUR);
+    const [msg] = await ctx.db.select().from(messages).where(eq(messages.chatId, chatId));
+    expect(msg!.botRunId).toBe(run.id);
+  });
+
+  it('waits forever when timeoutHours is null', async () => {
+    const run = await runFlow([node('menu', 'ask_choice', { ...MENU, timeoutHours: null })]);
+
+    expect(run.state).toBe('waiting_reply');
+    expect(run.timeoutAt).toBeNull();
+  });
+
+  it.each([
+    ['2', '2', 'Financeiro'],
+    [' juridico. ', '3', 'Jurídico'],
+    ['ATENDIMENTO', '1', 'Atendimento'],
+  ])('matches the reply %j to option %s by key or label, ignoring case and accents', async (body, key, label) => {
+    const run = await runFlow([node('menu', 'ask_choice', MENU)]);
+
+    await reply(body);
+
+    const after = await reloadRun(run.id);
+    expect(outcome(after, 'menu')).toBe(`opt:${key}`);
+    expect(after.state).toBe('finished');
+    expect(after.vars.menu).toEqual({ raw: body, value: key, label });
+  });
+
+  it('follows the edge of the chosen option', async () => {
+    const run = await runFlow(
+      [node('menu', 'ask_choice', MENU), node('financeiro', 'note', { text: 'Foi para o financeiro' })],
+      [edge('menu', 'opt:2', 'financeiro')],
+    );
+
+    await reply('2');
+
+    expect(outcome(await reloadRun(run.id), 'financeiro')).toBe('next');
+    expect((await eventsOf(ctx, chatId)).some((e) => e.kind === 'bot_note' && e.data.text === 'Foi para o financeiro')).toBe(true);
+  });
+
+  it('sends the invalid text and the menu again, then takes invalid when retries run out', async () => {
+    const run = await runFlow([node('menu', 'ask_choice', { ...MENU, invalidText: 'Não entendi, {{contato.primeiro_nome}}.' })]);
+
+    await reply('quero falar com alguém');
+    let after = await reloadRun(run.id);
+    expect(after).toMatchObject({ state: 'waiting_reply', retries: 1 });
+    expect(after.timeoutAt?.getTime()).toBe(run.timeoutAt?.getTime());
+    expect(texts()).toEqual([MENU_TEXT, 'Não entendi, Maria.', MENU_TEXT]);
+
+    await reply('9');
+    after = await reloadRun(run.id);
+    expect(outcome(after, 'menu')).toBe('invalid');
+    expect(after.state).toBe('finished');
+    expect(texts()).toHaveLength(3);
+    expect(after.vars.menu).toBeUndefined();
+  });
+
+  it('uses "Opção inválida." when no invalid text is set, and goes straight to invalid with 0 retries', async () => {
+    const run = await runFlow([node('menu', 'ask_choice', MENU)]);
+    await reply('x');
+    expect(texts()).toEqual([MENU_TEXT, 'Opção inválida.', MENU_TEXT]);
+
+    const otherChat = await insertChat(ctx, { channelId: seed.channelId, sectorId: seed.defaultSector });
+    const strict = await runFlow([node('menu', 'ask_choice', { ...MENU, invalidRetries: 0 })], [], otherChat);
+    await reply('x', {}, otherChat);
+    expect(outcome(await reloadRun(strict.id), 'menu')).toBe('invalid');
+    expect(texts()).toHaveLength(4); // only the second chat's menu was added
+    expect((await reloadRun(run.id)).state).toBe('waiting_reply');
+  });
+
+  it('takes timeout once the deadline passes', async () => {
+    const run = await runFlow([node('menu', 'ask_choice', MENU)]);
+    const start = ctx.clock.now().getTime();
+
+    expect(await resumeOnTimer(ctx, run.id, new Date(start + 23 * HOUR))).toBeNull();
+    await resumeOnTimer(ctx, run.id, new Date(start + 25 * HOUR));
+
+    const after = await reloadRun(run.id);
+    expect(outcome(after, 'menu')).toBe('timeout');
+    expect(after.state).toBe('finished');
+  });
+
+  it('follows error when the menu cannot be sent', async () => {
+    ctx.wa.failNext();
+
+    const run = await runFlow(
+      [node('menu', 'ask_choice', MENU), node('falhou', 'note', { text: 'menu falhou' })],
+      [edge('menu', 'error', 'falhou')],
+    );
+
+    expect(outcome(run, 'menu')).toBe('error');
+    expect(run.state).toBe('finished');
+  });
+});
+
+describe('ask_input', () => {
+  it('treats a sticker reply to ask_choice as invalid and an audio reply to ask_input(any) as valid', async () => {
+    const choice = await runFlow([node('menu', 'ask_choice', { ...MENU, invalidRetries: 0 })]);
+    await reply(null, { kind: 'sticker', mediaMime: 'image/webp' });
+    expect(outcome(await reloadRun(choice.id), 'menu')).toBe('invalid');
+
+    const otherChat = await insertChat(ctx, { channelId: seed.channelId, sectorId: seed.defaultSector });
+    const input = await runFlow([node('pergunta', 'ask_input', askInput({ text: 'Mande sua dúvida' }))], [], otherChat);
+    await reply(null, { kind: 'audio', mediaMime: 'audio/ogg' }, otherChat);
+    const after = await reloadRun(input.id);
+    expect(outcome(after, 'pergunta')).toBe('next');
+    expect(after.vars.pergunta).toEqual({ raw: '', value: 'audio' });
+  });
+
+  it('validates a CPF, retries without repeating the question, saves the formatted value and keeps the raw text', async () => {
+    const [field] = await ctx.db.insert(customFields).values({ name: 'CPF', kind: 'cpf' }).returning();
+    const run = await runFlow([
+      node('cpf', 'ask_input', askInput({
+        text: 'Digite seu CPF:', validator: 'cpf', invalidText: 'CPF inválido, confira e digite de novo.',
+        invalidRetries: 2, timeoutHours: 24, saveToField: field!.id,
+      })),
+    ]);
+    expect(texts()).toEqual(['Digite seu CPF:']);
+
+    await reply('123.456.789-00');
+    expect(await reloadRun(run.id)).toMatchObject({ state: 'waiting_reply', retries: 1 });
+    expect(texts()).toEqual(['Digite seu CPF:', 'CPF inválido, confira e digite de novo.']);
+
+    await reply('52998224725');
+    const after = await reloadRun(run.id);
+    expect(outcome(after, 'cpf')).toBe('next');
+    expect(after.vars.cpf).toEqual({ raw: '52998224725', value: '529.982.247-25' });
+    const [saved] = await ctx.db
+      .select()
+      .from(contactFieldValues)
+      .where(and(eq(contactFieldValues.contactId, contactId), eq(contactFieldValues.fieldId, field!.id)));
+    expect(saved?.value).toBe('529.982.247-25');
+  });
+
+  it('takes invalid after the retries run out, sending the default invalid text once', async () => {
+    const run = await runFlow([node('email', 'ask_input', askInput({ text: 'Qual seu e-mail?', validator: 'email' }))]);
+
+    await reply('não tenho');
+    await reply('nenhum');
+
+    const after = await reloadRun(run.id);
+    expect(outcome(after, 'email')).toBe('invalid');
+    expect(texts()).toEqual(['Qual seu e-mail?', 'Resposta inválida. Tente de novo.']);
+    expect(after.vars.email).toBeUndefined();
+  });
+
+  const cases: Array<[InputValidator, Record<string, unknown>, string, string, string]> = [
+    ['email', {}, 'maria@', ' Maria@Exemplo.COM ', 'maria@exemplo.com'],
+    ['phone', {}, '123', '(65) 99999-0001', '5565999990001'],
+    ['cnpj', {}, '11.222.333/0001-00', '11222333000181', '11.222.333/0001-81'],
+    ['regex', { regex: '^\\d{5}$' }, 'abcde', '78000', '78000'],
+  ];
+  it.each(cases)('validator %s rejects the bad answer and normalizes the good one', async (validator, extra, bad, good, value) => {
+    const run = await runFlow([node('dado', 'ask_input', askInput({ validator, ...extra }))]);
+
+    await reply(bad);
+    expect(await reloadRun(run.id)).toMatchObject({ state: 'waiting_reply', retries: 1 });
+
+    await reply(good);
+    const after = await reloadRun(run.id);
+    expect(outcome(after, 'dado')).toBe('next');
+    expect(after.vars.dado?.value).toBe(value);
+  });
+
+  it('validator media accepts only the listed types', async () => {
+    const run = await runFlow([node('doc', 'ask_input', askInput({ text: 'Envie o contrato em PDF', validator: 'media', mediaTypes: ['pdf'] }))]);
+
+    await reply(null, { kind: 'image', mediaMime: 'image/jpeg' });
+    expect(await reloadRun(run.id)).toMatchObject({ state: 'waiting_reply', retries: 1 });
+
+    await reply(null, { kind: 'document', mediaMime: 'application/pdf', mediaName: 'contrato.pdf' });
+    expect(outcome(await reloadRun(run.id), 'doc')).toBe('next');
+  });
+
+  it('useLastMessage takes a valid last inbound message without asking and saves to a native field', async () => {
+    await storeInbound('maria@exemplo.com');
+
+    const run = await runFlow([
+      node('email', 'ask_input', askInput({ text: 'Qual seu e-mail?', validator: 'email', useLastMessage: true, saveToField: 'native:email' })),
+    ]);
+
+    expect(ctx.wa.sent).toHaveLength(0);
+    expect(run.state).toBe('finished');
+    expect(outcome(run, 'email')).toBe('next');
+    expect(run.vars.email).toEqual({ raw: 'maria@exemplo.com', value: 'maria@exemplo.com' });
+    const [contact] = await ctx.db.select().from(contacts).where(eq(contacts.id, contactId));
+    expect(contact!.email).toBe('maria@exemplo.com');
+  });
+
+  it('useLastMessage asks when the last inbound message does not validate', async () => {
+    await storeInbound('Bom dia');
+
+    const run = await runFlow([node('email', 'ask_input', askInput({ text: 'Qual seu e-mail?', validator: 'email', useLastMessage: true }))]);
+
+    expect(texts()).toEqual(['Qual seu e-mail?']);
+    expect(run.state).toBe('waiting_reply');
+  });
+
+  it('saves native:city inside the address and keeps the other keys', async () => {
+    await ctx.db.update(contacts).set({ address: { state: 'MT', zipCode: '78000-000' } }).where(eq(contacts.id, contactId));
+    await runFlow([node('cidade', 'ask_input', askInput({ text: 'Sua cidade?', saveToField: 'native:city' }))]);
+
+    await reply('Cuiabá');
+
+    const [contact] = await ctx.db.select().from(contacts).where(eq(contacts.id, contactId));
+    expect(contact!.address).toEqual({ state: 'MT', zipCode: '78000-000', city: 'Cuiabá' });
+  });
+
+  it('takes timeout when the contact does not answer in time', async () => {
+    const run = await runFlow([node('dado', 'ask_input', askInput({ timeoutHours: 2 }))]);
+    expect(run.timeoutAt?.getTime()).toBe(ctx.clock.now().getTime() + 2 * HOUR);
+
+    await resumeOnTimer(ctx, run.id, new Date(ctx.clock.now().getTime() + 3 * HOUR));
+
+    const after = await reloadRun(run.id);
+    expect(outcome(after, 'dado')).toBe('timeout');
+    expect(after.state).toBe('finished');
+  });
+});
