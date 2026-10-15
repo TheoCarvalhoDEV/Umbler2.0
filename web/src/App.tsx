@@ -1,6 +1,8 @@
 import { Navigate, type RouteObject } from 'react-router';
 import AppLayout from './components/layout/AppLayout';
 import { RequireAuth } from './lib/auth';
+import { ContactNewPage } from './pages/ContactNew';
+import { ContactsPage } from './pages/Contacts';
 import ConversationPage from './pages/Conversation';
 import { Inbox } from './pages/Inbox';
 import Login from './pages/Login';
@@ -28,7 +30,9 @@ export const routes: RouteObject[] = [
           { path: ':id', element: <ConversationPage /> },
         ],
       },
-      // Tasks 18 and 19 insert `contacts` and `configuracoes/:section?` here, above the catch-all.
+      { path: 'contacts', element: <ContactsPage /> },
+      { path: 'contacts/new', element: <ContactNewPage /> },
+      // Task 19 inserts `configuracoes/:section?` here, above the catch-all.
       { path: '*', element: <NotFound /> },
     ],
   },
