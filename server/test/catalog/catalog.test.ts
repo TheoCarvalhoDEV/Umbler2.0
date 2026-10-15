@@ -138,3 +138,20 @@ describe('custom fields', () => {
     expect((await call('GET', '/api/custom-fields', agent)).json()).toEqual([]);
   });
 });
+
+it('makes the first sector of a fresh install the default, so inbound chats have a queue', async () => {
+  const { seedAdmin } = await import('../../src/auth/seed-admin.js');
+  const { TEST_PASSWORD } = await import('../helpers.js');
+  const fresh = await makeTestCtx();
+  await seedAdmin(fresh.db, { email: 'novo@teste.local', name: 'Novo', password: TEST_PASSWORD });
+  const { app: freshApp } = await makeTestApp(fresh);
+  try {
+    const h = (await loginAs(freshApp, 'novo@teste.local')).headers;
+    const first = (await freshApp.inject({ method: 'POST', url: '/api/sectors', headers: h, payload: { name: 'Atendimento' } })).json();
+    expect(first.isDefault).toBe(true);
+    const second = (await freshApp.inject({ method: 'POST', url: '/api/sectors', headers: h, payload: { name: 'Financeiro' } })).json();
+    expect(second.isDefault).toBe(false);
+  } finally {
+    await freshApp.close();
+  }
+});

@@ -34,9 +34,11 @@ export function registerSectorRoutes(app: FastifyInstance, ctx: AppCtx): void {
     const row = await ctx.db.transaction(async (tx) => {
       // Unset first: the partial unique index allows a single is_default = true.
       if (b.isDefault) await tx.update(sectors).set({ isDefault: false }).where(eq(sectors.isDefault, true));
+      const count = await tx.$count(sectors);
+      // The first sector becomes the default: without one, every inbound message fails (getDefaultSectorId).
       const [created] = await tx
         .insert(sectors)
-        .values({ id: crypto.randomUUID(), name: b.name, position: await tx.$count(sectors), isDefault: b.isDefault ?? false })
+        .values({ id: crypto.randomUUID(), name: b.name, position: count, isDefault: b.isDefault ?? count === 0 })
         .returning();
       return created;
     });
