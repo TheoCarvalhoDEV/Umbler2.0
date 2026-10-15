@@ -6,6 +6,8 @@ import { publishOpenChats } from '../contacts/service.js';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
 import { chats, contacts, messages } from '../db/schema.js';
+import { resumeBotsOnReply, startChannelBot } from '../bots/hooks.js';
+import type { InboundReply } from '../bots/registry.js';
 import { findOrOpenChat, getDefaultSectorId, type ChatRow } from '../inbox/chats.js';
 import { handleTriageReply, startTriage } from '../triage/triage.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
@@ -18,12 +20,15 @@ type StatusEvent = Extract<InboundEvent, { type: 'status' }>;
 type MessageStatus = (typeof messages.$inferSelect)['status'];
 type Contact = typeof contacts.$inferSelect;
 
+/** Test seams. The bot hooks are optional so triage-only stubs keep compiling; a missing hook uses the real code. */
 export interface IngestHooks {
   startTriage: typeof startTriage;
   handleTriageReply: typeof handleTriageReply;
+  startChannelBot?: typeof startChannelBot;
+  resumeBotsOnReply?: typeof resumeBotsOnReply;
 }
 
-const defaultHooks: IngestHooks = { startTriage, handleTriageReply };
+const defaultHooks: Required<IngestHooks> = { startTriage, handleTriageReply, startChannelBot, resumeBotsOnReply };
 
 /** messages.error of a failed media download (the DTO's mediaUnavailable comes from the missing file, Task 8). */
 export const MEDIA_UNAVAILABLE = 'mídia indisponível';
@@ -40,6 +45,7 @@ const ADVANCES_FROM: Record<StatusEvent['status'], MessageStatus[]> = {
 class Skip extends Error {}
 
 export async function handleInbound(ctx: AppCtx, events: InboundEvent[], hooks: IngestHooks = defaultHooks): Promise<void> {
+  const h: Required<IngestHooks> = { ...defaultHooks, ...hooks };
   for (const ev of events) {
     if (ev.type === 'connection') {
       await setChannelStatus(ctx, ev.instance, ev.status, ev.phone);
@@ -54,7 +60,7 @@ export async function handleInbound(ctx: AppCtx, events: InboundEvent[], hooks: 
     if (ev.type === 'qrcode') setChannelQr(ctx, ev.instance, ev.qrBase64);
     else if (ev.type === 'status') await applyStatus(ctx, channel.id, ev);
     else if (ev.type === 'reaction') await applyReaction(ctx, channel.id, ev.targetExternalId, ev.emoji);
-    else await ingestMessage(ctx, channel.id, ev, hooks);
+    else await ingestMessage(ctx, channel.id, ev, h);
   }
 }
 
@@ -83,9 +89,9 @@ async function applyReaction(ctx: AppCtx, channelId: string, targetExternalId: s
   if (row) await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
 }
 
-async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, hooks: IngestHooks): Promise<void> {
+async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, hooks: Required<IngestHooks>): Promise<void> {
   const inbound = ev.direction === 'in';
-  let stored: { messageId: string; chat: ChatRow; created: boolean };
+  let stored: { messageId: string; createdAt: Date; chat: ChatRow; created: boolean };
   try {
     // Inside this transaction only `tx` may be used: PGlite serializes transactions, so touching ctx.db here would deadlock.
     stored = await ctx.db.transaction(async (tx) => {
@@ -133,7 +139,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
           sentAt: ev.sentAt,
         })
         .onConflictDoNothing({ target: [messages.channelId, messages.externalId] })
-        .returning({ id: messages.id });
+        .returning({ id: messages.id, createdAt: messages.createdAt });
       if (!inserted) throw new Skip(); // a concurrent copy of this webhook won the race
 
       const sentAt = ev.sentAt.toISOString();
@@ -151,7 +157,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
         .where(eq(chats.id, chat.id))
         .returning();
 
-      return { messageId: inserted.id, chat: updated, created };
+      return { messageId: inserted.id, createdAt: inserted.createdAt, chat: updated, created };
     });
   } catch (err) {
     if (err instanceof Skip) return;
@@ -164,9 +170,23 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
 
   if (ev.hasMedia) await fetchMedia(ctx, ev, stored.chat.id, stored.messageId);
 
+  // Outbound messages (office phone, agents' phones, webhook echoes) never reach the triage or the bots (Review Focus 5).
   if (inbound) {
-    if (stored.created) await hooks.startTriage(ctx, stored.chat);
-    else if (stored.chat.triagePending) await hooks.handleTriageReply(ctx, stored.chat, ev.body);
+    if (stored.created) {
+      // Spec §5.1: a channel bot has priority; the triage runs only when no bot took the new chat.
+      if (!(await hooks.startChannelBot(ctx, stored.chat))) await hooks.startTriage(ctx, stored.chat);
+    } else {
+      if (stored.chat.triagePending) await hooks.handleTriageReply(ctx, stored.chat, ev.body);
+      const reply: InboundReply = {
+        messageId: stored.messageId,
+        kind: ev.kind,
+        body: ev.body,
+        mediaMime: ev.mediaMime,
+        mediaName: ev.mediaName,
+        createdAt: stored.createdAt, // compared with bot_runs.waiting_since by resumeOnReply (Review Focus 1)
+      };
+      await hooks.resumeBotsOnReply(ctx, stored.chat.id, reply);
+    }
   }
 }
 
