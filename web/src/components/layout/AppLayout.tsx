@@ -14,6 +14,7 @@ import { api, qk } from '../../lib/api';
 import { useCurrentUser, useLogout } from '../../lib/auth';
 import { initials } from '../../lib/format';
 import { connectWs } from '../../lib/ws';
+import { NotificationPermissionButton, useMessageNotifications } from '../../lib/notify';
 
 function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon: Icon }) {
   return (
@@ -57,6 +58,7 @@ function UserMenu() {
           <p className="truncate text-sm font-medium">{me.name}</p>
           <p className="truncate text-xs text-muted">{me.email}</p>
         </div>
+        <NotificationPermissionButton />
         <button
           type="button"
           onClick={() => logout.mutate()}
@@ -90,6 +92,7 @@ function ChannelBanner() {
 export default function AppLayout() {
   const qc = useQueryClient();
   useEffect(() => connectWs(qc), [qc]);
+  useMessageNotifications();
 
   return (
     <div className="flex h-dvh bg-surface text-fg">
