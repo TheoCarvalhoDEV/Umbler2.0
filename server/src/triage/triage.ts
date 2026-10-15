@@ -33,7 +33,7 @@ export async function getTriageMenu(db: Db | Tx): Promise<TriageMenu> {
 }
 
 // Lowercase, strip accents, trim, drop surrounding punctuation, collapse inner spaces.
-function normalize(s: string): string {
+export function normalize(s: string): string {
   return s
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
