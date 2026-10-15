@@ -1,13 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
-import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { removeAvatarFile } from '../../src/media/avatar-files.js';
+import { readAvatarUpload } from '../../src/auth/routes.js';
 import { messages, users } from '../../src/db/schema.js';
+import { HttpError } from '../../src/lib/http-error.js';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
 import { TEST_ORIGIN, loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
+
+vi.mock('../../src/media/avatar-files.js', async (orig) => {
+  const m = await orig<typeof import('../../src/media/avatar-files.js')>();
+  return { ...m, removeAvatarFile: vi.fn(m.removeAvatarFile) };
+});
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
@@ -37,6 +45,8 @@ const upload = (file: Parameters<typeof multipart>[0], headers = auth.headers) =
   return app.inject({ method: 'POST', url: '/api/auth/me/avatar', headers: { ...headers, 'content-type': contentType }, payload });
 };
 const userRow = async (id: string) => (await ctx.db.select().from(users).where(eq(users.id, id)))[0]!;
+const userFiles = async (id: string) =>
+  (await readdir(join(ctx.config.mediaDir, 'avatars/users')).catch(() => [] as string[])).filter((f) => f.startsWith(id));
 
 beforeEach(async () => {
   ctx = await makeTestCtx();
@@ -77,6 +87,54 @@ describe('POST /api/auth/me/avatar', () => {
     expect(third.json().avatarUrl).not.toBe(second.json().avatarUrl);
   });
 
+  it('two uploads in a row (or at once) leave exactly one file for the user', async () => {
+    await upload({ mime: 'image/png', data: PNG });
+    await upload({ mime: 'image/jpeg', data: PNG });
+    expect(await userFiles(seed.agentA.id)).toHaveLength(1);
+
+    await Promise.all([upload({ mime: 'image/png', data: PNG }), upload({ mime: 'image/webp', data: PNG })]);
+    const files = await userFiles(seed.agentA.id);
+    expect(files).toHaveLength(1);
+    expect(`avatars/users/${files[0]}`).toBe((await userRow(seed.agentA.id)).avatarPath);
+  });
+
+  it('a failed update removes the new file and keeps the old picture', async () => {
+    await upload({ mime: 'image/png', data: PNG });
+    const before = (await userRow(seed.agentA.id)).avatarPath;
+    await ctx.db.execute(sql`CREATE FUNCTION fail_avatar() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$`);
+    await ctx.db.execute(sql`CREATE TRIGGER fail_avatar BEFORE UPDATE OF avatar_path ON users FOR EACH ROW EXECUTE FUNCTION fail_avatar()`);
+
+    expect((await upload({ mime: 'image/jpeg', data: PNG })).statusCode).toBe(500);
+    expect((await userRow(seed.agentA.id)).avatarPath).toBe(before);
+    expect((await userFiles(seed.agentA.id)).map((f) => `avatars/users/${f}`)).toEqual([before]);
+  });
+
+  it('keeps the original error when removing the new file also fails', async () => {
+    await ctx.db.execute(sql`CREATE FUNCTION fail_avatar() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$`);
+    await ctx.db.execute(sql`CREATE TRIGGER fail_avatar BEFORE UPDATE OF avatar_path ON users FOR EACH ROW EXECUTE FUNCTION fail_avatar()`);
+    vi.mocked(removeAvatarFile).mockRejectedValueOnce(new Error('cleanup failed'));
+    const res = await upload({ mime: 'image/png', data: PNG });
+    expect(res.statusCode).toBe(500);
+    expect(res.body).not.toContain('cleanup failed');
+  });
+
+  it('succeeds and still announces users.changed when removing the old file fails', async () => {
+    await upload({ mime: 'image/png', data: PNG });
+    ctx.hub.events.length = 0;
+    vi.mocked(removeAvatarFile).mockRejectedValueOnce(new Error('EPERM'));
+    const res = await upload({ mime: 'image/jpeg', data: PNG });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().avatarUrl).toMatch(URL_RE(seed.agentA.id));
+    expect(ctx.hub.events.filter((e) => e.type === 'users.changed')).toHaveLength(1);
+  });
+
+  it('tells every connected screen that the users changed, on upload and on removal', async () => {
+    ctx.hub.events.length = 0;
+    await upload({ mime: 'image/png', data: PNG });
+    await app.inject({ method: 'DELETE', url: '/api/auth/me/avatar', headers: auth.headers });
+    expect(ctx.hub.events.filter((e) => e.type === 'users.changed')).toHaveLength(2);
+  });
+
   it('rejects other types, files over 2 MB, a missing file and a non-multipart body with 400', async () => {
     expect((await upload({ mime: 'image/gif', data: PNG })).statusCode).toBe(400);
     expect((await upload({ mime: 'image/svg+xml', data: Buffer.from('<svg/>') })).statusCode).toBe(400);
@@ -90,6 +148,18 @@ describe('POST /api/auth/me/avatar', () => {
   it('needs a session and the Origin header', async () => {
     expect((await upload({ mime: 'image/png', data: PNG }, { origin: TEST_ORIGIN })).statusCode).toBe(401);
     expect((await upload({ mime: 'image/png', data: PNG }, { cookie: auth.cookie })).statusCode).toBe(403);
+  });
+});
+
+describe('readAvatarUpload', () => {
+  const failingReq = (statusCode: number) =>
+    ({ file: async () => { throw Object.assign(new Error('multipart'), { statusCode }); } }) as unknown as FastifyRequest;
+
+  it('maps 4xx errors from the multipart parser to 400 and lets 5xx through untouched', async () => {
+    await expect(readAvatarUpload(failingReq(413))).rejects.toMatchObject({ status: 400 });
+    const err = await readAvatarUpload(failingReq(503)).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(HttpError);
+    expect(err).toMatchObject({ statusCode: 503 });
   });
 });
 

@@ -47,6 +47,7 @@ export function useCurrentUser(): Me {
 }
 
 const SESSION_KEY = 'talk:session';
+const UNKNOWN_USER = '?unknown'; // never equals a stored id or 'none'
 
 /** Tell the other tabs who is logged in now ('none' after logout). */
 export function markSession(userId: string | null): void {
@@ -65,8 +66,9 @@ export function sessionChanged(e: Pick<StorageEvent, 'key' | 'newValue'>, curren
 
 /** Reload this tab when another tab logs in as someone else or logs out. */
 export function useSessionSync(): void {
-  const { data } = useMe();
-  const userId = data === undefined ? undefined : (data?.id ?? null);
+  const { data, isError } = useMe();
+  // `me` in error = identity unknown: any session change reloads (confirms the real state on the server)
+  const userId = data === undefined ? (isError ? UNKNOWN_USER : undefined) : (data?.id ?? null);
   useEffect(() => {
     if (userId === undefined) return;
     const onStorage = (e: StorageEvent) => {
@@ -92,8 +94,8 @@ export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.auth.logout(),
-    onSuccess: () => markSession(null),
     onSettled: () => {
+      markSession(null); // even when the request failed: other tabs reload and check the server
       qc.setQueryData(qk.me, null);
       qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
     },

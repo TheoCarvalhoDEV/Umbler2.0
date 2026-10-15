@@ -14,6 +14,7 @@ export interface Hub {
   publishChat(chatId: string): Promise<void>;
   publishMessage(chatId: string, type: 'message.created' | 'message.updated', messageId: string): Promise<void>;
   publishChannel(channelId: string): Promise<void>;
+  publishUsersChanged(): void;
 }
 
 function send(socket: Socket, event: WsEvent): void {
@@ -91,6 +92,10 @@ export function createHub(getDb: () => Db): Hub {
       };
       for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, event);
     },
+
+    publishUsersChanged() {
+      for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, { type: 'users.changed' });
+    },
   };
 }
 
@@ -105,5 +110,6 @@ export function createRecordingHub(): Hub & {
     publishChat: async (chatId) => { events.push({ type: 'chat', chatId }); },
     publishMessage: async (chatId, type, messageId) => { events.push({ type, chatId, messageId }); },
     publishChannel: async (channelId) => { events.push({ type: 'channel', channelId }); },
+    publishUsersChanged: () => { events.push({ type: 'users.changed' }); },
   };
 }
