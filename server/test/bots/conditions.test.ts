@@ -299,3 +299,229 @@ describe('contact_field', () => {
     expect(await nextOf(run, node('contact_field', { fieldId: 'native:state', operator: 'eq', value: '{{contexto.uf}}' }))).toBe('yes');
   });
 });
+
+// ---------- cycle 2: contact, chat and message data; distribute ----------
+
+/** Deterministic [0,1) generator (mulberry32) for the distribution test. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+describe('distribute', () => {
+  const oneToThree = node('distribute', { branches: [{ label: 'A', weight: 1 }, { label: 'B', weight: 3 }] });
+
+  it.each<[number, string]>([
+    [0, 'branch:0'],
+    [0.2499, 'branch:0'],
+    [0.25, 'branch:1'],
+    [0.9999, 'branch:1'],
+  ])('random() = %d picks %s with weights 1:3', async (r, expected) => {
+    const { run } = await scene();
+    expect(await nextOf(run, oneToThree, { random: () => r })).toBe(expected);
+  });
+
+  it.each<[number, string]>([
+    [0.49, 'branch:0'],
+    [0.5, 'branch:1'],
+    [0.74, 'branch:1'],
+    [0.75, 'branch:2'],
+  ])('random() = %d picks %s with weights 2:1:1', async (r, expected) => {
+    const { run } = await scene();
+    const threeWay = node('distribute', { branches: [{ label: 'A', weight: 2 }, { label: 'B', weight: 1 }, { label: 'C', weight: 1 }] });
+    expect(await nextOf(run, threeWay, { random: () => r })).toBe(expected);
+  });
+
+  it('splits about 25/75 with a seeded generator', async () => {
+    const { run } = await scene();
+    const b = await botCtx(run, { random: mulberry32(42) });
+    const counts = [0, 0];
+    for (let i = 0; i < 4000; i++) {
+      const r = await definition('distribute').run(b, run, oneToThree);
+      if ('next' in r) counts[Number(r.next.split(':')[1])] += 1;
+    }
+    expect(counts[0] + counts[1]).toBe(4000);
+    expect(counts[0]).toBeGreaterThan(900);
+    expect(counts[0]).toBeLessThan(1100);
+  });
+
+  it('fails the run instead of guessing when no branch has weight', async () => {
+    const { run } = await scene();
+    expect(await runBlock(run, node('distribute', { branches: [] }), { random: () => 0.5 })).toEqual({
+      end: 'failed',
+      error: 'O bloco "Distribuir" não tem caminhos com peso',
+    });
+  });
+});
+
+describe('contact_active', () => {
+  const now = at('2026-10-14T13:00:00Z');
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000);
+
+  it('is yes for an inbound message in the last 24 h on this channel', async () => {
+    const { chatId, run } = await scene();
+    await seedMessage(ctx, chatId, s.channelId, hoursAgo(23));
+    expect(await nextOf(run, node('contact_active', {}), { now })).toBe('yes');
+  });
+
+  it('is no for an inbound message older than 24 h or a message we sent', async () => {
+    const { chatId, run } = await scene();
+    await seedMessage(ctx, chatId, s.channelId, hoursAgo(25));
+    await seedMessage(ctx, chatId, s.channelId, hoursAgo(1), { direction: 'out' });
+    expect(await nextOf(run, node('contact_active', {}), { now })).toBe('no');
+  });
+
+  it('counts earlier chats of the contact on this channel but not other channels', async () => {
+    const { contactId, run } = await scene();
+    const old = await seedChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed' });
+    const other = await seedChat(ctx, { channelId: otherChannel, sectorId: s.defaultSector, contactId });
+    await seedMessage(ctx, other.chatId, otherChannel, hoursAgo(1));
+    expect(await nextOf(run, node('contact_active', {}), { now })).toBe('no');
+    await seedMessage(ctx, old.chatId, s.channelId, hoursAgo(2));
+    expect(await nextOf(run, node('contact_active', {}), { now })).toBe('yes');
+  });
+});
+
+describe('first_chat', () => {
+  it('is yes for the only chat of the contact on this channel', async () => {
+    const { run } = await scene();
+    expect(await nextOf(run, node('first_chat', {}))).toBe('yes');
+  });
+
+  it('is no when the contact had an earlier chat on this channel', async () => {
+    const { contactId, run } = await scene();
+    await seedChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed' });
+    expect(await nextOf(run, node('first_chat', {}))).toBe('no');
+  });
+
+  it('ignores chats on other channels', async () => {
+    const { contactId, run } = await scene();
+    await seedChat(ctx, { channelId: otherChannel, sectorId: s.defaultSector, contactId });
+    expect(await nextOf(run, node('first_chat', {}))).toBe('yes');
+  });
+});
+
+describe('tags', () => {
+  // The contact has tags 0 and 1 (Cliente, VIP), never 2 (Inadimplente).
+  it.each<[TagsConfig['mode'], number[], 'yes' | 'no']>([
+    ['any', [0, 2], 'yes'],
+    ['any', [2], 'no'],
+    ['all', [0, 1], 'yes'],
+    ['all', [0, 2], 'no'],
+    ['none', [2], 'yes'],
+    ['none', [1], 'no'],
+  ])('mode %s with tags %j → %s', async (mode, idx, expected) => {
+    const { contactId, run } = await scene();
+    await ctx.db.insert(contactTags).values([{ contactId, tagId: tagIds[0] }, { contactId, tagId: tagIds[1] }]);
+    expect(await nextOf(run, node('tags', { mode, tagIds: idx.map((i) => tagIds[i]) }))).toBe(expected);
+  });
+});
+
+describe('chat_sector and chat_channel', () => {
+  it('chat_sector is yes only when the chat sector is listed', async () => {
+    const { run } = await scene({ chat: { sectorId: s.sectorA } });
+    expect(await nextOf(run, node('chat_sector', { sectorIds: [s.sectorB, s.sectorA] }))).toBe('yes');
+    expect(await nextOf(run, node('chat_sector', { sectorIds: [s.defaultSector] }))).toBe('no');
+  });
+
+  it('chat_channel is yes only when the chat channel is listed', async () => {
+    const { run } = await scene();
+    expect(await nextOf(run, node('chat_channel', { channelIds: [s.channelId] }))).toBe('yes');
+    expect(await nextOf(run, node('chat_channel', { channelIds: [otherChannel] }))).toBe('no');
+  });
+});
+
+describe('chat_agent', () => {
+  const agent = (mode: ChatAgentConfig['mode'], userIds: string[] = []) => node('chat_agent', { mode, userIds });
+
+  it('with an owner: any and the owner listed are yes, none and others are no', async () => {
+    const { run } = await scene({ chat: { ownerId: s.agentA.id } });
+    expect(await nextOf(run, agent('any'))).toBe('yes');
+    expect(await nextOf(run, agent('none'))).toBe('no');
+    expect(await nextOf(run, agent('specific', [s.agentB.id]))).toBe('no');
+    expect(await nextOf(run, agent('specific', [s.agentB.id, s.agentA.id]))).toBe('yes');
+  });
+
+  it('without an owner: none is yes, any and specific are no', async () => {
+    const { run } = await scene();
+    expect(await nextOf(run, agent('none'))).toBe('yes');
+    expect(await nextOf(run, agent('any'))).toBe('no');
+    expect(await nextOf(run, agent('specific', [s.agentA.id]))).toBe('no');
+  });
+});
+
+describe('chat_status', () => {
+  it('is yes when the chat is waiting', async () => {
+    const { run } = await scene({ chat: { waiting: true } });
+    expect(await nextOf(run, node('chat_status', {}))).toBe('yes');
+  });
+
+  it('is no when the chat is not waiting', async () => {
+    const { run } = await scene({ chat: { waiting: false } });
+    expect(await nextOf(run, node('chat_status', {}))).toBe('no');
+  });
+});
+
+describe('message_contains', () => {
+  const contains = (keywords: string[], match: 'any' | 'all') => node('message_contains', { keywords, match });
+
+  it('looks only at the newest inbound message, ignoring case and accents', async () => {
+    const { chatId, run } = await scene();
+    await seedMessage(ctx, chatId, s.channelId, at('2026-10-14T12:00:00Z'), { body: 'Preciso da segunda via do BOLETO, por favor' });
+    await seedMessage(ctx, chatId, s.channelId, at('2026-10-14T12:30:00Z'), { body: 'Segue o pix', direction: 'out' });
+    expect(await nextOf(run, contains(['boleto'], 'any'))).toBe('yes');
+    expect(await nextOf(run, contains(['Pix', 'boleto'], 'any'))).toBe('yes');
+    expect(await nextOf(run, contains(['pix', 'boleto'], 'all'))).toBe('no');
+    expect(await nextOf(run, contains(['Segunda Via', 'boleto'], 'all'))).toBe('yes');
+
+    await seedMessage(ctx, chatId, s.channelId, at('2026-10-14T12:45:00Z'), { body: 'Quero falar sobre a ação' });
+    expect(await nextOf(run, contains(['boleto'], 'any'))).toBe('no');
+    expect(await nextOf(run, contains(['AÇÃO'], 'any'))).toBe('yes');
+    expect(await nextOf(run, contains(['acao'], 'any'))).toBe('yes');
+  });
+
+  it('is no when the newest inbound message has no text', async () => {
+    const { chatId, run } = await scene();
+    await seedMessage(ctx, chatId, s.channelId, at('2026-10-14T12:00:00Z'), { body: 'boleto' });
+    await seedMessage(ctx, chatId, s.channelId, at('2026-10-14T12:10:00Z'), { kind: 'sticker', body: null });
+    expect(await nextOf(run, contains(['boleto'], 'any'))).toBe('no');
+  });
+
+  it('is no when the contact never wrote or no keyword has text', async () => {
+    const { chatId, run } = await scene();
+    expect(await nextOf(run, contains(['boleto'], 'any'))).toBe('no');
+    await seedMessage(ctx, chatId, s.channelId, at('2026-10-14T12:00:00Z'), { body: 'boleto' });
+    expect(await nextOf(run, contains(['  ', '!'], 'any'))).toBe('no');
+  });
+});
+
+describe('parallel_bot', () => {
+  it('is no when this run is alone on the chat', async () => {
+    const { run } = await scene();
+    expect(await nextOf(run, node('parallel_bot', {}))).toBe('no');
+  });
+
+  it('is yes when another bot is still running, ignoring finished runs', async () => {
+    const { chatId, run } = await scene();
+    await seedRun(chatId, { state: 'finished' });
+    await seedRun(chatId, { state: 'stopped' });
+    expect(await nextOf(run, node('parallel_bot', {}))).toBe('no');
+    await seedRun(chatId, { state: 'waiting_reply' });
+    expect(await nextOf(run, node('parallel_bot', {}))).toBe('yes');
+  });
+
+  it('does not count its own call_flow ancestors waiting for it', async () => {
+    const { chatId, run: parent } = await scene({ run: { state: 'waiting_flow' } });
+    const child = await seedRun(chatId, { state: 'waiting_flow', parentRunId: parent.id, depth: 1 });
+    const grandchild = await seedRun(chatId, { parentRunId: child.id, depth: 2 });
+    expect(await nextOf(grandchild, node('parallel_bot', {}))).toBe('no');
+    await seedRun(chatId, { state: 'waiting_timer' });
+    expect(await nextOf(grandchild, node('parallel_bot', {}))).toBe('yes');
+  });
+});
