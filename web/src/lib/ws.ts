@@ -27,7 +27,8 @@ function mapChatLists(qc: QueryClient, fn: (items: ChatListItem[]) => ChatListIt
 }
 
 const at = (i: TimelineItem) => Date.parse(i.type === 'message' ? i.sentAt : i.createdAt);
-const byTime = (a: TimelineItem, b: TimelineItem) => at(a) - at(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+// No id tie-break: the sort is stable, so same-second messages keep the server's arrival order.
+const byTime = (a: TimelineItem, b: TimelineItem) => at(a) - at(b);
 
 function upsertTimeline(d: TimelineData, next: TimelineItem, insert: boolean): TimelineData {
   let found = false;
@@ -60,13 +61,16 @@ export function applyWsEvent(qc: QueryClient, ev: WsEvent): void {
         qc.setQueryData<ChatDetail>(qk.chat(chat.id), { ...prev, ...chat });
         // closedAt / triagePending are not in ChatListItem: refetch when the state flips
         if (prev.state !== chat.state) void qc.invalidateQueries({ queryKey: qk.chat(chat.id), exact: true });
-      }
+        // no data: a pane showing "não disponível" (e.g. after chat.removed) recovers when the chat comes back
+      } else void qc.invalidateQueries({ queryKey: qk.chat(chat.id), exact: true });
       return;
     }
     case 'chat.removed':
       mapChatLists(qc, (items) => items.filter((c) => c.id !== ev.chatId));
-      qc.removeQueries({ queryKey: qk.chat(ev.chatId), exact: true });
-      qc.removeQueries({ queryKey: qk.timeline(ev.chatId), exact: true });
+      // reset, not remove: removeQueries does not notify observers, so an open pane would keep stale data.
+      // Active ones refetch, get 404 and show the unavailable state.
+      void qc.resetQueries({ queryKey: qk.chat(ev.chatId), exact: true });
+      void qc.resetQueries({ queryKey: qk.timeline(ev.chatId), exact: true });
       return;
     case 'message.created':
     case 'message.updated': {

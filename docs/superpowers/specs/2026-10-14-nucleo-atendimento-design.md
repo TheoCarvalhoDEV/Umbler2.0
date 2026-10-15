@@ -97,7 +97,7 @@ IDs `uuid` (`crypto.randomUUID()`); datas `timestamptz` em UTC.
 | `quick_answers` | id, name, body (com variáveis nomeadas, §5.7), attachment_path, visibility (`all`\|`owner`), owner_id, created_at | |
 | `settings` | key, value (jsonb) | `closing_message`, `triage_menu` (`{enabled, welcome_text, invalid_text, options:[{key,label,sector_id}]}`) |
 
-Conversa ordenada por `(sent_at, id)`. `chats.last_message_at = greatest(last_message_at, sent_at)` para mensagem atrasada não "voltar" a conversa.
+Conversa ordenada por `(sent_at, created_at, id)` (ordem de chegada no mesmo segundo); o cliente não reordena empates. `chats.last_message_at = greatest(last_message_at, sent_at)` para mensagem atrasada não "voltar" a conversa.
 
 **Mídia:** arquivo em `/data/media/AAAA/MM/<uuid>.<ext>`, servido por `/api/media/:messageId` somente se `canSee(user, chat)` (§6). Toda resposta leva `X-Content-Type-Options: nosniff`. `Content-Disposition: inline` só para image/jpeg|png|webp|gif, audio/*, video/mp4 e application/pdf; todo o resto (incl. SVG e HTML) vai com `attachment` e `Content-Type: application/octet-stream`. Respostas que não são PDF levam também `Content-Security-Policy: sandbox`. Anexo de resposta rápida com `visibility=owner` só é servido ao dono.
 

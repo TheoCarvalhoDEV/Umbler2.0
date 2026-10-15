@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import type { ChannelDto, ChatDetail, ChatListItem, MessageDto, TimelineItem } from '@talk/shared';
 import { qk, type ChatListData, type TimelineData } from './api';
 import { applyWsEvent, connectWs, onWsEvent } from './ws';
@@ -78,6 +78,48 @@ describe('applyWsEvent', () => {
     expect(qc.getQueryData<ChatListData>(key)!.pages[0]!.items.map((c) => c.id)).toEqual(['a']);
     expect(qc.getQueryData(qk.chat('b'))).toBeUndefined();
     expect(qc.getQueryData(qk.timeline('b'))).toBeUndefined();
+  });
+
+  it('chat.removed notifies an open conversation so it stops showing stale data', async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(qk.chat('b'), { ...chat('b'), triagePending: false, createdAt: '2026-10-14T09:00:00.000Z', closedAt: null });
+    const observer = new QueryObserver(qc, {
+      queryKey: qk.chat('b'), queryFn: () => Promise.reject(new Error('Não encontrado')), retry: false, staleTime: Infinity,
+    });
+    const listener = vi.fn();
+    const unsubscribe = observer.subscribe(listener);
+    applyWsEvent(qc, { type: 'chat.removed', chatId: 'b' });
+    expect(listener).toHaveBeenCalled();
+    expect(observer.getCurrentResult().data).toBeUndefined();
+    await vi.waitFor(() => expect(observer.getCurrentResult().isError).toBe(true));
+    unsubscribe();
+  });
+
+  it('chat.updated refetches an open detail that has no data (shown as unavailable) so it can recover', async () => {
+    const qc = new QueryClient();
+    const detail: ChatDetail = { ...chat('b'), triagePending: false, createdAt: '2026-10-14T09:00:00.000Z', closedAt: null };
+    let visible = false;
+    const observer = new QueryObserver(qc, {
+      queryKey: qk.chat('b'),
+      queryFn: () => (visible ? Promise.resolve(detail) : Promise.reject(new Error('Não encontrado'))),
+      retry: false,
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => {});
+    await vi.waitFor(() => expect(observer.getCurrentResult().isError).toBe(true));
+    visible = true; // transferred back to me
+    applyWsEvent(qc, { type: 'chat.updated', chat: chat('b') });
+    await vi.waitFor(() => expect(observer.getCurrentResult().data?.id).toBe('b'));
+    unsubscribe();
+  });
+
+  it('message.created keeps arrival order for messages with the same sentAt', () => {
+    const qc = new QueryClient();
+    qc.setQueryData<TimelineData>(qk.timeline('c1'), { pages: [[]], pageParams: [undefined] });
+    const t = '2026-10-14T10:00:00.000Z';
+    applyWsEvent(qc, { type: 'message.created', message: msg('zz', t) });
+    applyWsEvent(qc, { type: 'message.created', message: msg('aa', t) });
+    expect(qc.getQueryData<TimelineData>(qk.timeline('c1'))!.pages[0]!.map((i) => i.id)).toEqual(['zz', 'aa']);
   });
 
   it('chat.removed for an unknown chat is a no-op', () => {

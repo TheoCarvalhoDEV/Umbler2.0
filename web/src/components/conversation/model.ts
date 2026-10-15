@@ -12,15 +12,16 @@ const localDay = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad
 const itemKey = (it: TimelineItem) => `${it.type}:${it.id}`;
 const itemTime = (it: TimelineItem) => (it.type === 'message' ? it.sentAt : it.createdAt);
 
-/** Infinite-query pages (pages[0] = newest) → one ascending list, ordered like the server: (time, id). */
+/**
+ * Infinite-query pages (pages[0] = newest, each ascending) → one ascending list. Ties keep the server's order
+ * (sent_at, created_at, id): pages are concatenated oldest-first and the sort is stable, with no id tie-break.
+ */
 export function mergeTimelinePages(pages: TimelineItem[][]): TimelineItem[] {
   const byKey = new Map<string, TimelineItem>();
-  for (const page of pages) {
-    for (const it of page) if (!byKey.has(itemKey(it))) byKey.set(itemKey(it), it); // newest page wins
+  for (const page of pages.slice().reverse()) {
+    for (const it of page) byKey.set(itemKey(it), it); // newer page overwrites the value; Map keeps the first position
   }
-  return [...byKey.values()].sort(
-    (a, b) => Date.parse(itemTime(a)) - Date.parse(itemTime(b)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-  );
+  return [...byKey.values()].sort((a, b) => Date.parse(itemTime(a)) - Date.parse(itemTime(b)));
 }
 
 export function dayLabel(iso: string, now: Date): string {

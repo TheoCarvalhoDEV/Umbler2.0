@@ -64,9 +64,16 @@ describe('mergeTimelinePages', () => {
     expect((merged[2] as MessageDto).body).toBe('versão nova'); // the newest page wins
   });
 
-  it('orders items with the same timestamp by id, like the server (sent_at, id)', () => {
+  it('keeps the server order for items with the same timestamp (arrival order, not id)', () => {
     const t = at(2026, 10, 14, 9);
-    expect(mergeTimelinePages([[msg('m2', t), msg('m1', t)]]).map((i) => i.id)).toEqual(['m1', 'm2']);
+    expect(mergeTimelinePages([[msg('m2', t), msg('m1', t)]]).map((i) => i.id)).toEqual(['m2', 'm1']);
+  });
+
+  it('keeps the server order for a same-timestamp burst split across a page boundary', () => {
+    const t = at(2026, 10, 14, 9);
+    const older = [msg('a', at(2026, 10, 14, 8)), msg('z', t)];
+    const newest = [msg('b', t), msg('y', t)];
+    expect(mergeTimelinePages([newest, older]).map((i) => i.id)).toEqual(['a', 'z', 'b', 'y']);
   });
 
   it('keeps a message and an event that share an id apart', () => {
