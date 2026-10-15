@@ -282,6 +282,9 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Cron de backup rodando (`backup ok` no log) e cópia fora do servidor confirmada (seção 7.1).
 - [ ] `.env` guardado fora do servidor.
 - [ ] Ensaio de restauração feito (seção 8).
+- [ ] Admins: entrar nos setores em Configurações › Atendentes ou usar “Ver todos os setores” na caixa de entrada (por padrão o admin vê só os próprios setores).
+- [ ] Fotos: conferir a foto do cliente após a primeira mensagem e enviar a foto de cada atendente em Configurações › Perfil.
+- [ ] Ao atualizar o sistema com o sistema em uso, recarregar as abas que estavam abertas durante a atualização.
 
 **Teste manual com um número de teste, antes de conectar o número oficial:**
 
