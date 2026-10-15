@@ -15,6 +15,13 @@
       "when": 1792087443505,
       "tag": "0001_visibilidade_e_fotos",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792100223366,
+      "tag": "0002_chatbot_fluxos",
+      "breakpoints": true
     }
   ]
 }

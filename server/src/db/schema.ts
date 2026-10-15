@@ -14,7 +14,7 @@ import {
   varchar,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
-import type { ChatEventKind } from '@talk/shared';
+import type { BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind } from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
 const id = () => uuid('id').primaryKey().$defaultFn(() => randomUUID());
@@ -195,6 +195,7 @@ export const messages = pgTable(
     reaction: text('reaction'),
     status: text('status').$type<'pending' | 'sent' | 'delivered' | 'read' | 'failed'>().notNull().default('pending'),
     error: text('error'),
+    botRunId: uuid('bot_run_id').references((): AnyPgColumn => botRuns.id, { onDelete: 'set null' }), // set = sent by a chatbot
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
@@ -232,3 +233,76 @@ export const settings = pgTable('settings', {
   key: text('key').primaryKey(), // 'closing_message' | 'triage_menu'
   value: jsonb('value').$type<unknown>().notNull(),
 });
+
+export const bots = pgTable('bots', {
+  id: id(),
+  name: text('name').notNull().unique(),
+  description: text('description').notNull().default(''),
+  status: text('status').$type<'active' | 'paused'>().notNull().default('paused'),
+  startChannelIds: uuid('start_channel_ids').array().notNull().default(sql`'{}'::uuid[]`), // empty = never starts by channel
+  manualStart: boolean('manual_start').notNull().default(false),
+  manualTitle: text('manual_title').notNull().default(''),
+  manualUnlisted: boolean('manual_unlisted').notNull().default(false),
+  publishedVersionId: uuid('published_version_id').references((): AnyPgColumn => botVersions.id, { onDelete: 'set null' }),
+  runCount: integer('run_count').notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export const botVersions = pgTable(
+  'bot_versions',
+  {
+    id: id(),
+    botId: uuid('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    graph: jsonb('graph').$type<BotGraph>().notNull(),
+    valid: boolean('valid').notNull(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    label: text('label'),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('bot_versions_bot_number_unique').on(t.botId, t.number)],
+); // immutable: no code path UPDATEs a bot_versions row (test/bots/repo.test.ts scans src for it)
+
+export const botRuns = pgTable(
+  'bot_runs',
+  {
+    id: id(),
+    botId: uuid('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+    versionId: uuid('version_id').notNull().references(() => botVersions.id, { onDelete: 'cascade' }),
+    chatId: uuid('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
+    contactId: uuid('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+    state: text('state').$type<BotRunState>().notNull().default('running'),
+    currentNodeId: text('current_node_id').notNull(),
+    waitNodeId: text('wait_node_id'),
+    wakeAt: timestamp('wake_at', { withTimezone: true }),
+    timeoutAt: timestamp('timeout_at', { withTimezone: true }),
+    waitingSince: timestamp('waiting_since', { withTimezone: true }), // clock_timestamp() when entering waiting_reply (Review Focus 1)
+    retries: integer('retries').notNull().default(0), // invalid attempts on the current ask node; reset on every node change
+    vars: jsonb('vars').$type<BotRunVars>().notNull().default({}),
+    steps: jsonb('steps').$type<BotRunStep[]>().notNull().default([]),
+    depth: integer('depth').notNull().default(0),
+    parentRunId: uuid('parent_run_id').references((): AnyPgColumn => botRuns.id, { onDelete: 'set null' }),
+    startedBy: uuid('started_by').references(() => users.id, { onDelete: 'set null' }), // null = channel or call_flow
+    error: text('error'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('bot_runs_state_wake_idx').on(t.state, t.wakeAt),
+    index('bot_runs_state_timeout_idx').on(t.state, t.timeoutAt),
+    index('bot_runs_chat_idx').on(t.chatId),
+    // spec §3 "max 1 non-terminal run per (chat, bot)": root runs only, so call_flow may re-enter the same bot (depth limit applies).
+    // Keep the state list in sync with NON_TERMINAL_RUN_STATES (shared/src/bots.ts).
+    uniqueIndex('bot_runs_one_active_per_chat_bot')
+      .on(t.chatId, t.botId)
+      .where(sql`${t.state} in ('running','waiting_reply','waiting_timer','waiting_flow') and ${t.depth} = 0`),
+  ],
+);
