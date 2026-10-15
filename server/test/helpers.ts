@@ -9,6 +9,7 @@ import { buildApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
 import { createRecordingHub } from '../src/realtime/hub.js';
 import { createFakeGateway } from '../src/whatsapp/fake.js';
+import { eq } from 'drizzle-orm';
 import { channels, sectors, userSectors, users } from '../src/db/schema.js';
 
 // Task 2 provides the DB part only. Later tasks extend this file (never rename):
@@ -34,6 +35,7 @@ export interface SeededUser {
   role: 'admin' | 'agent';
   signature: string | null;
   sectorIds: string[];
+  seeAllSectors: boolean;
 }
 
 export interface Seeded {
@@ -67,7 +69,7 @@ export async function seedBasics(ctx: { db: Db | Tx }): Promise<Seeded> {
       { name: 'Ana Financeiro', email: 'ana@teste.local', passwordHash, role: 'agent' },
       { name: 'Bruno Jurídico', email: 'bruno@teste.local', passwordHash, role: 'agent' },
     ])
-    .returning({ id: users.id, name: users.name, email: users.email, role: users.role, signature: users.signature });
+    .returning({ id: users.id, name: users.name, email: users.email, role: users.role, signature: users.signature, seeAllSectors: users.seeAllSectors });
 
   await db.insert(userSectors).values([
     { userId: agentA.id, sectorId: sectorA.id },
@@ -90,6 +92,13 @@ export async function seedBasics(ctx: { db: Db | Tx }): Promise<Seeded> {
     channelId: channel.id,
     instance,
   };
+}
+
+/** Turns on "Ver todos os setores" for an admin, in the DB and on the passed object (tests pass it to services). */
+export async function enableSeeAll(ctx: { db: Db | Tx }, user: SeededUser): Promise<SeededUser> {
+  await ctx.db.update(users).set({ seeAllSectors: true }).where(eq(users.id, user.id));
+  user.seeAllSectors = true;
+  return user;
 }
 
 // Fresh in-memory DB, fake gateway, recording hub and test config per call.

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { makeTestCtx, seedBasics } from '../helpers.js';
+import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
 import { chatEvents, chats, contacts, messages } from '../../src/db/schema.js';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
 import { addNote, failInterruptedSends, markSent, resendMessage, sendAgentMessage } from '../../src/messages/send.js';
@@ -220,12 +220,15 @@ describe('sendAgentMessage — visibility and privacy', () => {
     await expect(sendAgentMessage(ctx, seed.agentB, chatId, { text: 'Oi', signature: false })).rejects.toMatchObject({ status: 404 });
   });
 
-  it('private chat: sector member who is not the owner gets 404; owner and admin can send', async () => {
+  it('private chat: sector member or admin without "ver todos" gets 404; owner and admin with it can send', async () => {
     const chatId = await openChat({ ownerId: seed.agentA.id, private: true });
     const otherInSectorA: AuthUser = { ...seed.agentB, id: randomUUID(), sectorIds: [seed.sectorA] };
     await expect(sendAgentMessage(ctx, otherInSectorA, chatId, { text: 'Oi', signature: false })).rejects.toMatchObject({ status: 404 });
 
     expect((await sendAgentMessage(ctx, agentA, chatId, { text: 'Oi', signature: false })).status).toBe('sent');
+    const adminInA: AuthUser = { ...seed.admin, sectorIds: [seed.sectorA] };
+    await expect(sendAgentMessage(ctx, adminInA, chatId, { text: 'Oi', signature: false })).rejects.toMatchObject({ status: 404 });
+    await enableSeeAll(ctx, seed.admin);
     expect((await sendAgentMessage(ctx, seed.admin, chatId, { text: 'Oi', signature: false })).status).toBe('sent');
     expect(ctx.wa.sent).toHaveLength(2);
   });

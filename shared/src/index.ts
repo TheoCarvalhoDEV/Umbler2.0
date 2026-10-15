@@ -4,7 +4,7 @@
 export { TAG_COLORS, tagColorHex } from './palette.js';
 
 export type Role = 'admin' | 'agent';
-export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[] }
+export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[]; seeAllSectors: boolean }
 export interface SectorDto { id: string; name: string; position: number; isDefault: boolean }
 export interface TagDto { id: string; name: string; emoji: string | null; color: string; position: number }
 export interface UserDto { id: string; name: string; email: string; role: Role; signature: string | null; active: boolean; sectorIds: string[] }

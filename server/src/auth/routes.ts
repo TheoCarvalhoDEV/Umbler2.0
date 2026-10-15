@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
@@ -6,13 +6,15 @@ import { users } from '../db/schema.js';
 import { loadAuthUser } from '../inbox/visibility.js';
 import { HttpError, forbidden } from '../lib/http-error.js';
 import { hashPassword, verifyPassword } from './password.js';
-import { SESSION_COOKIE, authUser, requireUser } from './plugin.js';
+import { SESSION_COOKIE, authUser, requireAdmin, requireUser } from './plugin.js';
 import { createSession, deleteSession } from './sessions.js';
 
 const LoginBody = z.object({
   email: z.string().trim().toLowerCase().min(1),
   password: z.string().min(1),
 });
+
+const ViewBody = z.object({ seeAllSectors: z.boolean() });
 
 function loginEmail(body: unknown): string {
   const email = (body as { email?: unknown } | null)?.email;
@@ -67,4 +69,12 @@ export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx
   });
 
   app.get('/api/auth/me', { preHandler: requireUser }, async (req) => authUser(req));
+
+  // "Ver todos os setores": admin-only view preference; every read reloads AuthUser, so nothing else to refresh.
+  app.put('/api/auth/me/view', { preHandler: requireAdmin }, async (req) => {
+    const { seeAllSectors } = ViewBody.parse(req.body);
+    const id = authUser(req).id;
+    await ctx.db.update(users).set({ seeAllSectors }).where(eq(users.id, id));
+    return loadAuthUser(ctx.db, id);
+  });
 };

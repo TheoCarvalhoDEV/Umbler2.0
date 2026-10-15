@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import type { ChatListItem } from '@talk/shared';
+import type { ChatListItem, Me } from '@talk/shared';
 import { Inbox } from './Inbox';
 
 const chatA: ChatListItem = {
@@ -50,6 +50,9 @@ beforeEach(() => {
     }
     if (url.pathname === '/api/tags') return json([]);
     if (url.pathname === '/api/chats/a/pin') return new Response(null, { status: 204 });
+    if (url.pathname === '/api/auth/me/view' && method === 'PUT') {
+      return json({ ...adminMe, seeAllSectors: JSON.parse(String(init?.body)).seeAllSectors });
+    }
     if (url.pathname === '/api/chats') {
       return json({ items: url.searchParams.get('tab') === 'inbox' ? [chatA, chatB] : [], nextCursor: null });
     }
@@ -62,8 +65,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderInbox() {
+const adminMe: Me = { id: 'adm', name: 'Admin', email: 'adm@exemplo.com.br', role: 'admin', signature: null, sectorIds: ['s1'], seeAllSectors: false };
+
+function renderInbox(me?: Me) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  if (me) client.setQueryData(['me'], me);
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/chats']}>
@@ -73,6 +79,7 @@ function renderInbox() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 it('renders chat items with preview, unread, owner, sector, lock and pin', async () => {
@@ -112,4 +119,27 @@ it('unpins a chat from the item menu', async () => {
   await waitFor(() =>
     expect(calls.some((c) => c.method === 'DELETE' && c.url.pathname === '/api/chats/a/pin')).toBe(true),
   );
+});
+
+it('lets an admin toggle "Ver todos os setores", updating Me and refetching the chats', async () => {
+  const client = renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  const toggle = screen.getByRole('button', { name: 'Ver todos os setores' });
+  expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  const listCalls = () => calls.filter((c) => c.url.pathname === '/api/chats').length;
+  const before = listCalls();
+
+  fireEvent.click(toggle);
+
+  await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));
+  const put = calls.find((c) => c.method === 'PUT' && c.url.pathname === '/api/auth/me/view');
+  expect(put).toBeTruthy();
+  expect(client.getQueryData<Me>(['me'])?.seeAllSectors).toBe(true);
+  await waitFor(() => expect(listCalls()).toBeGreaterThan(before));
+});
+
+it('does not show the toggle to an agent', async () => {
+  renderInbox({ ...adminMe, role: 'agent' });
+  await screen.findByText('Ana Souza');
+  expect(screen.queryByRole('button', { name: 'Ver todos os setores' })).toBeNull();
 });

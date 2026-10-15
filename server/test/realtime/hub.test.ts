@@ -3,9 +3,9 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { WsEvent } from '@talk/shared';
 import type { AppCtx } from '../../src/ctx.js';
-import { channels, chatPins, chats, contactTags, contacts, messages, tags } from '../../src/db/schema.js';
+import { channels, chatPins, chats, contactTags, contacts, messages, tags, userSectors, users } from '../../src/db/schema.js';
 import { createHub, createRecordingHub, type Hub } from '../../src/realtime/hub.js';
-import { makeTestCtx, seedBasics } from '../helpers.js';
+import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
 
 type Seed = Awaited<ReturnType<typeof seedBasics>>;
 
@@ -47,6 +47,7 @@ describe('createHub.publishChat', () => {
   it('sends chat.updated to users who can see the chat and chat.removed to the rest, recomputed after a transfer', async () => {
     const a = fakeSocket(); const b = fakeSocket(); const adm = fakeSocket();
     hub.register(s.agentA, a); hub.register(s.agentB, b); hub.register(s.admin, adm);
+    await enableSeeAll(ctx, s.admin);
     const { chat } = await insertChat(ctx, s.channelId, { sectorId: s.sectorA });
 
     await hub.publishChat(chat.id);
@@ -67,6 +68,7 @@ describe('createHub.publishChat', () => {
   it('sends the full ChatListItem with per-user pinned flag and contact tags', async () => {
     const a = fakeSocket(); const adm = fakeSocket();
     hub.register(s.agentA, a); hub.register(s.admin, adm);
+    await enableSeeAll(ctx, s.admin);
     const { chat, contactId, phone } = await insertChat(ctx, s.channelId, { sectorId: s.sectorA });
     const tagId = randomUUID();
     await ctx.db.insert(tags).values({ id: tagId, name: 'Cliente', emoji: null, color: '#22c55e', position: 0 });
@@ -94,9 +96,26 @@ describe('createHub.publishChat', () => {
     expect(adm.events).toEqual([{ type: 'chat.updated', chat: { ...expected, pinned: false } }]);
   });
 
-  it('sends a private chat only to its owner and admins, even to members of its sector', async () => {
+  it('holds an admin without "ver todos" to the sector barrier: chat.removed after a transfer out of his sector', async () => {
+    const adm = fakeSocket();
+    hub.register(s.admin, adm);
+    await ctx.db.insert(userSectors).values({ userId: s.admin.id, sectorId: s.sectorA });
+    const { chat } = await insertChat(ctx, s.channelId, { sectorId: s.sectorA });
+
+    await hub.publishChat(chat.id);
+    await ctx.db.update(chats).set({ sectorId: s.sectorB }).where(eq(chats.id, chat.id));
+    await hub.publishChat(chat.id);
+    // The preference is read from the DB on every publish, like the sectors.
+    await ctx.db.update(users).set({ seeAllSectors: true }).where(eq(users.id, s.admin.id));
+    await hub.publishChat(chat.id);
+
+    expect(adm.events.map((e) => e.type)).toEqual(['chat.updated', 'chat.removed', 'chat.updated']);
+  });
+
+  it('sends a private chat only to its owner and admins with "ver todos", even to members of its sector', async () => {
     const a = fakeSocket(); const b = fakeSocket(); const adm = fakeSocket();
     hub.register(s.agentA, a); hub.register(s.agentB, b); hub.register(s.admin, adm);
+    await enableSeeAll(ctx, s.admin);
     // Chat in sector B (agentB's sector) but private to agentA.
     const { chat } = await insertChat(ctx, s.channelId, { sectorId: s.sectorB, ownerId: s.agentA.id, private: true });
 
@@ -112,6 +131,7 @@ describe('createHub.publishMessage', () => {
   it('sends the MessageDto only to sockets whose user can see the chat', async () => {
     const a = fakeSocket(); const b = fakeSocket(); const adm = fakeSocket();
     hub.register(s.agentA, a); hub.register(s.agentB, b); hub.register(s.admin, adm);
+    await enableSeeAll(ctx, s.admin);
     const { chat } = await insertChat(ctx, s.channelId, { sectorId: s.sectorA });
     const messageId = randomUUID();
     await ctx.db.insert(messages).values({

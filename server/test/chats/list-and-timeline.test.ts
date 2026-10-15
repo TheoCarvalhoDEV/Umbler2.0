@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatListItem, TimelineItem } from '@talk/shared';
-import { chatPins, contactTags, tags } from '../../src/db/schema.js';
-import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
+import { chatPins, contactTags, tags, userSectors } from '../../src/db/schema.js';
+import { enableSeeAll, loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 import { seedChat, seedEvent, seedMessage } from './seed.js';
 
 let app: FastifyInstance;
@@ -38,6 +38,7 @@ describe('GET /api/chats', () => {
     const a = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, waiting: true });
     const b = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, waiting: false });
     const c = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, state: 'closed' });
+    await enableSeeAll(ctx, s.admin);
     const { headers } = await loginAs(app, s.admin.email);
 
     expect(ids(await list(headers)).sort()).toEqual([a.chatId, b.chatId].sort());
@@ -58,6 +59,7 @@ describe('GET /api/chats', () => {
     const tagId = randomUUID();
     await ctx.db.insert(tags).values({ id: tagId, name: 'VIP', emoji: null, color: '#e11d48', position: 0 });
     await ctx.db.insert(contactTags).values({ contactId: c1.contactId, tagId });
+    await enableSeeAll(ctx, s.admin);
     const { headers } = await loginAs(app, s.admin.email);
     const iso = (d: Date) => encodeURIComponent(d.toISOString());
 
@@ -89,6 +91,7 @@ describe('GET /api/chats', () => {
     expect(ids(mine)).toEqual([old.chatId, neu.chatId, mid.chatId]);
     expect(mine.items.map((i) => i.pinned)).toEqual([true, false, false]);
 
+    await enableSeeAll(ctx, s.admin);
     const admin = await loginAs(app, s.admin.email);
     const theirs = await list(admin.headers);
     expect(ids(theirs)).toEqual([neu.chatId, mid.chatId, old.chatId]);
@@ -100,6 +103,7 @@ describe('GET /api/chats', () => {
     for (let i = 1; i <= 5; i++) {
       created.push((await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, at: t(i) })).chatId);
     }
+    await enableSeeAll(ctx, s.admin);
     const { headers } = await loginAs(app, s.admin.email);
 
     const p1 = await list(headers, '?limit=2');
@@ -141,8 +145,31 @@ describe('visibility (Review Focus 4, REST)', () => {
       expect((await app.inject({ method: 'GET', url, headers })).statusCode, url).toBe(404);
     }
 
+    await enableSeeAll(ctx, s.admin);
     const admin = await loginAs(app, s.admin.email);
     expect(ids(await list(admin.headers)).sort()).toEqual([own.chatId, other.chatId, priv.chatId].sort());
+  });
+
+  it('an admin without "ver todos" is held by the sector barrier; turning it on shows everything', async () => {
+    await ctx.db.insert(userSectors).values({ userId: s.admin.id, sectorId: s.sectorA });
+    const own = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    const other = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorB });
+    const priv = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, ownerId: s.agentA.id, private: true });
+    const { headers } = await loginAs(app, s.admin.email);
+    const hidden = [
+      `/api/chats/${other.chatId}`,
+      `/api/chats/${other.chatId}/timeline`,
+      `/api/chats/${priv.chatId}`,
+      `/api/chats/${priv.chatId}/timeline`,
+    ];
+
+    expect(ids(await list(headers))).toEqual([own.chatId]);
+    for (const url of hidden) expect((await app.inject({ method: 'GET', url, headers })).statusCode, url).toBe(404);
+
+    const on = await app.inject({ method: 'PUT', url: '/api/auth/me/view', headers, payload: { seeAllSectors: true } });
+    expect(on.statusCode).toBe(200);
+    expect(ids(await list(headers)).sort()).toEqual([own.chatId, other.chatId, priv.chatId].sort());
+    for (const url of hidden) expect((await app.inject({ method: 'GET', url, headers })).statusCode, url).toBe(200);
   });
 });
 

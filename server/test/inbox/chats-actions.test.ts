@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { chats, settings } from '../../src/db/schema.js';
 import { assumeChat, closeChat, reopenChat, setChatPrivacy, transferChat } from '../../src/inbox/chats.js';
 import { canSee } from '../../src/inbox/visibility.js';
-import { makeTestCtx, seedBasics } from '../helpers.js';
+import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
 import { eventsOf, insertChat, newContact, statusOf } from './fixtures.js';
 
 let ctx: Awaited<ReturnType<typeof makeTestCtx>>;
@@ -104,23 +104,28 @@ describe('setChatPrivacy', () => {
     ]);
   });
 
-  it('403 for a sector colleague who is not the owner; admin may', async () => {
+  it('403 for a sector colleague who is not the owner; an admin who can see it may; 404 for one who cannot', async () => {
     const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, ownerId: s.agentB.id });
     expect(await statusOf(setChatPrivacy(ctx, s.agentA, id, true))).toBe(403);
-    expect((await setChatPrivacy(ctx, s.admin, id, true)).private).toBe(true);
+    expect(await statusOf(setChatPrivacy(ctx, s.admin, id, true))).toBe(404); // no sectors, "ver todos" off
+    expect((await setChatPrivacy(ctx, { ...s.admin, sectorIds: [s.sectorA] }, id, true)).private).toBe(true);
   });
 
   it('400 when the chat has no owner', async () => {
     const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    await enableSeeAll(ctx, s.admin);
     expect(await statusOf(setChatPrivacy(ctx, s.admin, id, true))).toBe(400);
   });
 });
 
 describe('private chats', () => {
-  it('a sector colleague cannot transfer or close it (404); admin can close it', async () => {
+  it('a sector colleague cannot transfer or close it (404); only an admin with "ver todos" can close it', async () => {
     const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, ownerId: s.agentB.id, private: true });
     expect(await statusOf(transferChat(ctx, s.agentA, id, { sectorId: s.sectorB }))).toBe(404);
     expect(await statusOf(closeChat(ctx, s.agentA, id, { sendClosingMessage: false }))).toBe(404);
+    const adminInA = { ...s.admin, sectorIds: [s.sectorA] };
+    expect(await statusOf(closeChat(ctx, adminInA, id, { sendClosingMessage: false }))).toBe(404);
+    await enableSeeAll(ctx, s.admin);
     expect((await closeChat(ctx, s.admin, id, { sendClosingMessage: false })).state).toBe('closed');
   });
 });

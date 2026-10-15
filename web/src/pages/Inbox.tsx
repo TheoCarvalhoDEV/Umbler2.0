@@ -1,9 +1,10 @@
 import { useEffect, useState, type UIEvent } from 'react';
 import { Outlet, useNavigate, useParams } from 'react-router';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Funnel, MagnifyingGlass, Plus } from '@phosphor-icons/react';
+import { Eye, EyeSlash, Funnel, MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import type { ChatListFilters, ChatListItem as ChatItem, ChatTab } from '@talk/shared';
 import { api, ApiError, qk } from '../lib/api';
+import { useMe } from '../lib/auth';
 import { ChatListItem } from '../components/inbox/ChatListItem';
 import { FilterPanel } from '../components/inbox/FilterPanel';
 import { NewChatDialog } from '../components/inbox/NewChatDialog';
@@ -51,6 +52,7 @@ export function Inbox() {
   const [showFilters, setShowFilters] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
+  const me = useMe().data;
 
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
   const users = useQuery({ queryKey: qk.users, queryFn: api.users.list });
@@ -79,6 +81,15 @@ export function Inbox() {
       ),
   });
 
+  // Admin-only "Ver todos os setores": the server re-reads it on every request, so refetch what it filters.
+  const view = useMutation({
+    mutationFn: api.auth.setView,
+    onSuccess: (next) => {
+      qc.setQueryData(qk.me, next);
+      return Promise.all([qc.invalidateQueries({ queryKey: qk.chats }), qc.invalidateQueries({ queryKey: qk.contacts })]);
+    },
+  });
+
   function onScroll(e: UIEvent<HTMLUListElement>) {
     const el = e.currentTarget;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 200 && list.hasNextPage && !list.isFetchingNextPage) {
@@ -92,13 +103,26 @@ export function Inbox() {
     <div className="flex h-full min-h-0">
       <aside className="flex w-96 shrink-0 flex-col border-r border-border">
         <div className="flex items-center gap-2 px-3 pt-3">
-          <h1 className="text-lg font-semibold">Conversas</h1>
+          <h1 className="mr-auto text-lg font-semibold">Conversas</h1>
+          {me?.role === 'admin' && (
+            <button
+              type="button"
+              aria-label="Ver todos os setores"
+              aria-pressed={me.seeAllSectors}
+              title={me.seeAllSectors ? 'Vendo todos os setores' : 'Vendo só os seus setores'}
+              disabled={view.isPending}
+              onClick={() => view.mutate(!me.seeAllSectors)}
+              className={`rounded p-1.5 hover:bg-sidebar-hover ${me.seeAllSectors ? 'text-primary' : 'text-muted'}`}
+            >
+              {me.seeAllSectors ? <Eye size={20} /> : <EyeSlash size={20} />}
+            </button>
+          )}
           <button
             type="button"
             aria-label="Nova conversa"
             title="Nova conversa"
             onClick={() => setShowNew(true)}
-            className="ml-auto rounded p-1.5 hover:bg-sidebar-hover"
+            className="rounded p-1.5 hover:bg-sidebar-hover"
           >
             <Plus size={20} />
           </button>

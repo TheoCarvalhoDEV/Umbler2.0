@@ -114,6 +114,7 @@ export const api = Object.assign(call, {
     login: (email: string, password: string) => request<Me>('POST', '/api/auth/login', { email, password }),
     logout: () => request<void>('POST', '/api/auth/logout'),
     me: () => request<Me>('GET', '/api/auth/me'),
+    setView: (seeAllSectors: boolean) => request<Me>('PUT', '/api/auth/me/view', { seeAllSectors }),
   },
   chats: {
     list: (f: ChatListFilters) => request<ChatPage>('GET', `/api/chats${qs(f)}`),

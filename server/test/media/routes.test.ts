@@ -58,8 +58,12 @@ describe('GET /api/media/:messageId', () => {
     expect(res.headers['content-security-policy']).toBe('sandbox');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
 
+    // admin: held by the sector barrier until "ver todos" is on
     const admin = await loginAs(app, seed.admin.email);
-    expect((await app.inject({ method: 'GET', url: `/api/media/${mediaId}`, headers: admin.headers })).statusCode).toBe(200);
+    const get = () => app.inject({ method: 'GET', url: `/api/media/${mediaId}`, headers: admin.headers });
+    expect((await get()).statusCode).toBe(404);
+    await app.inject({ method: 'PUT', url: '/api/auth/me/view', headers: admin.headers, payload: { seeAllSectors: true } });
+    expect((await get()).statusCode).toBe(200);
   });
 
   it('is 404 for an agent of another sector (Review Focus 4)', async () => {
