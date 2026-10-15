@@ -14,6 +14,7 @@ import {
   varchar,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
+import type { ChatEventKind } from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
 const id = () => uuid('id').primaryKey().$defaultFn(() => randomUUID());
@@ -209,9 +210,7 @@ export const chatEvents = pgTable(
   {
     id: id(),
     chatId: uuid('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
-    kind: text('kind')
-      .$type<'created' | 'assigned' | 'transferred' | 'closed' | 'reopened' | 'privacy_changed' | 'triage_routed'>()
-      .notNull(),
+    kind: text('kind').$type<ChatEventKind>().notNull(),
     data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
     authorId: uuid('author_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),

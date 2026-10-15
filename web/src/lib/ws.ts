@@ -87,6 +87,8 @@ export function applyWsEvent(qc: QueryClient, ev: WsEvent): void {
       );
       return;
     }
+    case 'notification':
+      return; // nothing to cache; the toasts (Task 16) subscribe through useWsEvent
   }
 }
 
