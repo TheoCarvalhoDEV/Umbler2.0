@@ -158,3 +158,114 @@ describe('buildOfficeGraph', () => {
     });
   });
 });
+type Ctx = Awaited<ReturnType<typeof makeTestCtx>>;
+let ctx: Ctx;
+let seed: Seeded;
+let app: FastifyInstance;
+let admin: Record<string, string>;
+
+async function boot() {
+  ctx = await makeTestCtx();
+  seed = await seedBasics(ctx);
+  ({ app } = await makeTestApp(ctx));
+  admin = (await loginAs(app, seed.admin.email)).headers;
+}
+
+const templateBody = (over: Record<string, unknown> = {}) => ({
+  companyName: 'Silva Advogados',
+  channelId: seed.channelId,
+  destinations: {
+    atendimento: { sectorId: seed.defaultSector },
+    financeiro: { sectorId: seed.sectorA, userId: seed.agentA.id },
+    processos: { sectorId: seed.sectorB, userId: null },
+  },
+  ...over,
+});
+const fromTemplate = (payload: object, headers = admin) =>
+  app.inject({ method: 'POST', url: '/api/bots/from-template', headers, payload });
+const cpfFields = () => ctx.db.select().from(customFields).where(eq(customFields.name, 'CPF'));
+
+describe('POST /api/bots/from-template', () => {
+  beforeEach(boot);
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('creates a published, paused bot on the channel and the CPF field only once', async () => {
+    const res = await fromTemplate(templateBody());
+    expect(res.statusCode).toBe(200);
+    const bot = res.json() as BotDto;
+    expect(bot).toMatchObject({
+      name: 'Fluxo do escritório',
+      status: 'paused',
+      startChannelIds: [seed.channelId],
+      manualStart: false,
+      publishedVersionNumber: 1,
+      latestVersionNumber: 1,
+    });
+
+    const [field] = await cpfFields();
+    expect(field).toMatchObject({ kind: 'cpf' });
+    const v = await app.inject({ method: 'GET', url: `/api/bots/${bot.id}/versions/1`, headers: admin });
+    const version = v.json() as BotVersionDto;
+    expect(version).toMatchObject({ valid: true, published: true, problems: [] });
+    expect(version.graph.nodes.find((n) => n.name === 'cpf')?.config.saveToField).toBe(field.id);
+    expect(version.graph.nodes.find((n) => n.name === 'boas_vindas')?.config.text).toContain('da Silva Advogados.');
+
+    const again = await fromTemplate(templateBody());
+    expect(again.statusCode).toBe(200);
+    expect((again.json() as BotDto).name).toBe('Fluxo do escritório (2)');
+    expect(await cpfFields()).toHaveLength(1);
+  });
+
+  it('uses the given name and reuses an existing CPF field', async () => {
+    const [existing] = await ctx.db.insert(customFields).values({ name: 'CPF', kind: 'text' }).returning();
+    const res = await fromTemplate(templateBody({ name: 'Atendimento inicial' }));
+    expect(res.statusCode).toBe(200);
+    const bot = res.json() as BotDto;
+    expect(bot.name).toBe('Atendimento inicial');
+    const v = (await app.inject({ method: 'GET', url: `/api/bots/${bot.id}/versions/1`, headers: admin })).json() as BotVersionDto;
+    expect(v.graph.nodes.find((n) => n.name === 'cpf')?.config.saveToField).toBe(existing.id);
+    expect(await cpfFields()).toHaveLength(1);
+  });
+
+  it('rejects agents with 403', async () => {
+    const agent = (await loginAs(app, seed.agentA.email)).headers;
+    expect((await fromTemplate(templateBody(), agent)).statusCode).toBe(403);
+  });
+
+  it('rejects an unknown channel, sector or agent with 400 and creates nothing', async () => {
+    const missing = randomUUID();
+    const cases: Array<[object, string]> = [
+      [templateBody({ channelId: missing }), 'Canal inexistente'],
+      [
+        templateBody({
+          destinations: {
+            atendimento: { sectorId: missing },
+            financeiro: { sectorId: seed.sectorA },
+            processos: { sectorId: seed.sectorB },
+          },
+        }),
+        'Setor inexistente',
+      ],
+      [
+        templateBody({
+          destinations: {
+            atendimento: { sectorId: seed.defaultSector },
+            financeiro: { sectorId: seed.sectorA, userId: missing },
+            processos: { sectorId: seed.sectorB },
+          },
+        }),
+        'Atendente inexistente',
+      ],
+    ];
+    for (const [payload, error] of cases) {
+      const res = await fromTemplate(payload);
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error });
+    }
+    expect((await fromTemplate(templateBody({ companyName: '  ' }))).statusCode).toBe(400); // zod
+    expect(await ctx.db.$count(bots)).toBe(0);
+    expect(await cpfFields()).toHaveLength(0);
+  });
+});

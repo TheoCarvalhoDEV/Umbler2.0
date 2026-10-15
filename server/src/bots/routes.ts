@@ -18,6 +18,7 @@ import {
   STARTER_GRAPH, createBot, getBot, getVersionByNumber, getVersionRow, insertBotVersion, latestVersion,
   toBotDto, toBotDtos, toBotRunDto, toBotVersionSummaries, uniqueBotName, type BotRow, type BotVersionRow,
 } from './repo.js';
+import { createOfficeTemplate } from './templates.js';
 
 const IdParams = z.object({ id: z.uuid() });
 const VersionParams = z.object({ id: z.uuid(), n: z.coerce.number().int().positive() });
@@ -32,6 +33,9 @@ const EdgeSchema = z.object({
 });
 export const GraphSchema = z.object({ nodes: z.array(NodeSchema).max(500), edges: z.array(EdgeSchema).max(2000) });
 export const Name = z.string().trim().min(1).max(80);
+const TemplateDest = z.object({ sectorId: z.uuid(), userId: z.uuid().nullable().optional() });
+const TemplateBody = z.object({ name: Name.optional(), companyName: z.string().trim().min(1).max(80), channelId: z.uuid(),
+  destinations: z.object({ atendimento: TemplateDest, financeiro: TemplateDest, processos: TemplateDest }) });
 const CreateBody = z.object({ name: Name, description: z.string().trim().max(500).optional() });
 const PatchBody = z
   .object({
@@ -279,5 +283,10 @@ function registerRunRoutes(app: FastifyInstance, ctx: AppCtx): void {
       ? await stopRun(ctx, id, { userId: req.user.id, reason: 'manual' })
       : run;
     return toBotRunDto(ctx.db, row);
+  });
+
+  app.post('/api/bots/from-template', admin, async (req) => {
+    const body = TemplateBody.parse(req.body);
+    return createOfficeTemplate(ctx, body, req.user.id);
   });
 }
