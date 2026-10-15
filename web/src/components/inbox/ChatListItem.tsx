@@ -1,6 +1,7 @@
 import { DotsThreeVertical, LockSimple, PushPin } from '@phosphor-icons/react';
 import type { ChatListItem as ChatItem } from '@talk/shared';
 import { contactLabel, initials, listTime } from '../../lib/format';
+import { Avatar } from '../Avatar';
 
 interface Props {
   chat: ChatItem;
@@ -21,10 +22,7 @@ export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTo
         aria-current={active ? 'true' : undefined}
         className="flex min-w-0 flex-1 gap-3 px-3 py-2 text-left"
       >
-        <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-sidebar-active text-sm font-semibold">
-          {/* ponytail: Task 15's initials; phone-only contacts show '?' */}
-          {initials(chat.contact.name)}
-        </span>
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 text-sm bg-sidebar-active" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1">
             <span className="truncate font-medium">{title}</span>

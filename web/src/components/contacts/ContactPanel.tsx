@@ -9,19 +9,10 @@ import { CustomFieldsEditor } from './CustomFieldsEditor';
 import { NotesList } from './NotesList';
 import { TagsEditor } from './TagsEditor';
 import { formatPhone } from '../../lib/format';
+import { Avatar } from '../Avatar';
 
 const dateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
-
-export function Avatar({ name }: { name: string | null }) {
-  const initials =
-    (name ?? '').trim().split(/\s+/).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || '?';
-  return (
-    <span aria-hidden className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white">
-      {initials}
-    </span>
-  );
-}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -150,7 +141,7 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Avatar name={contact.name} />
+        <Avatar name={contact.name} src={contact.avatarUrl} className="size-12 text-base bg-primary text-white" />
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold">{contact.name || formatPhone(contact.phone)}</p>
           <p className="text-sm text-muted">{formatPhone(contact.phone)}</p>

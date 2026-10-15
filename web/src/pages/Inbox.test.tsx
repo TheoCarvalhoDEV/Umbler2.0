@@ -8,7 +8,7 @@ import { Inbox } from './Inbox';
 
 const chatA: ChatListItem = {
   id: 'a',
-  contact: { id: 'ct1', name: 'Ana Souza', phone: '5565999991111', avatarUrl: null },
+  contact: { id: 'ct1', name: 'Ana Souza', phone: '5565999991111', avatarUrl: '/api/contacts/ct1/avatar?v=1' },
   channelId: 'ch1',
   sectorId: 's1',
   ownerId: 'u1',
@@ -91,6 +91,7 @@ it('renders chat items with preview, unread, owner, sector, lock and pin', async
   expect(screen.getByLabelText('Conversa privada')).toBeTruthy();
   expect(screen.getByLabelText('Fixada')).toBeTruthy();
   expect((await screen.findByTitle('Maria Lima')).textContent).toBe('ML');
+  expect(document.querySelector('img[src="/api/contacts/ct1/avatar?v=1"]')).toBeTruthy(); // contact picture
   expect((await screen.findAllByText('Financeiro')).length).toBe(2);
 });
 

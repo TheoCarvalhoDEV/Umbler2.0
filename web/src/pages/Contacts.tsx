@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import { api, qk } from '../lib/api';
-import { Avatar, ContactPanel } from '../components/contacts/ContactPanel';
+import { Avatar } from '../components/Avatar';
+import { ContactPanel } from '../components/contacts/ContactPanel';
 import { formatPhone } from '../lib/format';
 
 export function ContactsPage() {
@@ -80,7 +81,7 @@ export function ContactsPage() {
               <tr key={c.id} onClick={() => setOpenId(c.id)} className="cursor-pointer hover:bg-sidebar-hover">
                 <td className="px-4 py-2">
                   <button type="button" className="flex items-center gap-3 text-left" onClick={() => setOpenId(c.id)}>
-                    <Avatar name={c.name} />
+                    <Avatar name={c.name} src={c.avatarUrl} />
                     <span className="font-medium">{c.name || 'Sem nome'}</span>
                     {c.blocked && <span className="text-xs text-danger">Bloqueado</span>}
                   </button>
