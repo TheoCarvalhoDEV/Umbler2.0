@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
+import { quickAnswers } from '../../src/db/schema.js';
 import type { FastifyInstance } from 'fastify';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
@@ -50,6 +51,22 @@ it('scopes visibility and editing: "all" is admin-made, "owner" is personal', as
   expect((await call('PATCH', `/api/quick-answers/${shared.id}`, admin, { name: 'Geral 2' })).json().name).toBe('Geral 2');
   expect((await call('DELETE', `/api/quick-answers/${mine.id}`, agentA)).statusCode).toBe(204);
   expect(names((await call('GET', '/api/quick-answers', agentA)).json())).toEqual(['Geral 2']);
+});
+
+it('making an ownerless (imported) answer private gives it to the admin who did it', async () => {
+  const id = crypto.randomUUID();
+  await ctx.db.insert(quickAnswers).values({ id, name: 'Importada', body: 'x', visibility: 'all', ownerId: null, createdAt: new Date() });
+
+  const res = await call('PATCH', `/api/quick-answers/${id}`, admin, { visibility: 'owner' });
+  expect(res.json()).toMatchObject({ visibility: 'owner', ownerId: seed.admin.id });
+  expect(names((await call('GET', '/api/quick-answers', admin)).json())).toEqual(['Importada']);
+  expect((await call('PATCH', `/api/quick-answers/${id}`, admin, { name: 'Minha agora' })).statusCode).toBe(200);
+});
+
+it("an admin cannot make a colleague's shared answer private", async () => {
+  const id = crypto.randomUUID();
+  await ctx.db.insert(quickAnswers).values({ id, name: 'Da Ana', body: 'x', visibility: 'all', ownerId: seed.agentA.id, createdAt: new Date() });
+  expect((await call('PATCH', `/api/quick-answers/${id}`, admin, { visibility: 'owner' })).statusCode).toBe(403);
 });
 
 it('renders variables from the chat contact, its fields and the current user', async () => {

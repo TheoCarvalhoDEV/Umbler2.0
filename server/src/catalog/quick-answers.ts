@@ -118,9 +118,15 @@ export function registerQuickAnswerRoutes(app: FastifyInstance, ctx: AppCtx): vo
     if (!canEdit(req.user, qa)) throw forbidden();
     const b = Patch.parse(fields);
     assertCanSetVisibility(req.user, b.visibility);
+    // Hiding someone else's shared answer would remove it from the whole office and lock the admin out of it.
+    if (b.visibility === 'owner' && qa.ownerId !== null && qa.ownerId !== req.user.id) {
+      throw forbidden('Só o dono torna a resposta particular');
+    }
     // ponytail: a replaced/removed attachment file stays on disk; add cleanup if /data/media grows.
     const attachmentPath = file ? await store(ctx, file) : b.removeAttachment ? null : undefined;
-    const set = { name: b.name, body: b.body, visibility: b.visibility, attachmentPath };
+    // An ownerless (imported) answer made private goes to whoever did it; otherwise nobody could see or edit it.
+    const ownerId = b.visibility === 'owner' && qa.ownerId === null ? req.user.id : undefined;
+    const set = { name: b.name, body: b.body, visibility: b.visibility, attachmentPath, ownerId };
     if (Object.values(set).every((v) => v === undefined)) return toDto(qa);
     const [row] = await ctx.db.update(quickAnswers).set(set).where(eq(quickAnswers.id, id)).returning();
     return toDto(row);
