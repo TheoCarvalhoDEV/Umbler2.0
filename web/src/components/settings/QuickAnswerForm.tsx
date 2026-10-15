@@ -23,7 +23,7 @@ export function insertAtCursor(text: string, start: number, end: number, snippet
   return { text: text.slice(0, start) + snippet + text.slice(end), caret: start + snippet.length };
 }
 
-const field = 'mt-1 w-full rounded border border-border px-2 py-1.5 text-sm';
+const field = 'mt-1 w-full rounded border border-field px-2 py-1.5 text-sm';
 
 export function QuickAnswerForm({
   initial,
@@ -145,7 +145,7 @@ export function QuickAnswerForm({
         {initial?.hasAttachment && (
           <p className="text-xs text-muted">
             Esta resposta já tem um anexo:{' '}
-            <a href={`/api/quick-answers/${initial.id}/attachment`} target="_blank" rel="noreferrer" className="text-primary underline">
+            <a href={`/api/quick-answers/${initial.id}/attachment`} target="_blank" rel="noreferrer" className="text-link underline">
               abrir
             </a>
             . Escolha outro arquivo para substituir.

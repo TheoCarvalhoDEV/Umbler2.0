@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpRight, ArrowCounterClockwise, Check, LockSimple, LockSimpleOpen, User, UserPlus } from '@phosphor-icons/react';
+import { ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockSimpleOpen, User, UserPlus } from '@phosphor-icons/react';
 import type { ChatDetail } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
@@ -69,7 +69,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
   const ownerOrAdmin = me.role === 'admin' || chat.ownerId === me.id;
   const lockedByPrivacy = chat.private && !ownerOrAdmin; // §5.3: private → only owner/admin transfer or close
   const sectorName = sectors.find((s) => s.id === chat.sectorId)?.name ?? '—';
-  const ownerName = chat.ownerId ? (users.find((u) => u.id === chat.ownerId)?.name ?? 'Atendente') : 'Sem dono';
+  const ownerName = chat.ownerId ? (users.find((u) => u.id === chat.ownerId)?.name ?? 'Atendente') : 'Sem atendente';
 
   async function act(a: Action) {
     setBusy(true);
@@ -110,7 +110,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
             <span className="rounded bg-panel px-1.5 text-fg">{sectorName}</span>
             <span>{ownerName}</span>
             {chat.private && (
-              <span className="flex items-center gap-0.5 text-amber-400">
+              <span className="flex items-center gap-0.5 text-private">
                 <LockSimple size={12} /> Privada
               </span>
             )}
@@ -134,19 +134,30 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
         </HeaderButton>
         {open && (
           <>
-            <HeaderButton label="Transferir" disabled={busy || lockedByPrivacy} onClick={() => setDialog('transfer')}>
-              <ArrowBendUpRight size={20} />
-            </HeaderButton>
             <HeaderButton
-              label={chat.private ? 'Liberar conversa' : 'Privar conversa'}
+              label={chat.private ? 'Tornar pública' : 'Tornar privada'}
               disabled={busy || !ownerOrAdmin}
               onClick={() => void act({ kind: 'privacy', private: !chat.private })}
             >
               {chat.private ? <LockSimpleOpen size={20} /> : <LockSimple size={20} />}
             </HeaderButton>
-            <HeaderButton label="Finalizar" disabled={busy || lockedByPrivacy} onClick={() => setDialog('close')}>
-              <Check size={20} />
-            </HeaderButton>
+            {/* the two workflow actions carry text: an icon-only ✓ read as "message sent" */}
+            <button
+              type="button"
+              disabled={busy || lockedByPrivacy}
+              onClick={() => setDialog('transfer')}
+              className={`${pill} ml-1 bg-panel text-fg hover:bg-sidebar-hover disabled:cursor-not-allowed`}
+            >
+              <ArrowBendUpRight size={16} /> Transferir
+            </button>
+            <button
+              type="button"
+              disabled={busy || lockedByPrivacy}
+              onClick={() => setDialog('close')}
+              className={`${pill} bg-panel text-fg hover:bg-sidebar-hover disabled:cursor-not-allowed`}
+            >
+              <CheckCircle size={16} /> Finalizar
+            </button>
           </>
         )}
       </header>

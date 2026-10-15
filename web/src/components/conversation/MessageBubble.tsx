@@ -23,7 +23,7 @@ function StatusTick({ status }: { status: MessageDto['status'] }) {
     case 'delivered':
       return <Checks size={14} aria-label="Entregue" />;
     case 'read':
-      return <Checks size={14} weight="bold" className="text-sky-400" aria-label="Lida" />;
+      return <Checks size={14} weight="bold" className="text-read" aria-label="Lida" />;
     case 'failed':
       return <WarningCircle size={14} weight="fill" className="text-danger" aria-label="Falhou" />;
   }
@@ -87,7 +87,7 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
     : m.direction === 'out'
       ? (m.authorName ?? 'Celular ou sistema') // authorId null = sent from the phone or by the triage bot
       : null;
-  const tone = isNote ? 'bg-yellow-200 text-zinc-900' : m.direction === 'out' ? 'bg-primary/25 text-fg' : 'bg-panel text-fg';
+  const tone = isNote ? 'bg-yellow-200 text-zinc-900' : m.direction === 'out' ? 'bg-primary/25 text-fg' : 'bg-bubble-in text-fg';
 
   async function resend() {
     setResending(true);
@@ -129,7 +129,7 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
         ) : (
           m.body && <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>
         )}
-        <div className="mt-1 flex items-center justify-end gap-1 text-[11px] opacity-70">
+        <div className="mt-1 flex items-center justify-end gap-1 text-xs opacity-70">
           <time dateTime={m.sentAt}>{timeOfDay(m.sentAt)}</time>
           {showStatus && <StatusTick status={m.status} />}
         </div>

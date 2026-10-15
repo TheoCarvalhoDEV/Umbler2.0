@@ -117,6 +117,6 @@ describe('small helpers', () => {
     expect(isConflict(new ApiError(409, 'Conflito'))).toBe(true);
     expect(isConflict(new ApiError(404, 'Não encontrado'))).toBe(false);
     expect(errorMessage(new ApiError(404, 'Não encontrado'))).toBe('Não encontrado');
-    expect(errorMessage('boom')).toBe('Ocorreu um erro');
+    expect(errorMessage('boom')).toBe('Não foi possível concluir. Tente de novo.');
   });
 });

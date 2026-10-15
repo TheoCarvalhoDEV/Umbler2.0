@@ -78,7 +78,7 @@ export function Inbox() {
           ? 'Você já fixou 3 conversas. Desafixe uma para fixar outra.'
           : err instanceof Error
             ? err.message
-            : 'Ocorreu um erro',
+            : 'Não foi possível concluir. Tente de novo.',
       ),
   });
 
@@ -115,7 +115,7 @@ export function Inbox() {
               title={me.seeAllSectors ? 'Vendo todos os setores' : 'Vendo só os seus setores'}
               disabled={view.isPending}
               onClick={() => view.mutate(!me.seeAllSectors)}
-              className={`rounded p-1.5 hover:bg-sidebar-hover ${me.seeAllSectors ? 'text-primary' : 'text-muted'}`}
+              className={`rounded p-1.5 hover:bg-sidebar-hover ${me.seeAllSectors ? 'text-link' : 'text-muted'}`}
             >
               {me.seeAllSectors ? <Eye size={20} /> : <EyeSlash size={20} />}
             </button>
@@ -157,7 +157,7 @@ export function Inbox() {
         </div>
 
         <div className="flex items-center gap-2 p-3">
-          <label className="flex flex-1 items-center gap-2 rounded bg-panel px-2">
+          <label className="flex flex-1 items-center gap-2 rounded bg-panel px-2 focus-within:ring-2 focus-within:ring-primary">
             <MagnifyingGlass aria-hidden="true" className="text-muted" />
             <input
               type="search"
@@ -173,7 +173,7 @@ export function Inbox() {
             aria-label="Filtrar conversas"
             aria-expanded={showFilters}
             onClick={() => setShowFilters((v) => !v)}
-            className={`relative rounded p-1.5 hover:bg-sidebar-hover ${activeFilters ? 'text-primary' : 'text-muted'}`}
+            className={`relative rounded p-1.5 hover:bg-sidebar-hover ${activeFilters ? 'text-link' : 'text-muted'}`}
           >
             <Funnel size={20} weight={activeFilters ? 'fill' : 'regular'} />
           </button>

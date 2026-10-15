@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { SectorDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
+import { confirmDialog } from '../../lib/confirm';
 
 export function SectorsSettings() {
   const list = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
@@ -34,8 +35,8 @@ export function SectorsSettings() {
     if (next && next !== s.name) save.mutate(() => send(`/api/sectors/${s.id}`, 'PATCH', { name: next }));
   }
 
-  function remove(s: SectorDto) {
-    if (window.confirm(`Excluir o setor "${s.name}"?`)) save.mutate(() => send(`/api/sectors/${s.id}`, 'DELETE'));
+  async function remove(s: SectorDto) {
+    if (await confirmDialog({ title: `Excluir o setor "${s.name}"?`, confirmLabel: 'Excluir setor' })) save.mutate(() => send(`/api/sectors/${s.id}`, 'DELETE'));
   }
 
   return (
@@ -62,7 +63,7 @@ export function SectorsSettings() {
           <li key={s.id} className="flex items-center gap-2 px-3 py-2 text-sm">
             <span className="flex-1">
               {s.name}
-              {s.isDefault && <span className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 text-xs text-primary">Padrão</span>}
+              {s.isDefault && <span className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 text-xs text-link">Padrão</span>}
             </span>
             <button type="button" aria-label={`Subir ${s.name}`} disabled={i === 0 || save.isPending} onClick={() => move(i, -1)} className={btn}>
               <ArrowUpIcon size={14} />

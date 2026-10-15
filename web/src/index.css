@@ -8,17 +8,57 @@
   --color-surface: #1b1e25;
   --color-panel: #23262f;
   --color-border: #313543;
+  /* Form control borders: --color-border is too faint (1.4:1) to outline an input; this one is 3:1. */
+  --color-field: #666e85;
   --color-fg: #e7e9ef;
   --color-muted: #9aa1b1;
-  --color-primary: #4a6cf7;
-  --color-primary-hover: #3b5ce6;
-  --color-danger: #e5484d;
+  /* White text on primary needs 4.5:1. Primary is too dark to read as text, so blue text uses --color-link. */
+  --color-primary: #4062f0;
+  --color-primary-hover: #3352d9;
+  --color-link: #7b93ff;
+  /* Light enough to read as text on dark surfaces; solid red fills with white text use --color-danger-strong. */
+  --color-danger: #f47174;
+  --color-danger-strong: #c9363b;
   --color-success: #30a46c;
+  --color-nav-on: #ffffff; /* active icon in the left menu */
+  --color-bubble-in: #23262f; /* inbound message bubble */
+  --color-private: #fbbf24; /* "Privada" badge */
+  --color-read: #38bdf8; /* read ticks */
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
 }
 
 :root {
   color-scheme: dark;
+}
+
+/* Light theme: same tokens, new values. lib/theme.ts sets data-theme (system preference by default).
+   Cool greys biased toward the brand blue; every text pairing is >= 4.5:1, field borders >= 3:1. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --color-sidebar: #e6eaf1;
+  --color-sidebar-hover: #dce2eb;
+  --color-sidebar-active: #d9e1f6;
+  --color-surface: #ffffff;
+  --color-panel: #f2f4f8;
+  --color-border: #dde2ea;
+  --color-field: #80889b;
+  --color-fg: #1b1f27;
+  --color-muted: #596174;
+  --color-primary: #3554e0;
+  --color-primary-hover: #2b49d1;
+  --color-link: #2b49d1;
+  --color-danger: #b42a30;
+  --color-danger-strong: #b42a30;
+  --color-success: #1f7a4f;
+  --color-nav-on: #3554e0;
+  --color-bubble-in: #ffffff; /* panel is too close to the timeline background (1.1:1) */
+  --color-private: #b45309;
+  --color-read: #0369a1;
+}
+
+/* The gold logo is drawn for dark backgrounds; on the light theme it needs more weight to hold up. */
+:root[data-theme='light'] .brand-logo {
+  filter: brightness(0.8) saturate(1.2);
 }
 
 html,

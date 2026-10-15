@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PushPin, Trash } from '@phosphor-icons/react';
 import type { ContactNoteDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
+import { confirmDialog } from '../../lib/confirm';
 
 export function NotesList({ contactId }: { contactId: string }) {
   const qc = useQueryClient();
@@ -79,7 +80,9 @@ export function NotesList({ contactId }: { contactId: string }) {
               <button
                 type="button"
                 aria-label="Excluir observação"
-                onClick={() => window.confirm('Excluir esta observação?') && remove.mutate(n.id)}
+                onClick={async () => {
+                  if (await confirmDialog({ title: 'Excluir esta observação?', confirmLabel: 'Excluir' })) remove.mutate(n.id);
+                }}
                 className="rounded p-1 hover:bg-sidebar-hover"
               >
                 <Trash size={14} />

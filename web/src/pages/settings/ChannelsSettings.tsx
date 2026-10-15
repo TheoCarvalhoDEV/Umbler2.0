@@ -9,7 +9,7 @@ const QR_POLL_MS = 5_000;
 
 const STATUS: Record<ChannelDto['status'], { label: string; className: string }> = {
   connected: { label: 'Conectado', className: 'bg-success/20 text-success' },
-  connecting: { label: 'Conectando', className: 'bg-primary/20 text-primary' },
+  connecting: { label: 'Conectando', className: 'bg-primary/20 text-link' },
   disconnected: { label: 'Desconectado', className: 'bg-danger/20 text-danger' },
 };
 

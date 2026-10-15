@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { CustomFieldDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
+import { confirmDialog } from '../../lib/confirm';
 
 const KINDS: Record<CustomFieldDto['kind'], string> = {
   text: 'Texto',
@@ -36,8 +37,9 @@ export function CustomFieldsSettings() {
     if (next && next !== f.name) save.mutate(() => send(`/api/custom-fields/${f.id}`, 'PATCH', { name: next }));
   }
 
-  function remove(f: CustomFieldDto) {
-    if (window.confirm(`Excluir o campo "${f.name}"? Os valores preenchidos nos contatos serão apagados.`)) {
+  async function remove(f: CustomFieldDto) {
+    const body = 'Os valores preenchidos nos contatos serão apagados.';
+    if (await confirmDialog({ title: `Excluir o campo "${f.name}"?`, body, confirmLabel: 'Excluir campo' })) {
       save.mutate(() => send(`/api/custom-fields/${f.id}`, 'DELETE'));
     }
   }
@@ -51,9 +53,9 @@ export function CustomFieldsSettings() {
           value={name}
           maxLength={60}
           onChange={(e) => setName(e.target.value)}
-          className="flex-1 rounded border border-border px-2 py-1.5 text-sm"
+          className="flex-1 rounded border border-field px-2 py-1.5 text-sm"
         />
-        <select aria-label="Tipo do novo campo" value={kind} onChange={(e) => setKind(e.target.value as CustomFieldDto['kind'])} className="rounded border border-border px-2 py-1.5 text-sm">
+        <select aria-label="Tipo do novo campo" value={kind} onChange={(e) => setKind(e.target.value as CustomFieldDto['kind'])} className="rounded border border-field px-2 py-1.5 text-sm">
           {Object.entries(KINDS).map(([value, label]) => (
             <option key={value} value={value}>
               {label}

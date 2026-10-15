@@ -45,7 +45,7 @@ export function ContactsPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Buscar por nome ou telefone"
-            className="w-full rounded-md border border-border py-2 pr-3 pl-9 text-sm focus:border-primary focus:outline-none"
+            className="w-full rounded-md border border-field py-2 pr-3 pl-9 text-sm focus:border-primary focus:outline-none"
           />
         </label>
         <label>
@@ -53,7 +53,7 @@ export function ContactsPage() {
           <select
             value={tagId}
             onChange={(e) => setTagId(e.target.value)}
-            className="rounded-md border border-border px-3 py-2 text-sm"
+            className="rounded-md border border-field px-3 py-2 text-sm"
           >
             <option value="">Todas as etiquetas</option>
             {tags.data?.map((t) => (
@@ -103,7 +103,7 @@ export function ContactsPage() {
               type="button"
               disabled={list.isFetchingNextPage}
               onClick={() => list.fetchNextPage()}
-              className="rounded-md px-4 py-2 text-sm text-primary hover:bg-primary/15 disabled:opacity-50"
+              className="rounded-md px-4 py-2 text-sm text-link hover:bg-primary/15 disabled:opacity-50"
             >
               Carregar mais
             </button>

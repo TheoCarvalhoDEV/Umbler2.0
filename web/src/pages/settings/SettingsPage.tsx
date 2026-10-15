@@ -34,7 +34,7 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full min-h-0">
-      <nav aria-label="Configurações" className="w-56 shrink-0 overflow-y-auto border-r p-3">
+      <nav aria-label="Configurações" className="w-56 shrink-0 overflow-y-auto border-r border-border p-3">
         <h2 className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-muted">Configurações</h2>
         <ul className="space-y-1">
           {visible.map((s) => (
