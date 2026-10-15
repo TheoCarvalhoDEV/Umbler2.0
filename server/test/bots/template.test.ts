@@ -269,3 +269,167 @@ describe('POST /api/bots/from-template', () => {
     expect(await cpfFields()).toHaveLength(0);
   });
 });
+
+const PHONE = '5565999999999';
+let seq = 0;
+
+function inbound(body: string): Extract<InboundEvent, { type: 'message' }> {
+  seq += 1;
+  return {
+    type: 'message',
+    instance: seed.instance,
+    externalId: `TPL${seq}`,
+    direction: 'in',
+    phone: PHONE,
+    lid: null,
+    pushName: 'Maria Cliente',
+    kind: 'text',
+    body,
+    hasMedia: false,
+    mediaMime: null,
+    mediaName: null,
+    replyToExternalId: null,
+    sentAt: ctx.clock.now(),
+    raw: {},
+  };
+}
+
+async function say(body: string): Promise<string[]> {
+  const before = ctx.wa.sent.length;
+  await handleInbound(ctx, [inbound(body)]);
+  await avatarRefreshesIdle();
+  return ctx.wa.sent.slice(before).map((s) => (s.payload as { text: string }).text);
+}
+
+const theChat = async () => (await ctx.db.select().from(chats))[0]!;
+const theRun = async () => (await ctx.db.select().from(botRuns))[0]!;
+async function cpfValue(): Promise<string | undefined> {
+  const [field] = await cpfFields();
+  const [row] = await ctx.db.select().from(contactFieldValues).where(eq(contactFieldValues.fieldId, field!.id));
+  return row?.value;
+}
+
+describe('Fluxo do escritório end to end', () => {
+  let botId: string;
+
+  beforeEach(async () => {
+    await boot();
+    ctx.clock.set(new Date('2026-10-14T13:00:00Z')); // Wednesday 09:00 in Cuiabá (UTC-4)
+    const created = await fromTemplate(templateBody());
+    botId = (created.json() as BotDto).id;
+    const activated = await app.inject({
+      method: 'POST',
+      url: `/api/bots/${botId}/status`,
+      headers: admin,
+      payload: { status: 'active' },
+    });
+    expect(activated.statusCode).toBe(200);
+  });
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it('in hours: welcome, menu, invalid option, CPF invalid then valid, transfer and notification', async () => {
+    const notify = vi.spyOn(ctx.hub, 'publishNotification');
+
+    expect(await say('Bom dia')).toEqual([WELCOME, MENU]);
+    expect(await theRun()).toMatchObject({ botId, state: 'waiting_reply', waitNodeId: 'menu' });
+    expect((await theChat()).triagePending).toBe(false); // the bot took priority over triage
+
+    const invalid = (await say('7')).join('\n');
+    expect(invalid).toContain('Opção inválida.');
+    expect(invalid).toContain('3: Processos'); // menu repeated once
+    expect(await theRun()).toMatchObject({ state: 'waiting_reply', waitNodeId: 'menu', retries: 1 });
+
+    expect(await say('2')).toEqual([NOTICE, CPF_ASK]);
+    expect(await theRun()).toMatchObject({ state: 'waiting_reply', waitNodeId: 'cpf', retries: 0 });
+
+    expect(await say('123.456.789-00')).toEqual([CPF_INVALID]); // wrong check digits
+    expect(await cpfValue()).toBeUndefined();
+
+    expect(await say('52998224725')).toEqual([]); // valid; transfer and notification send nothing on WhatsApp
+    expect(await cpfValue()).toBe('529.982.247-25');
+
+    const chat = await theChat();
+    expect(chat).toMatchObject({ state: 'open', sectorId: seed.sectorA, ownerId: seed.agentA.id });
+    const run = await theRun();
+    expect(run.state).toBe('finished');
+    expect(run.vars.menu).toMatchObject({ value: '2', label: 'Financeiro' });
+    expect(run.vars.cpf).toMatchObject({ value: '529.982.247-25' });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(
+      chat.id,
+      [seed.agentA.id],
+      expect.objectContaining({
+        chatId: chat.id,
+        title: 'Nova conversa',
+        text: 'Nova conversa de Maria Cliente — CPF 529.982.247-25',
+        botName: 'Fluxo do escritório',
+      }),
+    );
+    expect(ctx.hub.events).toContainEqual({ type: 'notification', chatId: chat.id, userId: seed.agentA.id });
+
+    const out = await ctx.db.select().from(messages).where(eq(messages.direction, 'out'));
+    expect(out).toHaveLength(ctx.wa.sent.length);
+    for (const m of out) expect(m).toMatchObject({ botRunId: run.id, authorId: null, status: 'sent' });
+
+    const kinds = (await eventsOf(ctx, chat.id)).map((e) => e.kind);
+    expect(kinds.filter((k) => k === 'bot_started')).toHaveLength(1);
+    expect(kinds.filter((k) => k === 'bot_transferred')).toHaveLength(2); // sector, then agent
+    expect(kinds.at(-1)).toBe('bot_finished');
+  });
+
+  it.each([
+    ['at opening time', '2026-10-14T12:00:00Z'], // 08:00
+    ['right after lunch', '2026-10-14T18:00:00Z'], // 14:00
+  ])('in hours %s: greets with the menu', async (_label, at) => {
+    ctx.clock.set(new Date(at));
+    expect(await say('Olá')).toEqual([WELCOME, MENU]);
+  });
+
+  it.each([
+    ['at lunch on a weekday', '2026-10-14T16:30:00Z'], // Wednesday 12:30
+    ['at closing time', '2026-10-14T22:00:00Z'], // Wednesday 18:00 (`to` is exclusive)
+    ['on a Saturday morning', '2026-10-17T14:00:00Z'], // Saturday 10:00
+  ])('out of hours %s: sends the notice and leaves the chat open in the queue', async (_label, at) => {
+    ctx.clock.set(new Date(at));
+    expect(await say('Olá')).toEqual([OUT_OF_HOURS]);
+    expect(await theRun()).toMatchObject({ state: 'finished' });
+    expect(await theChat()).toMatchObject({ state: 'open', sectorId: seed.defaultSector, ownerId: null, triagePending: false });
+    expect(await say('Alguém aí?')).toEqual([]); // same open chat: the bot does not start again
+    expect(await ctx.db.$count(botRuns)).toBe(1);
+  });
+
+  it('a label answer and three invalid CPFs still route to Processos, with no agent and no notification', async () => {
+    const notify = vi.spyOn(ctx.hub, 'publishNotification');
+    await say('Oi');
+    expect(await say('PROCESSOS')).toEqual([NOTICE, CPF_ASK]);
+    expect(await say('123')).toEqual([CPF_INVALID]);
+    expect(await say('não sei')).toEqual([CPF_INVALID]);
+    expect(await say('123.456.789-00')).toEqual([]); // retries used up → invalid → destino
+
+    expect(await theChat()).toMatchObject({ state: 'open', sectorId: seed.sectorB, ownerId: null });
+    const run = await theRun();
+    expect(run.state).toBe('finished');
+    expect(run.vars.cpf).toBeUndefined();
+    expect(await cpfValue()).toBeUndefined();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('no answer to the menu for 24 h ends the bot and keeps the chat open', async () => {
+    await say('Oi');
+    expect((await theRun()).timeoutAt?.toISOString()).toBe('2026-10-15T13:00:00.000Z');
+    const sends = ctx.wa.sent.length;
+    const scheduler = createScheduler(ctx);
+
+    ctx.clock.advance(24 * 60 * 60 * 1000 - 1000);
+    expect(await scheduler.tick(ctx.clock.now())).toBe(0);
+    ctx.clock.advance(2000);
+    expect(await scheduler.tick(ctx.clock.now())).toBe(1);
+
+    expect(await theRun()).toMatchObject({ state: 'finished', timeoutAt: null });
+    expect(ctx.wa.sent).toHaveLength(sends);
+    expect((await theChat()).state).toBe('open');
+  });
+});
