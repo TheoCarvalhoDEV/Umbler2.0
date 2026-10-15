@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowBendUpRight, ArrowCounterClockwise, Check, LockSimple, LockSimpleOpen, User, UserPlus } from '@phosphor-icons/react';
-import type { ChatDetail } from '@talk/shared';
-import { api, qk } from '../../lib/api';
+import type { BotAction, BotRunningErrorBody, ChatDetail } from '@talk/shared';
+import { api, botRunningRuns, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { formatPhone } from '../../lib/format';
 import { Avatar } from '../Avatar';
-import { CloseDialog, TransferDialog } from './ChatDialogs';
+import { BotRunningDialog, CloseDialog, TransferDialog } from './ChatDialogs';
 import { errorMessage, isConflict } from './model';
 
 function HeaderButton(props: { label: string; onClick: () => void; disabled?: boolean; pressed?: boolean; children: ReactNode }) {
@@ -30,7 +30,7 @@ function HeaderButton(props: { label: string; onClick: () => void; disabled?: bo
 type Action =
   | { kind: 'assume' }
   | { kind: 'reopen' }
-  | { kind: 'transfer'; to: { sectorId: string; ownerId: string | null } }
+  | { kind: 'transfer'; to: { sectorId: string; ownerId: string | null }; botAction?: BotAction }
   | { kind: 'privacy'; private: boolean }
   | { kind: 'close'; sendClosingMessage: boolean };
 
@@ -41,7 +41,7 @@ function runAction(chatId: string, a: Action): Promise<ChatDetail> {
     case 'reopen':
       return api.chats.reopen(chatId);
     case 'transfer':
-      return api.chats.transfer(chatId, a.to);
+      return api.chats.transfer(chatId, { ...a.to, botAction: a.botAction });
     case 'privacy':
       return api.chats.setPrivacy(chatId, a.private);
     case 'close':
@@ -64,6 +64,10 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
   const [dialog, setDialog] = useState<'transfer' | 'close' | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [botAsk, setBotAsk] = useState<{
+    runs: BotRunningErrorBody['runs'];
+    transfer: Extract<Action, { kind: 'transfer' }>;
+  } | null>(null);
 
   const open = chat.state === 'open';
   const ownerOrAdmin = me.role === 'admin' || chat.ownerId === me.id;
@@ -81,6 +85,13 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
       if (detail.id !== chat.id) onOpenChat(detail.id);
       else qc.setQueryData(qk.chat(chat.id), detail);
     } catch (e) {
+      const runs = botRunningRuns(e);
+      if (runs && a.kind === 'transfer') {
+        // spec §5.5 "ask": confirm first, then the same transfer goes again with botAction
+        setDialog(null);
+        setBotAsk({ runs, transfer: a });
+        return;
+      }
       if (isConflict(e)) {
         setDialog(null);
         setError('A conversa foi alterada por outra pessoa e foi recarregada.');
@@ -173,6 +184,17 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
           error={error}
           onCancel={closeDialog}
           onConfirm={(sendClosingMessage) => void act({ kind: 'close', sendClosingMessage })}
+        />
+      )}
+      {botAsk && (
+        <BotRunningDialog
+          runs={botAsk.runs}
+          action="transfer"
+          onChoose={(botAction) => {
+            const retry = botAsk.transfer;
+            setBotAsk(null);
+            if (botAction) void act({ ...retry, botAction });
+          }}
         />
       )}
     </>
