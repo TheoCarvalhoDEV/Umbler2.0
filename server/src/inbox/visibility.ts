@@ -1,6 +1,7 @@
 import { and, eq, inArray, or, type SQL } from 'drizzle-orm';
 import type { Db, Tx } from '../db/client.js';
 import { chats, users, userSectors } from '../db/schema.js';
+import { userAvatarUrl } from '../media/avatar-files.js';
 
 export interface AuthUser {
   id: string;
@@ -9,6 +10,8 @@ export interface AuthUser {
   role: 'admin' | 'agent';
   signature: string | null;
   sectorIds: string[];
+  seeAllSectors: boolean; // only meaningful for admins ("Ver todos os setores")
+  avatarUrl: string | null;
 }
 
 export interface ChatVisibilityFields {
@@ -17,20 +20,25 @@ export interface ChatVisibilityFields {
   private: boolean;
 }
 
-/** §6: admin sees everything; a private chat only its owner; otherwise sector member or owner. */
+const seesAll = (user: AuthUser) => user.role === 'admin' && user.seeAllSectors;
+
+/**
+ * Sector barrier: an admin with "ver todos" sees everything; anyone else (admins included) sees own chats
+ * plus the non-private chats of their sectors.
+ */
 export function canSee(user: AuthUser, chat: ChatVisibilityFields): boolean {
-  if (user.role === 'admin') return true;
+  if (seesAll(user)) return true;
   if (chat.ownerId === user.id) return true;
   return !chat.private && user.sectorIds.includes(chat.sectorId);
 }
 
 /**
- * Same rule as canSee, as a WHERE over `chats`. undefined for admin (no filter).
+ * Same rule as canSee, as a WHERE over `chats`. undefined only for an admin with "ver todos" (no filter).
  * (private=false AND (sector IN mine OR owner=me)) OR (private=true AND owner=me)
  * simplifies to owner=me OR (private=false AND sector IN mine).
  */
 export function visibleChatsWhere(user: AuthUser): SQL | undefined {
-  if (user.role === 'admin') return undefined;
+  if (seesAll(user)) return undefined;
   const mine = eq(chats.ownerId, user.id);
   if (user.sectorIds.length === 0) return mine;
   return or(mine, and(eq(chats.private, false), inArray(chats.sectorId, user.sectorIds)));
@@ -53,5 +61,7 @@ export async function loadAuthUser(db: Db | Tx, userId: string): Promise<AuthUse
     role: u.role,
     signature: u.signature,
     sectorIds: rows.map((r) => r.sectorId),
+    seeAllSectors: u.seeAllSectors,
+    avatarUrl: userAvatarUrl(u),
   };
 }

@@ -8,7 +8,7 @@
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/instance.router.ts
 // - Routes: POST /message/sendText|sendMedia|sendWhatsAppAudio/:i (201)
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/sendMessage.router.ts
-// - Route: POST /chat/getBase64FromMediaMessage/:i (201)
+// - Route: POST /chat/getBase64FromMediaMessage/:i (201); POST /chat/fetchProfilePictureUrl/:i (200, NumberDto)
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/chat.router.ts
 // - Auth header "apikey":
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/guards/auth.guard.ts
@@ -18,12 +18,21 @@
 // - SendTextDto { number, text, quoted? }, SendMediaDto { number, mediatype, mimetype, caption, fileName, media },
 //   SendAudioDto { number, audio, quoted? } (quoted comes from the shared Metadata base), Quoted { key, message }:
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/dto/sendMessage.dto.ts
+// - NumberDto { number }:
 // - getBase64FromMediaMessageDto { message, convertToMp4 }:
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/dto/chat.dto.ts
 // - Response shapes (instance.controller.ts):
 //   connectionState → { instance: { instanceName, state } }
 //   connect → { pairingCode, code, base64, count }, or the connectionState shape when already open
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/controllers/instance.controller.ts
+// - fetchProfilePictureUrl: chat.controller.ts fetchProfilePicture → profilePicture(data.number) in
+//   whatsapp.baileys.service.ts, which returns { wuid, profilePictureUrl } and { wuid, profilePictureUrl: null }
+//   on any error (no picture, privacy); createJid keeps '...@lid' as-is:
+//   https://raw.githubusercontent.com/EvolutionAPI/evolution-api/2.3.7/src/api/routes/chat.router.ts
+//   https://raw.githubusercontent.com/EvolutionAPI/evolution-api/2.3.7/src/api/dto/chat.dto.ts
+//   https://raw.githubusercontent.com/EvolutionAPI/evolution-api/2.3.7/src/api/controllers/chat.controller.ts
+//   https://raw.githubusercontent.com/EvolutionAPI/evolution-api/2.3.7/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
+//   https://raw.githubusercontent.com/EvolutionAPI/evolution-api/2.3.7/src/utils/createJid.ts
 // - Response shapes (whatsapp.baileys.service.ts):
 //   send* → prepared message with key.id
 //   getBase64FromMediaMessage → { mediaType, fileName, caption, size, mimetype, base64 }
@@ -124,6 +133,13 @@ export function createEvolutionGateway(
       );
       if (!res?.base64) throw new Error('Evolution getBase64FromMediaMessage returned no media');
       return { base64: res.base64, mime: res.mimetype || 'application/octet-stream', fileName: res.fileName || undefined };
+    },
+
+    async fetchProfilePicture(instance, address) {
+      const res = await call<{ profilePictureUrl?: string | null }>('POST', `/chat/fetchProfilePictureUrl/${seg(instance)}`, {
+        number: address,
+      });
+      return res?.profilePictureUrl || null;
     },
   };
 }

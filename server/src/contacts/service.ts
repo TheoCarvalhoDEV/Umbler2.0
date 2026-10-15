@@ -4,6 +4,7 @@ import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, tags, users } from '../db/schema.js';
 import { toChatListItem } from '../inbox/queries.js';
+import { avatarUrl } from './avatar.js';
 import { visibleChatsWhere, type AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, notFound } from '../lib/http-error.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
@@ -43,6 +44,7 @@ export async function toContactDtos(db: Db | Tx, rows: ContactRow[]): Promise<Co
     tagIds: tagRows.filter((t) => t.contactId === r.id).map((t) => t.tagId),
     fields: Object.fromEntries(fieldRows.filter((f) => f.contactId === r.id).map((f) => [f.fieldId, f.value])),
     createdAt: r.createdAt.toISOString(),
+    avatarUrl: avatarUrl(r),
   }));
 }
 
@@ -103,8 +105,8 @@ async function touch(db: Db | Tx, id: string, extra: Partial<typeof contacts.$in
   if (!row) throw notFound('Contato não encontrado');
 }
 
-// ChatListItem embeds the contact name and tagIds, so open chats are re-sent to the inboxes.
-async function publishOpenChats(ctx: AppCtx, contactId: string): Promise<void> {
+// ChatListItem embeds the contact name, tagIds and avatarUrl, so open chats are re-sent to the inboxes.
+export async function publishOpenChats(ctx: AppCtx, contactId: string): Promise<void> {
   const open = await ctx.db
     .select({ id: chats.id })
     .from(chats)

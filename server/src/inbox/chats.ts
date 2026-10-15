@@ -72,8 +72,8 @@ export async function getChatForUser(ctx: AppCtx, user: AuthUser, chatId: string
   return chat;
 }
 
-// ponytail: canSee already limits a private chat to owner + admin, so "only owner/admin transfer or close a
-// private chat" (§5.3) holds through getChatForUser's 404; no separate check.
+// ponytail: canSee already limits a private chat to its owner + an admin with "ver todos", so "only owner/admin
+// transfer or close a private chat" (§5.3) holds through getChatForUser's 404; no separate check.
 
 /** `owner_id IS NOT DISTINCT FROM ownerId` */
 function sameOwner(ownerId: string | null): SQL {

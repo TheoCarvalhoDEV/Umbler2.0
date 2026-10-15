@@ -27,6 +27,8 @@ export const users = pgTable('users', {
   role: text('role').$type<'admin' | 'agent'>().notNull(),
   signature: text('signature'),
   active: boolean('active').notNull().default(true),
+  seeAllSectors: boolean('see_all_sectors').notNull().default(false),
+  avatarPath: text('avatar_path'),
   createdAt: createdAt(),
 });
 
@@ -78,6 +80,8 @@ export const contacts = pgTable(
     landline: text('landline'),
     address: jsonb('address').$type<Record<string, string>>(),
     blocked: boolean('blocked').notNull().default(false),
+    avatarPath: text('avatar_path'),
+    avatarCheckedAt: timestamp('avatar_checked_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .notNull()

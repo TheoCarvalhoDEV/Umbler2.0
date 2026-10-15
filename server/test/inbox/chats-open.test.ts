@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { chats } from '../../src/db/schema.js';
 import { findOrOpenChat, getChatForUser, getDefaultSectorId } from '../../src/inbox/chats.js';
-import { makeTestCtx, seedBasics } from '../helpers.js';
+import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
 import { eventsOf, insertChat, newContact, statusOf } from './fixtures.js';
 
 let ctx: Awaited<ReturnType<typeof makeTestCtx>>;
@@ -80,6 +80,8 @@ describe('getChatForUser', () => {
   it('returns a visible chat', async () => {
     const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
     expect((await getChatForUser(ctx, s.agentA, id)).id).toBe(id);
+    expect(await statusOf(getChatForUser(ctx, s.admin, id))).toBe(404); // admin outside the sector, "ver todos" off
+    await enableSeeAll(ctx, s.admin);
     expect((await getChatForUser(ctx, s.admin, id)).id).toBe(id);
   });
 

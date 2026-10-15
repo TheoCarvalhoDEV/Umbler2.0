@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import { requireAdmin } from '../../src/auth/plugin.js';
 import { deleteUserSessions } from '../../src/auth/sessions.js';
@@ -40,6 +40,8 @@ describe('POST /api/auth/login', () => {
       role: 'agent',
       signature: seed.agentA.signature,
       sectorIds: [seed.sectorA],
+      seeAllSectors: false,
+      avatarUrl: null,
     });
     const sid = res.cookies.find((c) => c.name === 'sid');
     expect(sid?.value).toBeTruthy();
@@ -104,6 +106,46 @@ describe('GET /api/auth/me', () => {
     await deleteUserSessions(ctx.db, seed.agentB.id);
     const res = await app.inject({ method: 'GET', url: '/api/auth/me', headers });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('PUT /api/auth/me/view', () => {
+  const put = (headers: Record<string, string>, payload: object) =>
+    app.inject({ method: 'PUT', url: '/api/auth/me/view', headers, payload });
+
+  it('lets an admin turn "ver todos os setores" on and off, returning Me', async () => {
+    const { headers, cookie } = await loginAs(app, seed.admin.email);
+    const on = await put(headers, { seeAllSectors: true });
+    expect(on.statusCode).toBe(200);
+    expect(on.json()).toMatchObject({ id: seed.admin.id, role: 'admin', seeAllSectors: true });
+    const me = await app.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie } });
+    expect(me.json()).toMatchObject({ seeAllSectors: true });
+    const off = await put(headers, { seeAllSectors: false });
+    expect(off.json()).toMatchObject({ seeAllSectors: false });
+    const [row] = await ctx.db.select().from(users).where(eq(users.id, seed.admin.id));
+    expect(row.seeAllSectors).toBe(false);
+  });
+
+  it('drops the live sockets so open tabs reconnect', async () => {
+    const spy = vi.spyOn(ctx.hub, 'disconnectUser');
+    const { headers } = await loginAs(app, seed.admin.email);
+    await put(headers, { seeAllSectors: true });
+    expect(spy).toHaveBeenCalledWith(seed.admin.id);
+  });
+
+  it('rejects an agent with 403 and leaves the flag off', async () => {
+    const { headers } = await loginAs(app, seed.agentA.email);
+    expect((await put(headers, { seeAllSectors: true })).statusCode).toBe(403);
+    const [row] = await ctx.db.select().from(users).where(eq(users.id, seed.agentA.id));
+    expect(row.seeAllSectors).toBe(false);
+  });
+
+  it('rejects a request without Origin with 403 and an invalid body with 400', async () => {
+    const { headers, cookie } = await loginAs(app, seed.admin.email);
+    expect((await put({ cookie }, { seeAllSectors: true })).statusCode).toBe(403);
+    expect((await put(headers, { seeAllSectors: 'sim' })).statusCode).toBe(400);
+    const [row] = await ctx.db.select().from(users).where(eq(users.id, seed.admin.id));
+    expect(row.seeAllSectors).toBe(false);
   });
 });
 

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { chats, contacts } from '../../src/db/schema.js';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
-import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
+import { enableSeeAll, loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
@@ -144,6 +144,8 @@ it('contact history lists only the chats the user can see', async () => {
   };
   expect(await history(agentA)).toEqual([inA.id]);
   expect(await history(agentB)).toEqual([inB.id]);
+  expect(await history(admin)).toEqual([]); // admin without "ver todos" and without sectors
+  await enableSeeAll(ctx, seed.admin);
   expect(await history(admin)).toEqual([inA.id, inB.id].sort());
   expect((await call('GET', `/api/contacts/${crypto.randomUUID()}/chats`, agentA)).statusCode).toBe(404);
 });

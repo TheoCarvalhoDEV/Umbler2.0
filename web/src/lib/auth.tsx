@@ -1,5 +1,5 @@
 import { MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import type { Me } from '@talk/shared';
 import { api, ApiError, qk } from './api';
@@ -46,11 +46,45 @@ export function useCurrentUser(): Me {
   return data;
 }
 
+const SESSION_KEY = 'talk:session';
+
+/** Tell the other tabs who is logged in now ('none' after logout). */
+export function markSession(userId: string | null): void {
+  try {
+    localStorage.setItem(SESSION_KEY, `${userId ?? 'none'}:${Date.now()}`);
+  } catch {
+    // storage unavailable: other tabs just won't be told
+  }
+}
+
+/** True when a `storage` event says another tab switched to a different user than this tab's. */
+export function sessionChanged(e: Pick<StorageEvent, 'key' | 'newValue'>, currentUserId: string | null): boolean {
+  if (e.key !== SESSION_KEY || !e.newValue) return false;
+  return e.newValue.slice(0, e.newValue.lastIndexOf(':')) !== (currentUserId ?? 'none');
+}
+
+/** Reload this tab when another tab logs in as someone else or logs out. */
+export function useSessionSync(): void {
+  const { data } = useMe();
+  const userId = data === undefined ? undefined : (data?.id ?? null);
+  useEffect(() => {
+    if (userId === undefined) return;
+    const onStorage = (e: StorageEvent) => {
+      if (sessionChanged(e, userId)) location.reload();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [userId]);
+}
+
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (v: { email: string; password: string }) => api.auth.login(v.email, v.password),
-    onSuccess: (me) => qc.setQueryData(qk.me, me),
+    onSuccess: (me) => {
+      qc.setQueryData(qk.me, me);
+      markSession(me.id);
+    },
   });
 }
 
@@ -58,6 +92,7 @@ export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.auth.logout(),
+    onSuccess: () => markSession(null),
     onSettled: () => {
       qc.setQueryData(qk.me, null);
       qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'me' });
@@ -68,6 +103,7 @@ export function useLogout() {
 export function RequireAuth({ children }: { children: ReactNode }) {
   const me = useMe();
   const location = useLocation();
+  useSessionSync();
   if (me.data) return children;
   if (me.data === null) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   if (me.isPending) {

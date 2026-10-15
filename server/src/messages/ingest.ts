@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { getChannelByInstance, setChannelQr, setChannelStatus } from '../channels/service.js';
+import { refreshContactAvatar } from '../contacts/avatar.js';
+import { publishOpenChats } from '../contacts/service.js';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
 import { chats, contacts, messages } from '../db/schema.js';
@@ -158,6 +160,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
 
   await ctx.hub.publishMessage(stored.chat.id, 'message.created', stored.messageId);
   await ctx.hub.publishChat(stored.chat.id);
+  if (inbound) refreshAvatarInBackground(ctx, ev.instance, stored.chat.contactId);
 
   if (ev.hasMedia) await fetchMedia(ctx, ev, stored.chat.id, stored.messageId);
 
@@ -203,6 +206,27 @@ async function resolveContact(tx: Tx, ev: MessageEvent): Promise<Contact | undef
     await tx.update(contacts).set({ ...patch, updatedAt: new Date() }).where(eq(contacts.id, found.id));
   }
   return found;
+}
+
+// ponytail: in-process set of running refreshes, awaited by tests (and nothing else); fine for one app process.
+const avatarRefreshes = new Set<Promise<void>>();
+
+/** Resolves once every background avatar refresh started so far has finished. */
+export async function avatarRefreshesIdle(): Promise<void> {
+  while (avatarRefreshes.size) await Promise.all(avatarRefreshes);
+}
+
+/** Spec Part 3: after commit, not awaited by ingest, never throws; logs only the error name. */
+function refreshAvatarInBackground(ctx: AppCtx, instance: string, contactId: string): void {
+  const run: Promise<void> = refreshContactAvatar(ctx, instance, contactId)
+    .then(async (changed) => {
+      if (changed) await publishOpenChats(ctx, contactId);
+    })
+    .catch((err: unknown) => {
+      console.error('avatar refresh failed', { contactId, err: err instanceof Error ? err.name : typeof err });
+    })
+    .finally(() => avatarRefreshes.delete(run));
+  avatarRefreshes.add(run);
 }
 
 /** Runs after commit; a failed download never loses the message (§5.1 step 6). */

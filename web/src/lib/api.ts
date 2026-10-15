@@ -114,6 +114,13 @@ export const api = Object.assign(call, {
     login: (email: string, password: string) => request<Me>('POST', '/api/auth/login', { email, password }),
     logout: () => request<void>('POST', '/api/auth/logout'),
     me: () => request<Me>('GET', '/api/auth/me'),
+    setView: (seeAllSectors: boolean) => request<Me>('PUT', '/api/auth/me/view', { seeAllSectors }),
+    setAvatar: (file: Blob) => {
+      const form = new FormData();
+      form.append('file', file);
+      return request<Me>('POST', '/api/auth/me/avatar', form);
+    },
+    removeAvatar: () => request<Me>('DELETE', '/api/auth/me/avatar'),
   },
   chats: {
     list: (f: ChatListFilters) => request<ChatPage>('GET', `/api/chats${qs(f)}`),

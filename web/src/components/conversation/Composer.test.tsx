@@ -27,7 +27,7 @@ function stubFetch(routes: Record<string, unknown>) {
 function message(over: Partial<MessageDto> = {}): MessageDto {
   return {
     id: 'm-new', chatId: 'c1', direction: 'out', kind: 'text', body: 'x', media: null, mediaUnavailable: false,
-    authorId: 'u1', authorName: 'Ana', replyTo: null, reaction: null, status: 'pending', error: null,
+    authorId: 'u1', authorName: 'Ana', authorAvatarUrl: null, replyTo: null, reaction: null, status: 'pending', error: null,
     sentAt: '2026-10-14T12:00:00.000Z', ...over,
   };
 }

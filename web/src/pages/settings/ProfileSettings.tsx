@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Me } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
-import { ErrorText, Section, btnPrimary, field, send, useSend } from '../../components/settings/common';
+import { Avatar } from '../../components/Avatar';
+import { ErrorText, Section, btn, btnPrimary, field, send, useSend } from '../../components/settings/common';
 
 export function ProfileSettings() {
   const me = useCurrentUser();
@@ -16,6 +17,7 @@ export function ProfileSettings() {
 
   return (
     <Section title="Perfil">
+      <PhotoEditor me={me} />
       <dl className="mb-6 grid grid-cols-[10rem_1fr] gap-y-2 text-sm">
         <dt className="text-muted">E-mail</dt>
         <dd>{me.email}</dd>
@@ -39,6 +41,46 @@ export function ProfileSettings() {
         <p className="text-sm text-muted">Para alterar nome, assinatura ou senha, peça a um administrador.</p>
       )}
     </Section>
+  );
+}
+
+/** Own picture: upload (JPEG/PNG/WebP up to 2 MB, checked by the server) or remove. */
+function PhotoEditor({ me }: { me: Me }) {
+  const qc = useQueryClient();
+  const save = useMutation({
+    mutationFn: (file: File | null) => (file ? api.auth.setAvatar(file) : api.auth.removeAvatar()),
+    onSuccess: (next) => {
+      qc.setQueryData(qk.me, next);
+      // the users list and the timeline's authorAvatarUrl carry the old URL
+      void qc.invalidateQueries({ queryKey: qk.users });
+      void qc.invalidateQueries({ queryKey: qk.chats });
+    },
+  });
+
+  return (
+    <div className="mb-6 flex items-center gap-4">
+      <Avatar name={me.name} src={me.avatarUrl} className="size-16 text-xl bg-primary text-white" />
+      <label className={`${btn} cursor-pointer has-[:disabled]:opacity-50`}>
+        Trocar foto
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={save.isPending}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = ''; // picking the same file again still fires change
+            if (file) save.mutate(file);
+          }}
+          className="sr-only"
+        />
+      </label>
+      {me.avatarUrl && (
+        <button type="button" onClick={() => save.mutate(null)} disabled={save.isPending} className={btn}>
+          Remover foto
+        </button>
+      )}
+      <ErrorText error={save.error} />
+    </div>
   );
 }
 

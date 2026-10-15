@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formatSignature, signatureLabel } from '../../src/messages/signature.js';
 import type { AuthUser } from '../../src/inbox/visibility.js';
 
-const ana: AuthUser = { id: 'u1', name: 'Ana Lima', email: 'ana@x.com', role: 'agent', signature: null, sectorIds: [] };
+const ana: AuthUser = { id: 'u1', name: 'Ana Lima', email: 'ana@x.com', role: 'agent', signature: null, sectorIds: [], seeAllSectors: false, avatarUrl: null };
 
 describe('signature', () => {
   it('uses "{Setor} - {Nome}" when the user has no signature (Umbler format)', () => {

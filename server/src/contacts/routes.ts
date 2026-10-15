@@ -1,6 +1,9 @@
+import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
+import { contacts } from '../db/schema.js';
+import { sendAvatarFile } from '../media/avatar-files.js';
 import {
   createContact,
   createContactNote,
@@ -71,6 +74,13 @@ export function registerContactRoutes(app: FastifyInstance, ctx: AppCtx): void {
   app.put('/api/contacts/:id/fields', async (req) =>
     setContactFields(ctx, IdParams.parse(req.params).id, FieldsBody.parse(req.body)),
   );
+
+  // Any logged-in user (contacts belong to the office); the auth plugin already rejects anonymous /api/*.
+  app.get('/api/contacts/:id/avatar', async (req, reply) => {
+    const { id } = IdParams.parse(req.params);
+    const [row] = await ctx.db.select({ path: contacts.avatarPath }).from(contacts).where(eq(contacts.id, id));
+    return sendAvatarFile(reply, ctx.config.mediaDir, row?.path);
+  });
 
   app.get('/api/contacts/:id/chats', async (req) => listContactChats(ctx, req.user, IdParams.parse(req.params).id));
 

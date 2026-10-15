@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { chats, contacts } from '../../src/db/schema.js';
 import { markChatRead, pinChat, startChat, transferChat } from '../../src/inbox/chats.js';
-import { makeTestCtx, seedBasics } from '../helpers.js';
+import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
 import { eventsOf, insertChat, newContact, statusOf } from './fixtures.js';
 
 let ctx: Awaited<ReturnType<typeof makeTestCtx>>;
@@ -56,7 +56,7 @@ describe('pinChat', () => {
     const ids: string[] = [];
     for (let i = 0; i < 4; i++) ids.push(await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA }));
     for (const id of ids.slice(0, 3)) await pinChat(ctx, s.agentA, id, true);
-    await transferChat(ctx, s.admin, ids[0]!, { sectorId: s.sectorB });
+    await transferChat(ctx, await enableSeeAll(ctx, s.admin), ids[0]!, { sectorId: s.sectorB });
     await pinChat(ctx, s.agentA, ids[3]!, true);
   });
 
@@ -64,7 +64,7 @@ describe('pinChat', () => {
     const ids: string[] = [];
     for (let i = 0; i < 4; i++) ids.push(await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA }));
     for (const id of ids.slice(0, 3)) await pinChat(ctx, s.agentA, id, true);
-    await pinChat(ctx, s.admin, ids[3]!, true);
+    await pinChat(ctx, await enableSeeAll(ctx, s.admin), ids[3]!, true);
   });
 
   it('404 for an invisible chat', async () => {

@@ -1,17 +1,18 @@
 import { DotsThreeVertical, LockSimple, PushPin } from '@phosphor-icons/react';
 import type { ChatListItem as ChatItem } from '@talk/shared';
-import { contactLabel, initials, listTime } from '../../lib/format';
+import { contactLabel, listTime } from '../../lib/format';
+import { Avatar } from '../Avatar';
 
 interface Props {
   chat: ChatItem;
   sectorName: string | null;
-  ownerName: string | null;
+  owner: { name: string; avatarUrl: string | null } | null;
   active: boolean;
   onOpen(): void;
   onTogglePin(): void;
 }
 
-export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTogglePin }: Props) {
+export function ChatListItem({ chat, sectorName, owner, active, onOpen, onTogglePin }: Props) {
   const title = contactLabel(chat.contact);
   return (
     <li className={`flex items-stretch border-b border-border ${active ? 'bg-sidebar-active' : 'hover:bg-panel'}`}>
@@ -21,10 +22,7 @@ export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTo
         aria-current={active ? 'true' : undefined}
         className="flex min-w-0 flex-1 gap-3 px-3 py-2 text-left"
       >
-        <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-sidebar-active text-sm font-semibold">
-          {/* ponytail: Task 15's initials; phone-only contacts show '?' */}
-          {initials(chat.contact.name)}
-        </span>
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 text-sm bg-sidebar-active" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1">
             <span className="truncate font-medium">{title}</span>
@@ -47,12 +45,9 @@ export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTo
           </span>
           <span className="mt-1 flex items-center gap-1">
             {sectorName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{sectorName}</span>}
-            {ownerName && (
-              <span
-                title={ownerName}
-                className="grid size-5 place-items-center rounded-full bg-primary text-[10px] font-semibold text-white"
-              >
-                {initials(ownerName)}
+            {owner && (
+              <span title={owner.name} role="img" aria-label={`Responsável: ${owner.name}`}>
+                <Avatar name={owner.name} src={owner.avatarUrl} className="size-5 text-[10px] bg-primary text-white" />
               </span>
             )}
           </span>

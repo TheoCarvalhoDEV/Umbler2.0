@@ -12,7 +12,7 @@ import {
 } from '@phosphor-icons/react';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser, useLogout } from '../../lib/auth';
-import { initials } from '../../lib/format';
+import { Avatar } from '../Avatar';
 import { connectWs } from '../../lib/ws';
 import { NotificationPermissionButton, useMessageNotifications } from '../../lib/notify';
 
@@ -45,9 +45,9 @@ function UserMenu() {
         popoverTarget="user-menu"
         title={me.name}
         aria-label="Menu do usuário"
-        className="flex size-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white hover:ring-2 hover:ring-primary/40"
+        className="rounded-full hover:ring-2 hover:ring-primary/40"
       >
-        {initials(me.name)}
+        <Avatar name={me.name} src={me.avatarUrl} className="size-10 text-sm bg-primary text-white" />
       </button>
       <div
         id="user-menu"

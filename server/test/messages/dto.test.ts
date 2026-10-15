@@ -38,7 +38,7 @@ describe('toMessageDto', () => {
       id, chatId, direction: 'out', kind: 'document', body: 'Segue',
       media: { url: `/api/media/${id}`, mime: 'application/pdf', name: 'contrato.pdf', size: 1234 },
       mediaUnavailable: false,
-      authorId: s.agentA.id, authorName: s.agentA.name,
+      authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null,
       replyTo: { id: quotedId, body: 'Pode mandar o contrato?', kind: 'text' },
       reaction: null, status: 'pending', error: null,
       sentAt: '2026-10-14T12:05:00.000Z',
@@ -59,6 +59,7 @@ describe('toMessageDto', () => {
     expect(dto.mediaUnavailable).toBe(true);
     expect(dto.authorId).toBeNull();
     expect(dto.authorName).toBeNull();
+    expect(dto.authorAvatarUrl).toBeNull();
     expect(dto.replyTo).toBeNull();
     expect(dto.reaction).toBe('👍');
   });

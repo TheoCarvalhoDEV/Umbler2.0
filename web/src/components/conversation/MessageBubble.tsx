@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ArrowBendUpLeft, Check, Checks, Clock, FileText, ImageBroken, WarningCircle } from '@phosphor-icons/react';
 import type { MessageDto } from '@talk/shared';
 import { api } from '../../lib/api';
+import { Avatar } from '../Avatar';
 import { applyWsEvent } from '../../lib/ws';
 import { errorMessage, previewText, timeOfDay } from './model';
 
@@ -149,6 +150,12 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
           </span>
         )}
       </div>
+      {m.authorId && (
+        // sent by an agent (notes included); phone/triage sends have no author
+        <span data-author-avatar className="ml-2 self-end">
+          <Avatar name={m.authorName} src={m.authorAvatarUrl} className="size-7 text-xs bg-primary text-white" />
+        </span>
+      )}
       {!right && replyButton}
     </div>
   );

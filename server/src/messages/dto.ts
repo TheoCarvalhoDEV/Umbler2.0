@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { MessageDto } from '@talk/shared';
 import type { Db, Tx } from '../db/client.js';
 import { messages, users } from '../db/schema.js';
+import { userAvatarUrl } from '../media/avatar-files.js';
 
 type MessageRow = typeof messages.$inferSelect;
 
@@ -29,7 +30,7 @@ export function messagePreview(kind: MessageDto['kind'], body: string | null): s
 
 export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<MessageDto> {
   const [author] = row.authorId
-    ? await db.select({ name: users.name }).from(users).where(eq(users.id, row.authorId))
+    ? await db.select({ id: users.id, name: users.name, avatarPath: users.avatarPath }).from(users).where(eq(users.id, row.authorId))
     : [];
   const [reply] = row.replyToId
     ? await db.select({ id: messages.id, body: messages.body, kind: messages.kind }).from(messages).where(eq(messages.id, row.replyToId))
@@ -50,6 +51,7 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
     mediaUnavailable: row.mediaPath == null && MEDIA_KINDS.has(row.kind),
     authorId: row.authorId,
     authorName: author?.name ?? null,
+    authorAvatarUrl: author ? userAvatarUrl(author) : null,
     replyTo: reply ?? null,
     reaction: row.reaction,
     status: row.status,

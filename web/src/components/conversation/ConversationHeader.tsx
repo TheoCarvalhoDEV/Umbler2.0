@@ -5,6 +5,7 @@ import type { ChatDetail } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { formatPhone } from '../../lib/format';
+import { Avatar } from '../Avatar';
 import { CloseDialog, TransferDialog } from './ChatDialogs';
 import { errorMessage, isConflict } from './model';
 
@@ -102,6 +103,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
   return (
     <>
       <header className="flex items-center gap-1 border-b border-border bg-surface px-4 py-2">
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="mr-2 size-10 text-sm bg-sidebar-active" />
         <div className="min-w-0 flex-1">
           <h2 className="truncate font-semibold text-fg">{chat.contact.name ?? formatPhone(chat.contact.phone)}</h2>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
