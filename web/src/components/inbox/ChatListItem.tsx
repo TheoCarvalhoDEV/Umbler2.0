@@ -1,0 +1,80 @@
+import { DotsThreeVertical, LockSimple, PushPin } from '@phosphor-icons/react';
+import type { ChatListItem as ChatItem } from '@talk/shared';
+import { contactLabel, initials, listTime } from '../../lib/format';
+
+interface Props {
+  chat: ChatItem;
+  sectorName: string | null;
+  ownerName: string | null;
+  active: boolean;
+  onOpen(): void;
+  onTogglePin(): void;
+}
+
+export function ChatListItem({ chat, sectorName, ownerName, active, onOpen, onTogglePin }: Props) {
+  const title = contactLabel(chat.contact);
+  return (
+    <li className={`flex items-stretch border-b border-border ${active ? 'bg-sidebar-active' : 'hover:bg-panel'}`}>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-current={active ? 'true' : undefined}
+        className="flex min-w-0 flex-1 gap-3 px-3 py-2 text-left"
+      >
+        <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-sidebar-active text-sm font-semibold">
+          {/* ponytail: Task 15's initials; phone-only contacts show '?' */}
+          {initials(chat.contact.name)}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1">
+            <span className="truncate font-medium">{title}</span>
+            {chat.private && <LockSimple aria-label="Conversa privada" className="shrink-0 text-muted" />}
+            {chat.pinned && <PushPin aria-label="Fixada" weight="fill" className="shrink-0 text-muted" />}
+            <span className="ml-auto shrink-0 text-xs text-muted">
+              {chat.lastMessageAt ? listTime(chat.lastMessageAt) : ''}
+            </span>
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="truncate text-sm text-muted">{chat.lastMessagePreview ?? ''}</span>
+            {chat.unread > 0 && (
+              <span
+                aria-label={`Não lidas: ${chat.unread}`}
+                className="ml-auto shrink-0 rounded-full bg-primary px-1.5 text-xs font-semibold text-white"
+              >
+                {chat.unread}
+              </span>
+            )}
+          </span>
+          <span className="mt-1 flex items-center gap-1">
+            {sectorName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{sectorName}</span>}
+            {ownerName && (
+              <span
+                title={ownerName}
+                className="grid size-5 place-items-center rounded-full bg-primary text-[10px] font-semibold text-white"
+              >
+                {initials(ownerName)}
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
+      <details className="relative">
+        <summary aria-label="Opções da conversa" className="cursor-pointer list-none px-1 py-3 text-muted hover:text-fg">
+          <DotsThreeVertical size={18} />
+        </summary>
+        <div className="absolute right-1 z-10 mt-1 rounded border border-border bg-panel py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.currentTarget.closest('details')?.removeAttribute('open');
+              onTogglePin();
+            }}
+            className="block w-full whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-sidebar-hover"
+          >
+            {chat.pinned ? 'Desafixar' : 'Fixar'}
+          </button>
+        </div>
+      </details>
+    </li>
+  );
+}
