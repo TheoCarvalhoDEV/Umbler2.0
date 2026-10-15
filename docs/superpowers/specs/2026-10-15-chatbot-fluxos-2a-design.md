@@ -10,7 +10,7 @@ Permitir que o admin monte chatbots em um editor visual de blocos (como o Umbler
 
 **Pronto quando:**
 1. Existe o modelo **"Fluxo do escritório"** (§8) que recria o Fluxo usado hoje no Umbler, e ele roda de ponta a ponta no ambiente local com o número de teste: o cliente passa por horário/dia, boas-vindas, menu, comunicado, pedido de CPF validado e salvo no campo, e cai no setor certo com o atendente notificado.
-2. Os 34 tipos de bloco de §4 funcionam, com testes.
+2. Os 33 tipos de bloco de §4 funcionam, com testes.
 
 ### Decisões do usuário (15/10/2026)
 | Tema | Decisão |
@@ -116,7 +116,7 @@ Um grafo tem no máximo um bloco de cada tipo de início e pelo menos um.
 | `block_contact` | — (bloqueia o contato, finaliza as conversas dele e encerra o run) | — (terminal), error |
 | `close_chat` | sendClosingMessage (bool), closingText? | — (terminal) |
 
-> Contagem: Início 2 + Condição 17 + Ação 12 (`send_message`, `note`, `ask_choice`, `ask_input`, `set_contact_field`, `edit_tags`, `transfer_sector`, `transfer_agent`, `privacy`, `notify_agent`, `call_flow`, `block_contact`) + Finalização 1 (`close_chat`) + Utilitário 1 (`sticky_note`) = **34 tipos**. (Na conversa as ações foram contadas como 18 por engano; a lista de blocos aprovada é exatamente esta.) `ask_choice` aceita a chave ("1") ou o rótulo/nome do setor, sem acento e sem diferença de maiúsculas, como a triagem.
+> Contagem: Início 2 + Condição 17 + Ação 12 (`send_message`, `note`, `ask_choice`, `ask_input`, `set_contact_field`, `edit_tags`, `transfer_sector`, `transfer_agent`, `privacy`, `notify_agent`, `call_flow`, `block_contact`) + Finalização 1 (`close_chat`) + Utilitário 1 (`sticky_note`) = **33 tipos**. (Na conversa as ações foram contadas como 18 por engano; a lista de blocos aprovada é exatamente esta.) `ask_choice` aceita a chave ("1") ou o rótulo/nome do setor, sem acento e sem diferença de maiúsculas, como a triagem.
 
 ### Utilitário (1)
 | `sticky_note` | text, color | — (não executa, não conecta) |
