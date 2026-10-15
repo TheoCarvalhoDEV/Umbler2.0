@@ -249,4 +249,14 @@ describe('Composer with a running chatbot', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  it('the robot button toggles the "Executar chatbot" panel', async () => {
+    stubFetch({ 'GET /api/bots/manual': [{ id: 'b1', title: 'Fluxo do escritório' }], 'GET /api/chats/c1/bot-runs': [] });
+    renderComposer();
+    expect(screen.queryByText('Executar chatbot')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Chatbot' }));
+    expect(await screen.findByRole('button', { name: 'Fluxo do escritório' })).toBeTruthy();
+    expect(screen.getByText('Executar chatbot')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Chatbot' }));
+    expect(screen.queryByText('Executar chatbot')).toBeNull();
+  });
 });

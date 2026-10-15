@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Smiley, Trash, X } from '@phosphor-icons/react';
+import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Robot, Smiley, Trash, X } from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, MessageDto, QuickAnswerDto } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { applyWsEvent } from '../../lib/ws';
+import { BotPanel } from './BotPanel';
 import { BotRunningDialog } from './ChatDialogs';
 import { errorMessage, previewText } from './model';
 import { QuickAnswerPicker, filterQuickAnswers } from './QuickAnswerPicker';
@@ -72,6 +73,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const [file, setFile] = useState<File | null>(null);
   const [signature, setSignature] = useState(readSignaturePref);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [botOpen, setBotOpen] = useState(false);
   const [pickerDismissed, setPickerDismissed] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [sending, setSending] = useState(false);
@@ -378,6 +380,12 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                   ))}
                 </div>
               )}
+            </div>
+            <div className="relative">
+              <ToolButton label="Chatbot" onClick={() => setBotOpen((o) => !o)}>
+                <Robot size={20} />
+              </ToolButton>
+              {botOpen && <BotPanel chatId={chatId} onClose={() => setBotOpen(false)} />}
             </div>
             {!isNote && (
               <label className="ml-2 flex items-center gap-1 text-xs text-muted">
