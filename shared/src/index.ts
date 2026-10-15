@@ -1,5 +1,7 @@
-// DTOs and WebSocket event types shared by server and web. Types only: never put runtime code here
-// (the package has no build step; consumers must use `import type`).
+// DTOs and WebSocket event types shared by server and web, plus the tag palette (palette.ts), the only
+// runtime code. There is no build step: tsx (server) and Vite (web) load this TypeScript source directly.
+// Use `import type` for everything except TAG_COLORS and tagColorHex.
+export { TAG_COLORS, tagColorHex } from './palette.js';
 
 export type Role = 'admin' | 'agent';
 export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[] }

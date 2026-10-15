@@ -1,1 +1,36 @@
 @import "tailwindcss";
+
+/* Dark theme modelled on Umbler Talk: near-black icon sidebar, blue primary. */
+@theme {
+  --color-sidebar: #14161b;
+  --color-sidebar-hover: #22252d;
+  --color-sidebar-active: #2b3040;
+  --color-surface: #1b1e25;
+  --color-panel: #23262f;
+  --color-border: #313543;
+  --color-fg: #e7e9ef;
+  --color-muted: #9aa1b1;
+  --color-primary: #4a6cf7;
+  --color-primary-hover: #3b5ce6;
+  --color-danger: #e5484d;
+  --color-success: #30a46c;
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-surface);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}

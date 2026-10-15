@@ -6,14 +6,13 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
-    // The browser keeps Origin = http://localhost:5173, which must equal APP_ORIGIN in the dev .env.
+    // changeOrigin stays false: the server's Origin check must see http://localhost:5173 (APP_ORIGIN in dev).
     proxy: {
-      '/api': 'http://localhost:3000',
-      '/ws': { target: 'ws://localhost:3000', ws: true },
+      '/api': { target: 'http://localhost:3000' },
+      '/ws': { target: 'http://localhost:3000', ws: true },
     },
   },
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.{ts,tsx}'],
   },
 });
