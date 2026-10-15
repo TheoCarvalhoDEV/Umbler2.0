@@ -80,7 +80,34 @@ describe('ContactForm', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(m.contacts.update).toHaveBeenCalledWith('c1', {
-      name: 'Maria Souza', phone: '5565999991234', email: null, landline: null, address: { city: 'Cuiabá' },
+      name: 'Maria Souza', email: null, address: { city: 'Cuiabá' }, // untouched phone/landline are not sent
     });
+  });
+
+  it('editing only the name of a foreign-number contact does not rewrite its phone or landline', async () => {
+    const { onSaved } = renderForm({ ...contact, phone: '14155551234', landline: '447911123456' });
+    fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'John' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const body = m.contacts.update.mock.calls[0]![1] as object;
+    expect(body).not.toHaveProperty('phone');
+    expect(body).not.toHaveProperty('landline');
+  });
+
+  it('a contact known only by LID (no phone) can be saved without inventing one', async () => {
+    const { onSaved } = renderForm({ ...contact, phone: null, lid: '123456789' });
+    fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'Cliente LID' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(m.contacts.update.mock.calls[0]![1]).toMatchObject({ name: 'Cliente LID' });
+    expect(m.contacts.update.mock.calls[0]![1]).not.toHaveProperty('phone');
+  });
+
+  it('a changed phone is still validated and sent', async () => {
+    const { onSaved } = renderForm(contact);
+    fireEvent.change(celular(), { target: { value: '65 98888 7777' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(m.contacts.update.mock.calls[0]![1]).toMatchObject({ phone: '5565988887777' });
   });
 });

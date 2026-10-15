@@ -37,9 +37,13 @@ interface Props {
 }
 
 export function ContactForm({ contact, onSaved, onCancel }: Props) {
+  // ponytail: the BR mask cannot enter or edit a foreign number; untouched phones are simply not sent, so an edit
+  // of other fields never rewrites one (and a LID-only contact with no phone stays saveable). Add a raw/intl input if needed.
+  const initialPhone = maskPhone(contact?.phone ?? '');
+  const initialLandline = maskPhone(contact?.landline ?? '');
   const [name, setName] = useState(contact?.name ?? '');
-  const [phone, setPhone] = useState(maskPhone(contact?.phone ?? ''));
-  const [landline, setLandline] = useState(maskPhone(contact?.landline ?? ''));
+  const [phone, setPhone] = useState(initialPhone);
+  const [landline, setLandline] = useState(initialLandline);
   const [email, setEmail] = useState(contact?.email ?? '');
   const [address, setAddress] = useState<Record<string, string>>(contact?.address ?? {});
   const [fields, setFields] = useState<Record<string, string>>(contact?.fields ?? {});
@@ -49,18 +53,22 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    const phoneChanged = !contact || phone !== initialPhone;
+    const landlineChanged = !contact || landline !== initialLandline;
     const digits = localDigits(phone);
-    if (!digits) return setError('Informe o celular.');
-    if (digits.length < 10) return setError('Celular inválido: informe DDD e número.');
+    if (phoneChanged) {
+      if (!digits) return setError('Informe o celular.');
+      if (digits.length < 10) return setError('Celular inválido: informe DDD e número.');
+    }
     const landlineDigits = localDigits(landline);
     const addr: Record<string, string> = Object.fromEntries(
       Object.entries(address).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v),
     );
     const body: ContactInput = {
       name: name.trim() || null,
-      phone: '55' + digits,
+      ...(phoneChanged ? { phone: '55' + digits } : {}),
       email: email.trim() || null,
-      landline: landlineDigits ? '55' + landlineDigits : null,
+      ...(landlineChanged ? { landline: landlineDigits ? '55' + landlineDigits : null } : {}),
       address: Object.keys(addr).length ? addr : null,
     };
     setSaving(true);
