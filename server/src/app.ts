@@ -8,6 +8,7 @@ import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
 import { authRoutes } from './auth/routes.js';
+import { registerBotRoutes } from './bots/routes.js';
 import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
 import { registerChannelRoutes } from './channels/routes.js';
 import { chatRoutes } from './chats/routes.js';
@@ -78,6 +79,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerSettingsRoutes(app, ctx);
   await chatRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
+  registerBotRoutes(app, ctx);
 
   // Spec §2: the compiled React front is served at /. Any other GET outside /api, /ws and /webhooks is a
   // client-side route, so it gets index.html. Keep this block last in buildApp.
