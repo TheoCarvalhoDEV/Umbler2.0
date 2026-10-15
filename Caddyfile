@@ -1,0 +1,11 @@
+{$DOMAIN} {
+	encode zstd gzip
+
+	# O webhook da Evolution chega só pela rede interna do Docker (http://app:3000).
+	# Pela internet, /webhooks responde 404 sem tocar no app.
+	@webhooks path /webhooks /webhooks/*
+	respond @webhooks 404
+
+	# Também encaminha o upgrade de /ws (WebSocket) e mantém o cabeçalho Origin.
+	reverse_proxy app:3000
+}
