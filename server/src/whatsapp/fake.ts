@@ -7,9 +7,14 @@ export function createFakeGateway(): WhatsAppGateway & {
   sent: Array<{ method: string; instance: string; phone?: string; payload: unknown }>;
   failNext(err?: Error): void;
   status: Map<string, ChannelStatus>;
+  /** fetchProfilePicture answers by address: a URL, or an Error to throw; unset → null (no picture). */
+  profilePictures: Map<string, string | Error>;
+  pictureLookups: Array<{ instance: string; address: string }>;
 } {
   const sent: Array<{ method: string; instance: string; phone?: string; payload: unknown }> = [];
   const status = new Map<string, ChannelStatus>();
+  const profilePictures = new Map<string, string | Error>();
+  const pictureLookups: Array<{ instance: string; address: string }> = [];
   let pendingError: Error | null = null;
   let n = 0;
 
@@ -32,6 +37,8 @@ export function createFakeGateway(): WhatsAppGateway & {
   return {
     sent,
     status,
+    profilePictures,
+    pictureLookups,
     failNext(err = new Error('fake gateway failure')) {
       pendingError = err;
     },
@@ -60,6 +67,13 @@ export function createFakeGateway(): WhatsAppGateway & {
     async downloadMedia() {
       guard();
       return { base64: PNG_1X1, mime: 'image/png' };
+    },
+    // No guard(): this runs in the background after inbound messages and must not eat an error armed by failNext.
+    async fetchProfilePicture(instance, address) {
+      pictureLookups.push({ instance, address });
+      const v = profilePictures.get(address);
+      if (v instanceof Error) throw v;
+      return v ?? null;
     },
   };
 }

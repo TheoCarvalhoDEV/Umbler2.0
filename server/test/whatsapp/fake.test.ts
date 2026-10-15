@@ -67,6 +67,21 @@ describe('createFakeGateway', () => {
     const bytes = Buffer.from(media.base64, 'base64');
     expect(bytes.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   });
+
+  it('fetchProfilePicture returns null by default, the configured URL, or throws the configured error, and records the lookup', async () => {
+    const wa = createFakeGateway();
+    expect(await wa.fetchProfilePicture('talk-test', '5565999999999')).toBeNull();
+    wa.profilePictures.set('5565999999999', 'https://pps.test/a.jpg');
+    wa.profilePictures.set('123@lid', new Error('boom'));
+    expect(await wa.fetchProfilePicture('talk-test', '5565999999999')).toBe('https://pps.test/a.jpg');
+    await expect(wa.fetchProfilePicture('talk-test', '123@lid')).rejects.toThrow('boom');
+    expect(wa.pictureLookups).toEqual([
+      { instance: 'talk-test', address: '5565999999999' },
+      { instance: 'talk-test', address: '5565999999999' },
+      { instance: 'talk-test', address: '123@lid' },
+    ]);
+    expect(wa.sent).toEqual([]);
+  });
 });
 
 describe('makeTestCtx', () => {

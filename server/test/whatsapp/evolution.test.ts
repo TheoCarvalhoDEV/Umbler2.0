@@ -186,6 +186,23 @@ describe('createEvolutionGateway', () => {
     });
   });
 
+  it('fetchProfilePicture posts { number } and returns profilePictureUrl', async () => {
+    const { wa, req } = setup(200, { wuid: `${PHONE}@s.whatsapp.net`, profilePictureUrl: 'https://pps.whatsapp.net/v/x.jpg' });
+    expect(await wa.fetchProfilePicture('talk-abc', PHONE)).toBe('https://pps.whatsapp.net/v/x.jpg');
+    expect(req()).toEqual({
+      url: 'http://evolution:8080/chat/fetchProfilePictureUrl/talk-abc',
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: { number: PHONE },
+    });
+  });
+
+  it('fetchProfilePicture returns null when the contact has no picture (field absent or null)', async () => {
+    // Real 2.3.7 answer for a LID without a picture: {"wuid":"123@lid"} (profilePictureUrl undefined, dropped by JSON).
+    expect(await setup(200, { wuid: '123@lid' }).wa.fetchProfilePicture('talk-abc', '123@lid')).toBeNull();
+    expect(await setup(200, { wuid: 'x', profilePictureUrl: null }).wa.fetchProfilePicture('talk-abc', PHONE)).toBeNull();
+  });
+
   it('downloadMedia throws when Evolution returns no base64', async () => {
     const { wa } = setup(201, '');
     await expect(wa.downloadMedia('talk-abc', {})).rejects.toThrow(/no media/);

@@ -13,6 +13,8 @@ export interface WhatsAppGateway {
   sendMedia(instance: string, phone: string, media: OutgoingMedia, quoted?: QuotedRef): Promise<SendResult>;
   sendAudio(instance: string, phone: string, base64: string, quoted?: QuotedRef): Promise<SendResult>;
   downloadMedia(instance: string, rawMessage: unknown): Promise<DownloadedMedia>;
+  /** URL of the contact's profile picture, or null when there is none. `address` as in waAddress (phone or '<lid>@lid'). */
+  fetchProfilePicture(instance: string, address: string): Promise<string | null>;
 }
 
 export type InboundEvent =
