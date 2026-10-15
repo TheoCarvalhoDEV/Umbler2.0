@@ -3,7 +3,7 @@
 - **Data:** 14/10/2026
 - **Status:** seções 1–3 aprovadas em conversa; demais com "total liberdade" do usuário; revisada por workflow multi-lente (19 achados confirmados e aplicados, rev. 2)
 - **Sub-projeto:** 1 de 3 (Núcleo → Automação → Gestão)
-- **Referências:** `docs/MAPA-UMBLER-TALK.md`, `docs/ENDPOINTS-INTERNOS.md`, `docs/MODELO-DE-DADOS.md`, `docs/utalk-openapi-v1.json`
+- **Referências:** `docs/umbler/MAPA-UMBLER-TALK.md`, `docs/umbler/ENDPOINTS-INTERNOS.md`, `docs/umbler/MODELO-DE-DADOS.md`, `docs/umbler/utalk-openapi-v1.json`
 
 ## 1. Objetivo e critério de sucesso
 
@@ -29,7 +29,7 @@ Sistema próprio do escritório para atender clientes pelo WhatsApp, substituind
 
 ```
 VPS (Docker Compose)
-  caddy (80/443, HTTPS automático) ──► app (Node 22, TypeScript, um processo)
+  caddy (80/443, HTTPS automático) ──► app (Node 24, TypeScript, um processo)
                                          ├─ API HTTP (Fastify)          /api/*
                                          ├─ Tempo real (WebSocket)       /ws
                                          ├─ Webhook da Evolution         /webhooks/evolution/:secret  (só rede interna)
@@ -97,7 +97,7 @@ IDs `uuid` (`crypto.randomUUID()`); datas `timestamptz` em UTC.
 | `quick_answers` | id, name, body (com variáveis nomeadas, §5.7), attachment_path, visibility (`all`\|`owner`), owner_id, created_at | |
 | `settings` | key, value (jsonb) | `closing_message`, `triage_menu` (`{enabled, welcome_text, invalid_text, options:[{key,label,sector_id}]}`) |
 
-Conversa ordenada por `(sent_at, id)`. `chats.last_message_at = greatest(last_message_at, sent_at)` para mensagem atrasada não "voltar" a conversa.
+Conversa ordenada por `(sent_at, created_at, id)` (ordem de chegada no mesmo segundo); o cliente não reordena empates. `chats.last_message_at = greatest(last_message_at, sent_at)` para mensagem atrasada não "voltar" a conversa.
 
 **Mídia:** arquivo em `/data/media/AAAA/MM/<uuid>.<ext>`, servido por `/api/media/:messageId` somente se `canSee(user, chat)` (§6). Toda resposta leva `X-Content-Type-Options: nosniff`. `Content-Disposition: inline` só para image/jpeg|png|webp|gif, audio/*, video/mp4 e application/pdf; todo o resto (incl. SVG e HTML) vai com `attachment` e `Content-Type: application/octet-stream`. Respostas que não são PDF levam também `Content-Security-Policy: sandbox`. Anexo de resposta rápida com `visibility=owner` só é servido ao dono.
 
@@ -165,7 +165,7 @@ Funções em `inbox/`; cada uma exige `canSee`, altera `chats` com `UPDATE … W
 - Importador: converte cada `{{n}}` do Umbler para a variável nomeada correspondente a `variables[n-1].defaultValue`; sem correspondência → escreve o defaultValue como texto e registra no relatório; baixa o `attachment` para `/data/media`.
 
 ## 6. Segurança e LGPD
-- **Autorização:** uma função `inbox/canSee(user, chat)`: admin vê tudo; atendente vê conversas dos seus setores e as de que é dono; privada só o dono + admin. Vale para toda rota que lê/altera conversa, mensagem ou mídia, para o histórico do contato (conversas não visíveis ficam ocultas) e para o WS. Listagens e busca aplicam a mesma regra no `WHERE` do SQL. Sem acesso → 404.
+- **Autorização:** uma função `inbox/canSee(user, chat)`: admin vê tudo; atendente vê conversas dos seus setores e as de que é dono; privada só o dono + admin. Vale para toda rota que lê/altera conversa, mensagem ou mídia, para o histórico do contato (conversas não visíveis ficam ocultas) e para o WS. Listagens e busca aplicam a mesma regra no `WHERE` do SQL. Sem acesso → 404. Emenda: o admin vê só as conversas dos próprios setores salvo “Ver todos os setores” (ver 2026-10-15-visibilidade-e-fotos.md).
 - **Senhas e sessão:** argon2id; cookie `HttpOnly; Secure; SameSite=Lax`, expira após 30 dias sem uso; logout apaga a sessão no banco; toda requisição valida a sessão no banco. Login recusa `active=false`. Desativar usuário ou redefinir senha apaga todas as sessões dele e chama `realtime.disconnectUser(userId)`.
 - **CSRF:** todo método não-GET em `/api/*` e o upgrade de `/ws` exigem `Origin` exatamente igual a `APP_ORIGIN` (.env); ausente ou diferente → 403. Fastify com `trustProxy` apenas para o Caddy (para o limite de login usar o IP real).
 - **Login:** limite de 5 tentativas/min por IP+email.
@@ -191,7 +191,7 @@ Funções em `inbox/`; cada uma exige `canSee`, altera `chats` com `UPDATE … W
   - `normalizePhoneBR`: celular de 12 dígitos com DDD ≥ 31 (ganha o 9), celular de 13 dígitos (inalterado), fixo de 12 dígitos começando com 2–5 (inalterado), número DDD 11.
   - tradução de webhook (`whatsapp/`): conteúdo, reação, revoke/edit ignorados, grupo ignorado, `fromMe` do celular, LID + `senderPn`.
   - triagem, variáveis de resposta rápida (substituição e conversão `{{n}}`→nomeada), formato da assinatura, cabeçalhos da rota de mídia.
-- **Integração (Vitest + Postgres de teste em Docker; `whatsapp/` substituído por um stub em memória):**
+- **Integração (Vitest + PGlite, Postgres em processo e em memória, com as migrations aplicadas; `whatsapp/` substituído por um stub em memória):**
   - recebida: idempotência; nova conversa após finalizar; JID de 12 dígitos casa com contato importado de 13; mensagem só com LID anexa a contato existente; 👍 em conversa finalizada **não** abre conversa; resposta pelo celular **não** liga "Esperando".
   - enviada: sucesso, falha e reenvio.
   - iniciar conversa: contato existente, telefone novo, conversa já aberta.

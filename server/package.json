@@ -1,0 +1,39 @@
+{
+  "name": "@talk/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../.env.dev src/index.ts",
+    "start": "node --import tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p .",
+    "db:generate": "drizzle-kit generate",
+    "seed:admin": "tsx src/auth/seed-admin.ts",
+    "dev:admin": "tsx --env-file=../.env.dev src/auth/seed-admin.ts",
+    "import:umbler": "tsx src/importer/cli.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.3",
+    "@fastify/multipart": "10.1.3",
+    "@fastify/rate-limit": "11.2.1",
+    "@fastify/static": "10.1.6",
+    "@fastify/websocket": "11.3.4",
+    "@node-rs/argon2": "2.2.2",
+    "@talk/shared": "*",
+    "drizzle-orm": "0.45.4",
+    "fastify": "5.12.7",
+    "postgres": "3.4.9",
+    "tsx": "4.23.15",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.1",
+    "drizzle-kit": "0.31.11",
+    "typescript": "5.9.3",
+    "vitest": "5.0.4",
+    "ws": "8.22.0"
+  }
+}

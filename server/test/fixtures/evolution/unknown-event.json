@@ -1,0 +1,9 @@
+{
+  "event": "contacts.update",
+  "instance": "talk-test",
+  "data": [{ "remoteJid": "556599999999@s.whatsapp.net", "pushName": "Maria Teste", "profilePicUrl": null }],
+  "date_time": "2025-10-14T11:06:40.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}

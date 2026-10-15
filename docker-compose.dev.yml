@@ -1,0 +1,57 @@
+# Ambiente de DESENVOLVIMENTO local: só Postgres e Evolution em Docker.
+# O app (API + telas) roda no seu computador com `npm run dev`.
+# Uso: veja README.md › "Rodar localmente". Nunca use este arquivo em produção.
+name: talk-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copie .env.dev.example para .env.dev}
+      POSTGRES_TALK_PASSWORD: ${POSTGRES_TALK_PASSWORD:?copie .env.dev.example para .env.dev}
+      POSTGRES_EVOLUTION_PASSWORD: ${POSTGRES_EVOLUTION_PASSWORD:?copie .env.dev.example para .env.dev}
+    ports:
+      - "127.0.0.1:54329:5432" # só nesta máquina; porta incomum para não colidir com outro Postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    environment:
+      SERVER_URL: http://localhost:8081
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?copie .env.dev.example para .env.dev}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_EVOLUTION_PASSWORD}@postgres:5432/evolution?schema=evolution_api
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      TELEMETRY_ENABLED: "false"
+      LOG_LEVEL: ERROR,WARN,INFO
+      CONFIG_SESSION_PHONE_CLIENT: Atendimento (teste)
+    ports:
+      - "127.0.0.1:8081:8080"
+    # A Evolution chama o webhook do app, que roda fora do Docker, no host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  evolution_instances:

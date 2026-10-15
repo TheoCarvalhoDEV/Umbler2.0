@@ -1,0 +1,15 @@
+{
+  "event": "qrcode.updated",
+  "instance": "talk-test",
+  "data": {
+    "qrcode": {
+      "instance": "talk-test",
+      "pairingCode": null,
+      "code": "2@FAKEQRCODE,FAKEKEY1,FAKEKEY2",
+      "base64": "data:image/png;base64,iVBORw0KGgo="
+    }
+  },
+  "date_time": "2025-10-14T11:06:40.000Z",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}

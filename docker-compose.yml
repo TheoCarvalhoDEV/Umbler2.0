@@ -1,0 +1,99 @@
+name: talk
+
+# Rotação de logs: sem isto o json-file cresce até encher o disco do VPS.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?defina DOMAIN no .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    logging: *logging
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      APP_ORIGIN: ${APP_ORIGIN:?defina APP_ORIGIN no .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?rode scripts/gen-secrets.sh}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?rode scripts/gen-secrets.sh}
+      DATABASE_URL: postgres://talk:${POSTGRES_TALK_PASSWORD:?rode scripts/gen-secrets.sh}@postgres:5432/talk
+      EVOLUTION_URL: http://evolution:8080
+      WEBHOOK_BASE_URL: http://app:3000
+      PORT: "3000"
+      MEDIA_DIR: /data/media
+    volumes:
+      - ./data/media:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?rode scripts/gen-secrets.sh}
+      POSTGRES_TALK_PASSWORD: ${POSTGRES_TALK_PASSWORD:?rode scripts/gen-secrets.sh}
+      POSTGRES_EVOLUTION_PASSWORD: ${POSTGRES_EVOLUTION_PASSWORD:?rode scripts/gen-secrets.sh}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    healthcheck:
+      # -h 127.0.0.1: durante o init o servidor temporário só escuta no socket, então só fica "healthy" depois do init.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+
+  evolution:
+    # Tag exata, nunca latest. Ao atualizar, anote a tag anterior (docs/IMPLANTACAO.md › Atualizar a Evolution API).
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: unless-stopped
+    environment:
+      SERVER_URL: http://evolution:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?rode scripts/gen-secrets.sh}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${POSTGRES_EVOLUTION_PASSWORD:?rode scripts/gen-secrets.sh}@postgres:5432/evolution?schema=evolution_api
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      CACHE_REDIS_ENABLED: "false"
+      CACHE_LOCAL_ENABLED: "true"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      TELEMETRY_ENABLED: "false"
+      LOG_LEVEL: ERROR,WARN,INFO
+      CONFIG_SESSION_PHONE_CLIENT: Atendimento
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  evolution_instances:

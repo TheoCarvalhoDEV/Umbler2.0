@@ -1,0 +1,30 @@
+{
+  "event": "messages.upsert",
+  "instance": "talk-test",
+  "data": {
+    "key": { "remoteJid": "556599999999@s.whatsapp.net", "fromMe": false, "id": "MSG-IMAGE-IN" },
+    "pushName": "Maria Teste",
+    "status": "DELIVERY_ACK",
+    "message": {
+      "messageContextInfo": { "deviceListMetadataVersion": 2 },
+      "imageMessage": {
+        "url": "https://mmg.whatsapp.net/v/t62.0-24/fake.enc",
+        "mimetype": "image/jpeg",
+        "caption": "Foto do documento",
+        "fileLength": "12345",
+        "height": 800,
+        "width": 600,
+        "mediaKey": "ZmFrZS1tZWRpYS1rZXk=",
+        "directPath": "/v/t62.0-24/fake.enc"
+      }
+    },
+    "messageType": "imageMessage",
+    "messageTimestamp": { "low": 1760440000, "high": 0, "unsigned": false },
+    "instanceId": "00000000-0000-4000-8000-000000000001",
+    "source": "android"
+  },
+  "date_time": "2025-10-14T11:06:40.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}

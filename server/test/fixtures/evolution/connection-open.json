@@ -1,0 +1,16 @@
+{
+  "event": "connection.update",
+  "instance": "talk-test",
+  "data": {
+    "instance": "talk-test",
+    "wuid": "5565988887777@s.whatsapp.net",
+    "profileName": "Escritório Teste",
+    "profilePictureUrl": null,
+    "state": "open",
+    "statusReason": 200
+  },
+  "date_time": "2025-10-14T11:06:40.000Z",
+  "sender": "5565988887777@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}
