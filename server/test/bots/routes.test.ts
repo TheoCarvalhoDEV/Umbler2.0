@@ -294,3 +294,69 @@ describe('admin bot routes', () => {
     expect((await call('POST', '/api/bots/media', admin, {})).statusCode).toBe(400);
   });
 });
+describe('manual bots and runs', () => {
+  it('lists active, published, listed manual bots for any user, by title', async () => {
+    const b = await publishManual('Menu B');
+    await call('PATCH', `/api/bots/${b.id}`, admin, { manualTitle: 'Abertura' });
+    const a = await publishManual('Menu A');
+    const hidden = await publishManual('Oculto');
+    await call('PATCH', `/api/bots/${hidden.id}`, admin, { manualUnlisted: true });
+    const paused = await publishManual('Pausado');
+    await call('POST', `/api/bots/${paused.id}/status`, admin, { status: 'paused' });
+    await newBot('Sem início manual');
+
+    const res = await call('GET', '/api/bots/manual', agentA);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([{ id: b.id, title: 'Abertura' }, { id: a.id, title: 'Menu A' }]);
+  });
+
+  it('starts a manual bot in a visible chat, lists it, refuses a duplicate and stops it', async () => {
+    const bot = await publishManual('Menu manual');
+    const chatId = await insertChat(ctx, { channelId: seed.channelId, sectorId: seed.sectorA });
+
+    const started = await call('POST', `/api/chats/${chatId}/bot-runs`, agentA, { botId: bot.id });
+    expect(started.statusCode).toBe(200);
+    const run = started.json();
+    expect(run).toMatchObject({
+      botId: bot.id, botName: 'Menu manual', chatId, state: 'waiting_reply', currentNodeId: 'n2',
+      depth: 0, startedByName: 'Ana Financeiro', finishedAt: null,
+    });
+
+    expect((await call('POST', `/api/chats/${chatId}/bot-runs`, agentA, { botId: bot.id })).statusCode).toBe(409);
+    expect((await call('GET', `/api/chats/${chatId}/bot-runs`, agentA)).json().map((r: { id: string }) => r.id)).toEqual([run.id]);
+
+    // Bruno (sector B) cannot see the chat: everything is 404.
+    expect((await call('POST', `/api/chats/${chatId}/bot-runs`, agentB, { botId: bot.id })).statusCode).toBe(404);
+    expect((await call('GET', `/api/chats/${chatId}/bot-runs`, agentB)).statusCode).toBe(404);
+    expect((await call('POST', `/api/bot-runs/${run.id}/stop`, agentB)).statusCode).toBe(404);
+
+    const stopped = await call('POST', `/api/bot-runs/${run.id}/stop`, agentA);
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.json()).toMatchObject({ id: run.id, state: 'stopped' });
+    const again = await call('POST', `/api/bot-runs/${run.id}/stop`, agentA);
+    expect(again.statusCode).toBe(200);
+    expect(again.json().state).toBe('stopped');
+    expect((await call('GET', `/api/chats/${chatId}/bot-runs`, agentA)).json()).toEqual([]);
+  });
+
+  it('refuses closed chats, bots that cannot start manually and unknown runs', async () => {
+    const manual = await publishManual('Manual');
+    const closedChat = await insertChat(ctx, { channelId: seed.channelId, sectorId: seed.sectorA, state: 'closed' });
+    const closed = await call('POST', `/api/chats/${closedChat}/bot-runs`, agentA, { botId: manual.id });
+    expect(closed.statusCode).toBe(409);
+    expect(closed.json().error).toBe('Conversa finalizada');
+
+    const chatId = await insertChat(ctx, { channelId: seed.channelId, sectorId: seed.sectorA });
+    const NOT_MANUAL = 'Este chatbot não pode ser iniciado manualmente';
+    const draft = await newBot('Rascunho');
+    const noManual = await publishManual('Sem manual');
+    await call('PATCH', `/api/bots/${noManual.id}`, admin, { manualStart: false });
+    for (const botId of [draft.id, noManual.id, randomUUID()]) {
+      const res = await call('POST', `/api/chats/${chatId}/bot-runs`, agentA, { botId });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe(NOT_MANUAL);
+    }
+    expect((await call('POST', `/api/chats/${chatId}/bot-runs`, agentA, { botId: 'x' })).statusCode).toBe(400);
+    expect((await call('POST', `/api/bot-runs/${randomUUID()}/stop`, agentA)).statusCode).toBe(404);
+  });
+});

@@ -1,20 +1,22 @@
-import { and, asc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, ne } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   BLOCK_TYPES, NON_TERMINAL_RUN_STATES,
-  type BotExport, type BotGraph, type BotMediaDto, type BotVersionDto, type GraphProblem,
+  type BotExport, type BotGraph, type BotMediaDto, type BotVersionDto, type GraphProblem, type ManualBotDto,
 } from '@talk/shared';
 import { requireAdmin } from '../auth/plugin.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db } from '../db/client.js';
 import { botRuns, bots, channels } from '../db/schema.js';
+import { getChatForUser } from '../inbox/chats.js';
 import { HttpError, badRequest, conflict, notFound } from '../lib/http-error.js';
 import { baseMime, saveMedia } from '../messages/media.js';
+import { runningRunsForChat, startRun, stopRun } from './engine.js';
 import { loadGraphCatalog, validateGraph } from './graph.js';
 import {
   STARTER_GRAPH, createBot, getBot, getVersionByNumber, getVersionRow, insertBotVersion, latestVersion,
-  toBotDto, toBotDtos, toBotVersionSummaries, uniqueBotName, type BotRow, type BotVersionRow,
+  toBotDto, toBotDtos, toBotRunDto, toBotVersionSummaries, uniqueBotName, type BotRow, type BotVersionRow,
 } from './repo.js';
 
 const IdParams = z.object({ id: z.uuid() });
@@ -40,6 +42,7 @@ const PatchBody = z
 const SaveVersionBody = z.object({ graph: GraphSchema, label: z.string().trim().max(80).optional(), publish: z.boolean() });
 const StatusBody = z.object({ status: z.enum(['active', 'paused']) });
 const ImportBody = z.object({ name: Name, graph: GraphSchema });
+const StartRunBody = z.object({ botId: z.uuid() });
 
 const admin = { preHandler: requireAdmin };
 const NAME_TAKEN = 'Já existe um chatbot com esse nome';
@@ -222,5 +225,59 @@ export function registerBotRoutes(app: FastifyInstance, ctx: AppCtx): void {
     const { buffer, mime, name } = await readBotMedia(req);
     const saved = await saveMedia(ctx.config.mediaDir, buffer, mime, name, 'bots');
     return { path: saved.path, name, mime, size: saved.size };
+  });
+
+  registerRunRoutes(app, ctx);
+}
+
+/** Routes for every user. The chat-scoped ones go through getChatForUser, so a chat the user cannot see is 404. */
+function registerRunRoutes(app: FastifyInstance, ctx: AppCtx): void {
+  app.get('/api/bots/manual', async (): Promise<ManualBotDto[]> => {
+    const rows = await ctx.db
+      .select({ id: bots.id, name: bots.name, manualTitle: bots.manualTitle })
+      .from(bots)
+      .where(
+        and(
+          eq(bots.status, 'active'), isNotNull(bots.publishedVersionId),
+          eq(bots.manualStart, true), eq(bots.manualUnlisted, false),
+        ),
+      );
+    return rows
+      .map((r) => ({ id: r.id, title: r.manualTitle || r.name }))
+      .sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+  });
+
+  app.post('/api/chats/:id/bot-runs', async (req) => {
+    const { id } = IdParams.parse(req.params);
+    const { botId } = StartRunBody.parse(req.body);
+    const chat = await getChatForUser(ctx, req.user, id);
+    if (chat.state !== 'open') throw conflict('Conversa finalizada');
+    const [bot] = await ctx.db.select().from(bots).where(eq(bots.id, botId));
+    // A missing bot gets the same answer, so the route does not reveal which bot ids exist.
+    if (!bot || bot.status !== 'active' || !bot.publishedVersionId || !bot.manualStart) {
+      throw badRequest('Este chatbot não pode ser iniciado manualmente');
+    }
+    const started = await startRun(ctx, { botId, chatId: chat.id, entry: 'manual', startedBy: req.user.id }); // 409 on a duplicate
+    // Re-read: the DTO shows the state after the first step (waiting_reply, finished…).
+    const [run] = await ctx.db.select().from(botRuns).where(eq(botRuns.id, started.id));
+    return toBotRunDto(ctx.db, run ?? started);
+  });
+
+  app.get('/api/chats/:id/bot-runs', async (req) => {
+    const chat = await getChatForUser(ctx, req.user, IdParams.parse(req.params).id);
+    const runs = await runningRunsForChat(ctx.db, chat.id);
+    return Promise.all(runs.map((r) => toBotRunDto(ctx.db, r)));
+  });
+
+  // Idempotent: an already terminal run comes back as it is.
+  app.post('/api/bot-runs/:id/stop', async (req) => {
+    const { id } = IdParams.parse(req.params);
+    const [run] = await ctx.db.select().from(botRuns).where(eq(botRuns.id, id));
+    if (!run) throw notFound();
+    await getChatForUser(ctx, req.user, run.chatId); // 404 unless canSee
+    const row = NON_TERMINAL_RUN_STATES.includes(run.state)
+      ? await stopRun(ctx, id, { userId: req.user.id, reason: 'manual' })
+      : run;
+    return toBotRunDto(ctx.db, row);
   });
 }
