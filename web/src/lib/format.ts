@@ -32,3 +32,25 @@ export function initials(name: string | null | undefined): string {
   const last = words.length > 1 ? words[words.length - 1]![0]! : '';
   return (first + last).toUpperCase();
 }
+
+/** Contact display name: name, else the phone through Task 15's formatPhone (the only phone formatter). */
+export function contactLabel(c: { name: string | null; phone: string | null }): string {
+  const name = c.name?.trim();
+  if (name) return name;
+  return formatPhone(c.phone) || 'Sem nome';
+}
+
+/** Chat list time: HH:MM today, "Ontem", dd/mm this year, dd/mm/yy older. */
+export function listTime(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return 'Ontem';
+  return d.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    ...(d.getFullYear() !== now.getFullYear() ? { year: '2-digit' as const } : {}),
+  });
+}
