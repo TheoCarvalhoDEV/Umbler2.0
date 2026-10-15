@@ -126,6 +126,13 @@ describe('startChat', () => {
     expect(await statusOf(startChat(ctx, s.agentA, { contactId }))).toBe(409);
   });
 
+  it('the 409 tells an admin without "ver todos" how to reach the chat; agents keep the plain message', async () => {
+    const contactId = await newContact(ctx);
+    await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorB });
+    await expect(startChat(ctx, s.agentA, { contactId })).rejects.toMatchObject({ status: 409, message: 'Este contato já está em atendimento em outro setor.' });
+    await expect(startChat(ctx, s.admin, { contactId })).rejects.toMatchObject({ status: 409, message: 'Já existe uma conversa aberta com este contato em outro setor. Ative “Ver todos os setores” para acessá-la.' });
+  });
+
   it('validates the input', async () => {
     expect(await statusOf(startChat(ctx, s.agentA, {}))).toBe(400);
     expect(await statusOf(startChat(ctx, s.agentA, { phone: '123' }))).toBe(400);

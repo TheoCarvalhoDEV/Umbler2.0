@@ -21,7 +21,7 @@ const USER_AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const BAD_AVATAR = 'Envie uma imagem JPEG, PNG ou WebP de até 2 MB no campo "file"';
 
 /** The `file` part of a multipart body, as { data, ext }; 400 for anything else (type, size, field, not multipart). */
-async function readAvatarUpload(req: FastifyRequest): Promise<{ data: Buffer; ext: string }> {
+export async function readAvatarUpload(req: FastifyRequest): Promise<{ data: Buffer; ext: string }> {
   try {
     const part = await req.file({ limits: { fileSize: AVATAR_MAX_BYTES, files: 1 } });
     if (!part) throw badRequest(BAD_AVATAR);
@@ -29,9 +29,10 @@ async function readAvatarUpload(req: FastifyRequest): Promise<{ data: Buffer; ex
     if (part.fieldname !== 'file' || !USER_AVATAR_TYPES.includes(part.mimetype)) throw badRequest(BAD_AVATAR);
     return { data, ext: AVATAR_TYPES[part.mimetype]! };
   } catch (err) {
-    // @fastify/multipart: 413 file too large, 406 not multipart, ...
+    // @fastify/multipart: 413 file too large, 406 not multipart, ... Client errors only: a 5xx stays a 500.
     if (err instanceof HttpError) throw err;
-    if (typeof (err as { statusCode?: unknown }).statusCode === 'number') throw badRequest(BAD_AVATAR);
+    const status = (err as { statusCode?: unknown }).statusCode;
+    if (typeof status === 'number' && status < 500) throw badRequest(BAD_AVATAR);
     throw err;
   }
 }
@@ -101,10 +102,23 @@ export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx
   });
 
   // Own profile picture. A new file name per upload, so the URL (and the browser cache) changes with it.
+  // `path` is already on disk. The row is locked while it is swapped, so of two uploads at once the second
+  // sees the first's file as the old one; the old file goes only after the commit, the new one if the update fails.
   const setAvatar = async (id: string, path: string | null) => {
-    const [old] = await ctx.db.select({ path: users.avatarPath }).from(users).where(eq(users.id, id));
-    await ctx.db.update(users).set({ avatarPath: path }).where(eq(users.id, id));
-    if (old?.path && old.path !== path) await removeAvatarFile(ctx.config.mediaDir, old.path);
+    let old: string | null | undefined;
+    try {
+      old = await ctx.db.transaction(async (tx) => {
+        const [row] = await tx.select({ path: users.avatarPath }).from(users).where(eq(users.id, id)).for('update');
+        await tx.update(users).set({ avatarPath: path }).where(eq(users.id, id));
+        return row?.path;
+      });
+    } catch (err) {
+      if (path) await removeAvatarFile(ctx.config.mediaDir, path);
+      throw err;
+    }
+    if (old && old !== path) await removeAvatarFile(ctx.config.mediaDir, old);
+    // Colleagues' screens show this picture in the agent list and on the chats.
+    ctx.hub.publishUsersChanged();
     return loadAuthUser(ctx.db, id);
   };
 

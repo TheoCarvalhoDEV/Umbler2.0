@@ -12,7 +12,13 @@ export type ChatRow = typeof chats.$inferSelect;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STALE = 'A conversa foi alterada por outra pessoa. Recarregue e tente de novo.';
-const BUSY_ELSEWHERE = 'Este contato já está em atendimento em outro setor.';
+/** 409 for an open chat the user cannot see. An admin only lacks "ver todos" (with it he sees every chat). */
+const busyElsewhere = (user: AuthUser) =>
+  conflict(
+    user.role === 'admin'
+      ? 'Já existe uma conversa aberta com este contato em outro setor. Ative “Ver todos os setores” para acessá-la.'
+      : 'Este contato já está em atendimento em outro setor.',
+  );
 
 /**
  * Returns the open chat for (contact, channel), creating it if none exists.
@@ -219,7 +225,7 @@ export async function reopenChat(ctx: AppCtx, user: AuthUser, chatId: string): P
     .from(chats)
     .where(and(eq(chats.contactId, chat.contactId), eq(chats.channelId, chat.channelId), eq(chats.state, 'open')));
   if (other) {
-    if (!canSee(user, other)) throw conflict(BUSY_ELSEWHERE);
+    if (!canSee(user, other)) throw busyElsewhere(user);
     return other;
   }
   // ponytail: a chat opened between this check and the UPDATE trips the partial unique index (500);
@@ -304,7 +310,7 @@ export async function startChat(
       init: { sectorId, ownerId: user.id, waiting: false, triagePending: false, createdBy: user.id },
     });
   });
-  if (!created && !canSee(user, chat)) throw conflict(BUSY_ELSEWHERE);
+  if (!created && !canSee(user, chat)) throw busyElsewhere(user);
   if (created) await ctx.hub.publishChat(chat.id);
   return chat;
 }

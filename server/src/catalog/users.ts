@@ -64,19 +64,20 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
     throw badRequest('Você não pode desativar nem rebaixar o próprio usuário');
   }
   const passwordHash = p.password ? await hashPassword(p.password) : undefined;
-  const set = {
-    name: p.name,
-    email: p.email,
-    role: p.role,
-    // A role change resets the admin-only view preference (stale 'ver todos' must not survive a demote/promote).
-    seeAllSectors: p.role === undefined ? undefined : false,
-    active: p.active,
-    passwordHash,
-    signature: p.signature === undefined ? undefined : p.signature || null,
-  };
   const killSessions = p.active === false || passwordHash !== undefined;
   await ctx.db.transaction(async (tx) => {
-    if (!(await tx.$count(users, eq(users.id, id)))) throw notFound('Usuário não encontrado');
+    const [current] = await tx.select({ role: users.role }).from(users).where(eq(users.id, id));
+    if (!current) throw notFound('Usuário não encontrado');
+    const set = {
+      name: p.name,
+      email: p.email,
+      role: p.role,
+      // A real role change resets the admin-only view preference (stale 'ver todos' must not survive a demote/promote).
+      seeAllSectors: p.role !== undefined && p.role !== current.role ? false : undefined,
+      active: p.active,
+      passwordHash,
+      signature: p.signature === undefined ? undefined : p.signature || null,
+    };
     if (p.email && (await tx.$count(users, and(eq(users.email, p.email), ne(users.id, id))))) {
       throw conflict('E-mail já cadastrado');
     }

@@ -22,6 +22,7 @@ class AvatarRejected extends Error {
 async function download(url: string): Promise<{ data: Buffer; ext: string }> {
   if (new URL(url).protocol !== 'https:') throw new AvatarRejected();
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: 'error' });
+  // jpeg/png/webp/gif only; SVG is refused on purpose (see AVATAR_TYPES in media/avatar-files.ts).
   const ext = AVATAR_TYPES[baseMime(res.headers.get('content-type') ?? '')];
   if (!res.ok || !ext || !res.body || Number(res.headers.get('content-length') ?? 0) > AVATAR_MAX_BYTES) {
     await res.body?.cancel();

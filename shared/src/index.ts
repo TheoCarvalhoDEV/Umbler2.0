@@ -29,4 +29,5 @@ export type WsEvent =
   | { type: 'chat.removed'; chatId: string }
   | { type: 'message.created'; message: MessageDto }
   | { type: 'message.updated'; message: MessageDto }
-  | { type: 'channel.status'; channel: ChannelDto };
+  | { type: 'channel.status'; channel: ChannelDto }
+  | { type: 'users.changed' }; // a user's picture changed: refetch users, chats and me

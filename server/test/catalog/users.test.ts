@@ -126,3 +126,12 @@ it('resets seeAllSectors whenever the role changes', async () => {
   const [row] = await ctx.db.select().from(users).where(eq(users.id, uid));
   expect(row.seeAllSectors).toBe(false);
 });
+
+it('keeps seeAllSectors when the PATCH repeats the current role', async () => {
+  const other = await call('POST', '/api/users', admin, { name: 'Outro Adm', email: 'adm2@example.com', password: 'senha-teste-123', role: 'admin' });
+  const uid = other.json().id as string;
+  await ctx.db.update(users).set({ seeAllSectors: true }).where(eq(users.id, uid));
+  expect((await call('PATCH', `/api/users/${uid}`, admin, { role: 'admin', name: 'Outro Adm 2' })).statusCode).toBe(200);
+  const [row] = await ctx.db.select().from(users).where(eq(users.id, uid));
+  expect(row.seeAllSectors).toBe(true);
+});
