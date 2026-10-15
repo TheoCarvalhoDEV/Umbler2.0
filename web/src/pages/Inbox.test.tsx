@@ -156,6 +156,27 @@ it('shows an error banner when toggling the view fails', async () => {
   expect((await screen.findByRole('alert')).textContent).toBe('Não foi possível alterar a visualização. Tente novamente.');
 });
 
+it('a new toggle error replaces an older pin error, and a later success clears the banner', async () => {
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  const base = fetch as unknown as (i: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  let viewFails = true;
+  vi.stubGlobal('fetch', vi.fn(async (i: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(i);
+    if (path === '/api/chats/a/pin') return json({ error: 'cheio' }, 409);
+    if (path === '/api/auth/me/view' && viewFails) return json({ error: 'falhou' }, 500);
+    return base(i, init);
+  }));
+  fireEvent.click(screen.getAllByLabelText('Opções da conversa')[0]);
+  fireEvent.click(screen.getByText('Desafixar'));
+  expect((await screen.findByRole('alert')).textContent).toContain('Você já fixou 3 conversas');
+  fireEvent.click(screen.getByRole('button', { name: 'Ver todos os setores' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Não foi possível alterar a visualização. Tente novamente.'));
+  viewFails = false;
+  fireEvent.click(screen.getByRole('button', { name: 'Ver todos os setores' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
 it('hints a sectorless admin to enable "Ver todos os setores", even with a non-empty list', async () => {
   renderInbox({ ...adminMe, sectorIds: [] });
   await screen.findByText('Ana Souza');

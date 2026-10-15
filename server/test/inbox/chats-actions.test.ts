@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { chats, settings } from '../../src/db/schema.js';
+import { chats, settings, userSectors } from '../../src/db/schema.js';
 import { assumeChat, closeChat, reopenChat, setChatPrivacy, transferChat } from '../../src/inbox/chats.js';
 import { canSee } from '../../src/inbox/visibility.js';
 import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
@@ -209,6 +209,16 @@ describe('reopenChat', () => {
     const closed = await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorA, state: 'closed' });
     await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorB });
     expect(await statusOf(reopenChat(ctx, s.agentA, closed))).toBe(409);
+  });
+
+  it('the 409 tells an admin without "ver todos" how to reach the other chat; agents keep the plain message', async () => {
+    const contactId = await newContact(ctx);
+    const closed = await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorA, state: 'closed' });
+    await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorB });
+    await ctx.db.insert(userSectors).values({ userId: s.admin.id, sectorId: s.sectorA });
+    const admin = { ...s.admin, sectorIds: [s.sectorA] };
+    await expect(reopenChat(ctx, s.agentA, closed)).rejects.toMatchObject({ status: 409, message: 'Este contato já está em atendimento em outro setor.' });
+    await expect(reopenChat(ctx, admin, closed)).rejects.toMatchObject({ status: 409, message: 'Já existe uma conversa aberta com este contato que você não pode ver. Ative “Ver todos os setores” para acessá-la.' });
   });
 
   it('409 when the chat is already open', async () => {

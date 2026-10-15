@@ -5,6 +5,7 @@ import type { WsEvent } from '@talk/shared';
 import type { NotificationDto } from '@talk/shared';
 import type { AppCtx } from '../../src/ctx.js';
 import { channels, chatPins, chats, contactTags, contacts, messages, tags, userSectors, users } from '../../src/db/schema.js';
+import { transferChat } from '../../src/inbox/chats.js';
 import { createHub, createRecordingHub, type Hub } from '../../src/realtime/hub.js';
 import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -113,6 +114,18 @@ describe('createHub.publishChat', () => {
     expect(adm.events.map((e) => e.type)).toEqual(['chat.updated', 'chat.removed', 'chat.updated']);
   });
 
+  it('a transfer through the real service sends chat.removed to the admin without "ver todos" and chat.updated to the target sector', async () => {
+    const adm = fakeSocket(); const b = fakeSocket();
+    hub.register(s.admin, adm); hub.register(s.agentB, b);
+    await ctx.db.insert(userSectors).values({ userId: s.admin.id, sectorId: s.sectorA });
+    const { chat } = await insertChat(ctx, s.channelId, { sectorId: s.sectorA });
+
+    await transferChat({ ...ctx, hub }, s.agentA, chat.id, { sectorId: s.sectorB });
+
+    expect(adm.events).toEqual([{ type: 'chat.removed', chatId: chat.id }]);
+    expect(b.events).toEqual([{ type: 'chat.updated', chat: expect.objectContaining({ id: chat.id, sectorId: s.sectorB }) }]);
+  });
+
   it('sends a private chat only to its owner and admins with "ver todos", even to members of its sector', async () => {
     const a = fakeSocket(); const b = fakeSocket(); const adm = fakeSocket();
     hub.register(s.agentA, a); hub.register(s.agentB, b); hub.register(s.admin, adm);
@@ -174,6 +187,17 @@ describe('createHub.publishChannel', () => {
   });
 });
 
+describe('createHub.publishUsersChanged', () => {
+  it('sends users.changed to every connected socket, whatever the sector', () => {
+    const a1 = fakeSocket(); const a2 = fakeSocket(); const b = fakeSocket(); const adm = fakeSocket();
+    hub.register(s.agentA, a1); hub.register(s.agentA, a2); hub.register(s.agentB, b); hub.register(s.admin, adm);
+
+    hub.publishUsersChanged();
+
+    for (const socket of [a1, a2, b, adm]) expect(socket.events).toEqual([{ type: 'users.changed' }]);
+  });
+});
+
 describe('createHub.register / disconnectUser', () => {
   it('disconnectUser closes every socket of that user and stops delivery to them', async () => {
     const a1 = fakeSocket(); const a2 = fakeSocket(); const b = fakeSocket();
@@ -212,6 +236,7 @@ describe('createRecordingHub', () => {
     await rec.publishMessage('c1', 'message.created', 'm1');
     await rec.publishMessage('c1', 'message.updated', 'm1');
     await rec.publishChannel('ch1');
+    rec.publishUsersChanged();
     rec.disconnectUser('u1');
     rec.register(s.agentA, fakeSocket())();
 
@@ -220,6 +245,7 @@ describe('createRecordingHub', () => {
       { type: 'message.created', chatId: 'c1', messageId: 'm1' },
       { type: 'message.updated', chatId: 'c1', messageId: 'm1' },
       { type: 'channel', channelId: 'ch1' },
+      { type: 'users.changed' },
       { type: 'disconnect', userId: 'u1' },
     ]);
   });

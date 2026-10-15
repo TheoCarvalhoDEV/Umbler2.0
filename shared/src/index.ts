@@ -42,4 +42,5 @@ export type WsEvent =
   | { type: 'message.created'; message: MessageDto }
   | { type: 'message.updated'; message: MessageDto }
   | { type: 'channel.status'; channel: ChannelDto }
-  | { type: 'notification'; notification: NotificationDto };
+  | { type: 'notification'; notification: NotificationDto }
+  | { type: 'users.changed' }; // a user's picture changed: refetch users, chats and me

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -179,6 +179,21 @@ describe('avatar refresh on inbound messages', () => {
     expect(logged.mock.calls.map((call: unknown[]) => (call[1] as { err: string }).err)).toEqual(['AvatarRejected', 'AvatarRejected']);
   });
 
+  it('refuses a declared content-length over 2 MB before reading the body', async () => {
+    ctx.wa.profilePictures.set(PHONE, PIC_URL);
+    const c = await insertContact();
+    // Small real body, but the header announces more than the cap: only the pre-check can reject it.
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array(PNG), {
+        status: 200,
+        headers: { 'content-type': 'image/png', 'content-length': String(2 * 1024 * 1024 + 1) },
+      }),
+    );
+    await ingest(msg());
+    expect((await contactRow(c.id)).avatarPath).toBeNull();
+    expect(logged).toHaveBeenCalledWith('avatar refresh failed', { contactId: c.id, err: 'AvatarRejected' });
+  });
+
   it('stops reading a body without content-length once it passes 2 MB', async () => {
     ctx.wa.profilePictures.set(PHONE, PIC_URL);
     const c = await insertContact();
@@ -214,7 +229,7 @@ describe('avatar refresh on inbound messages', () => {
     expect((await contactRow(c.id)).avatarPath).toBe(`avatars/${c.id}.png`);
   });
 
-  it('writes the file atomically (no .tmp left behind, existing picture replaced)', async () => {
+  it('replaces an existing picture file and leaves no .tmp behind', async () => {
     ctx.wa.profilePictures.set(PHONE, PIC_URL);
     const c = await insertContact();
     await mkdir(join(ctx.config.mediaDir, 'avatars'), { recursive: true });
@@ -246,6 +261,7 @@ describe('GET /api/contacts/:id/avatar and avatarUrl', () => {
     expect(res.headers['content-type']).toBe('image/png');
     expect(res.headers['cache-control']).toBe('private, max-age=86400');
     expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toBe('sandbox');
   });
 
   it('is 404 without a picture (or with a missing file) and 401 without a session', async () => {
@@ -256,6 +272,20 @@ describe('GET /api/contacts/:id/avatar and avatarUrl', () => {
     await ctx.db.update(contacts).set({ avatarPath: 'avatars/missing.png' }).where(eq(contacts.id, without.id));
     expect((await get(without.id, auth.headers)).statusCode).toBe(404);
     expect((await get(withPic.id)).statusCode).toBe(401);
+  });
+
+  it('is 404 for a stored path that escapes mediaDir, even when that file exists', async () => {
+    const { auth, without } = await setup();
+    const name = `${randomUUID()}.png`;
+    const outside = join(ctx.config.mediaDir, '..', name);
+    await writeFile(outside, PNG);
+    try {
+      await ctx.db.update(contacts).set({ avatarPath: `../${name}` }).where(eq(contacts.id, without.id));
+      const res = await app!.inject({ method: 'GET', url: `/api/contacts/${without.id}/avatar`, headers: auth.headers });
+      expect(res.statusCode).toBe(404);
+    } finally {
+      await rm(outside, { force: true });
+    }
   });
 
   it('ContactDto and the chat list ContactRef carry avatarUrl', async () => {
