@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { MessageDto } from '@talk/shared';
 import type { Db, Tx } from '../db/client.js';
-import { messages, users } from '../db/schema.js';
+import { botRuns, bots, messages, users } from '../db/schema.js';
 import { userAvatarUrl } from '../media/avatar-files.js';
 
 type MessageRow = typeof messages.$inferSelect;
@@ -35,6 +35,9 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
   const [reply] = row.replyToId
     ? await db.select({ id: messages.id, body: messages.body, kind: messages.kind }).from(messages).where(eq(messages.id, row.replyToId))
     : [];
+  const [bot] = row.botRunId
+    ? await db.select({ name: bots.name }).from(botRuns).innerJoin(bots, eq(bots.id, botRuns.botId)).where(eq(botRuns.id, row.botRunId))
+    : [];
 
   return {
     id: row.id,
@@ -57,5 +60,7 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
     status: row.status,
     error: row.error,
     sentAt: row.sentAt.toISOString(),
+    botRunId: row.botRunId,
+    botName: bot?.name ?? null,
   };
 }
