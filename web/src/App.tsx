@@ -1,6 +1,7 @@
 import { Navigate, type RouteObject } from 'react-router';
 import AppLayout from './components/layout/AppLayout';
 import { RequireAuth } from './lib/auth';
+import ConversationPage from './pages/Conversation';
 import { Inbox } from './pages/Inbox';
 import Login from './pages/Login';
 
@@ -24,8 +25,7 @@ export const routes: RouteObject[] = [
         element: <Inbox />,
         children: [
           { index: true, element: <p className="grid h-full place-items-center text-sm text-muted">Selecione uma conversa</p> },
-          // Task 17 replaces this element with the conversation view
-          { path: ':id', element: <p className="grid h-full place-items-center text-sm text-muted">Carregando conversa…</p> },
+          { path: ':id', element: <ConversationPage /> },
         ],
       },
       // Tasks 18 and 19 insert `contacts` and `configuracoes/:section?` here, above the catch-all.
