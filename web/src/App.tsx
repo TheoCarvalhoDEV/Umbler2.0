@@ -6,6 +6,7 @@ import { ContactsPage } from './pages/Contacts';
 import ConversationPage from './pages/Conversation';
 import { Inbox } from './pages/Inbox';
 import Login from './pages/Login';
+import { SettingsPage } from './pages/settings/SettingsPage';
 
 function NotFound() {
   return <div className="flex h-full items-center justify-center text-muted">Página não encontrada.</div>;
@@ -32,7 +33,7 @@ export const routes: RouteObject[] = [
       },
       { path: 'contacts', element: <ContactsPage /> },
       { path: 'contacts/new', element: <ContactNewPage /> },
-      // Task 19 inserts `configuracoes/:section?` here, above the catch-all.
+      { path: 'configuracoes/:section?', element: <SettingsPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },
