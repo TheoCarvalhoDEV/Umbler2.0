@@ -198,3 +198,12 @@ describe('validateAnswer', () => {
     expect(validateAnswer(cfg, input)).toEqual(expected);
   });
 });
+
+describe('catastrophic regex', () => {
+  it('times out instead of blocking the event loop', () => {
+    const t = Date.now();
+    const r = validateAnswer({ validator: 'regex', regex: '(a+)+$' }, { body: 'a'.repeat(999) + '!', kind: 'text', mediaMime: null, mediaName: null });
+    expect(r).toEqual({ ok: false });
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+});

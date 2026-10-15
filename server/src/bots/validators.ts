@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { z } from 'zod';
 import type { AskInputConfig, MediaType } from '@talk/shared';
 import { baseMime } from '../messages/media.js';
@@ -9,7 +10,7 @@ export type AnswerResult = { ok: true; raw: string; value: string } | { ok: fals
 
 const FAIL: AnswerResult = { ok: false };
 const REGEX_MAX = 200;
-// ponytail: no ReDoS guard beyond pattern ≤200 and input ≤1000 chars; move to a worker with timeout if patterns get hostile.
+const REGEX_TIMEOUT_MS = 50;
 const REGEX_INPUT_MAX = 1000;
 const MEDIA_KINDS: ReadonlySet<MessageKind> = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 // After normalizePhoneBR: 55 + DDD (two digits 1-9) + mobile 9xxxxxxxx or landline [2-5]xxxxxxx.
@@ -77,6 +78,16 @@ export function compileUserRegex(pattern: string): RegExp | null {
   }
 }
 
+/** Runs an admin regex on contact text under a vm timeout so catastrophic backtracking cannot freeze the event loop; timeout counts as no match. */
+export function safeRegexTest(pattern: string, input: string): boolean {
+  if (!compileUserRegex(pattern) || input.length > REGEX_INPUT_MAX) return false;
+  try {
+    return runInNewContext('new RegExp(p, "u").test(s)', { p: pattern, s: input }, { timeout: REGEX_TIMEOUT_MS }) === true;
+  } catch {
+    return false;
+  }
+}
+
 export function mediaTypeOf(mime: string | null): MediaType | null {
   if (!mime) return null;
   const m = baseMime(mime);
@@ -116,8 +127,7 @@ export function validateAnswer(
     case 'cnpj':
       return isValidCnpj(raw) ? { ok: true, raw, value: formatCnpj(raw) } : FAIL;
     case 'regex': {
-      const re = compileUserRegex(cfg.regex ?? '');
-      return re && raw.length <= REGEX_INPUT_MAX && re.test(raw) ? { ok: true, raw, value: raw } : FAIL;
+      return safeRegexTest(cfg.regex ?? '', raw) ? { ok: true, raw, value: raw } : FAIL;
     }
   }
   return FAIL;
