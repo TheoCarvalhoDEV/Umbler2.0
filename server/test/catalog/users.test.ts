@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { eq } from 'drizzle-orm';
+import { users } from '../../src/db/schema.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics, TEST_ORIGIN } from '../helpers.js';
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -113,4 +115,14 @@ it('an admin cannot deactivate or demote themselves', async () => {
   expect((await call('DELETE', `/api/users/${seed.admin.id}`, admin)).statusCode).toBe(400);
   expect((await call('PATCH', `/api/users/${seed.admin.id}`, admin, { role: 'agent' })).statusCode).toBe(400);
   expect((await call('PATCH', `/api/users/${crypto.randomUUID()}`, admin, { name: 'X' })).statusCode).toBe(404);
+});
+
+it('resets seeAllSectors whenever the role changes', async () => {
+  const other = await call('POST', '/api/users', admin, { name: 'Outro Adm', email: 'adm2@example.com', password: 'senha-teste-123', role: 'admin' });
+  const uid = other.json().id as string;
+  await ctx.db.update(users).set({ seeAllSectors: true }).where(eq(users.id, uid));
+  await call('PATCH', `/api/users/${uid}`, admin, { role: 'agent' });
+  await call('PATCH', `/api/users/${uid}`, admin, { role: 'admin' });
+  const [row] = await ctx.db.select().from(users).where(eq(users.id, uid));
+  expect(row.seeAllSectors).toBe(false);
 });

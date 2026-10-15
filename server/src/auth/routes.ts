@@ -95,6 +95,8 @@ export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx
     const { seeAllSectors } = ViewBody.parse(req.body);
     const id = authUser(req).id;
     await ctx.db.update(users).set({ seeAllSectors }).where(eq(users.id, id));
+    // Sockets keep the scope they had at connect time: drop them so every open tab reconnects and refetches.
+    ctx.hub.disconnectUser(id);
     return loadAuthUser(ctx.db, id);
   });
 

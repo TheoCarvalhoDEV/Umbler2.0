@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/app.js';
 import { requireAdmin } from '../../src/auth/plugin.js';
 import { deleteUserSessions } from '../../src/auth/sessions.js';
@@ -124,6 +124,13 @@ describe('PUT /api/auth/me/view', () => {
     expect(off.json()).toMatchObject({ seeAllSectors: false });
     const [row] = await ctx.db.select().from(users).where(eq(users.id, seed.admin.id));
     expect(row.seeAllSectors).toBe(false);
+  });
+
+  it('drops the live sockets so open tabs reconnect', async () => {
+    const spy = vi.spyOn(ctx.hub, 'disconnectUser');
+    const { headers } = await loginAs(app, seed.admin.email);
+    await put(headers, { seeAllSectors: true });
+    expect(spy).toHaveBeenCalledWith(seed.admin.id);
   });
 
   it('rejects an agent with 403 and leaves the flag off', async () => {

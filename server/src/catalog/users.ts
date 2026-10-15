@@ -68,6 +68,8 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
     name: p.name,
     email: p.email,
     role: p.role,
+    // A role change resets the admin-only view preference (stale 'ver todos' must not survive a demote/promote).
+    seeAllSectors: p.role === undefined ? undefined : false,
     active: p.active,
     passwordHash,
     signature: p.signature === undefined ? undefined : p.signature || null,
