@@ -37,3 +37,27 @@ describe('MessageBubble author avatar', () => {
     expect(renderBubble({ ...base, authorId: null, authorName: null, authorAvatarUrl: null }).querySelector('[data-author-avatar]')).toBeNull();
   });
 });
+
+describe('MessageBubble chatbot messages', () => {
+  const system = { ...base, authorId: null, authorName: null, authorAvatarUrl: null };
+
+  it('labels a message sent by a chatbot run with the robot icon and "Chatbot <nome>"', () => {
+    const c = renderBubble({ ...system, botRunId: 'r1', botName: 'Fluxo do escritório' });
+    expect(c.textContent).toContain('Chatbot Fluxo do escritório');
+    expect(c.textContent).not.toContain('Celular ou sistema');
+    expect(c.querySelector('[data-bot-icon]')).not.toBeNull();
+    expect(c.querySelector('[data-author-avatar]')).toBeNull();
+  });
+
+  it('keeps the phone/system label and no robot when the message has no bot', () => {
+    const c = renderBubble({ ...system, botRunId: null, botName: null });
+    expect(c.textContent).toContain('Celular ou sistema');
+    expect(c.querySelector('[data-bot-icon]')).toBeNull();
+  });
+
+  it('never shows the robot on an incoming message', () => {
+    const c = renderBubble({ ...system, direction: 'in', botName: 'Fluxo do escritório' });
+    expect(c.querySelector('[data-bot-icon]')).toBeNull();
+    expect(c.textContent).not.toContain('Chatbot');
+  });
+});

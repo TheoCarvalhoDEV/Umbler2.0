@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Info } from '@phosphor-icons/react';
+import { Info, Robot } from '@phosphor-icons/react';
 import type { MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { MessageBubble } from './MessageBubble';
@@ -86,7 +86,11 @@ export function Timeline({ chatId, onReply }: { chatId: string; onReply: (m: Mes
         if (item.type === 'event') {
           return (
             <p key={row.key} className="my-2 flex items-center justify-center gap-1 px-4 text-center text-xs text-muted">
-              <Info size={14} className="shrink-0" />
+              {item.kind.startsWith('bot_') ? (
+                <Robot size={14} aria-hidden data-bot-event className="shrink-0" />
+              ) : (
+                <Info size={14} className="shrink-0" />
+              )}
               {eventText(item, names)} · {timeOfDay(item.createdAt)}
             </p>
           );
