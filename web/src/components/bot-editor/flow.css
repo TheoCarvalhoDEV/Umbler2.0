@@ -1,0 +1,28 @@
+/* React Flow in the app's dark theme. The fallbacks repeat the @theme values in index.css. */
+.react-flow.dark {
+  --xy-background-color: var(--color-surface, #1b1e25);
+  --xy-background-pattern-color: var(--color-border, #313543);
+  --xy-edge-stroke: var(--color-muted, #9aa1b1);
+  --xy-edge-stroke-selected: var(--color-primary, #4a6cf7);
+  --xy-connectionline-stroke: var(--color-primary, #4a6cf7);
+  --xy-handle-background-color: var(--color-primary, #4a6cf7);
+  --xy-handle-border-color: var(--color-panel, #23262f);
+  --xy-minimap-background-color: var(--color-panel, #23262f);
+  --xy-minimap-mask-background-color: rgb(20 22 27 / 0.6);
+  --xy-minimap-node-background-color: var(--color-border, #313543);
+  --xy-controls-button-background-color: var(--color-panel, #23262f);
+  --xy-controls-button-background-color-hover: var(--color-sidebar-hover, #22252d);
+  --xy-controls-button-color: var(--color-fg, #e7e9ef);
+  --xy-controls-button-color-hover: var(--color-fg, #e7e9ef);
+  --xy-controls-button-border-color: var(--color-border, #313543);
+  --xy-attribution-background-color: transparent;
+}
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+}
+
+.react-flow__attribution a {
+  color: var(--color-muted, #9aa1b1);
+}
