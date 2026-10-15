@@ -41,7 +41,7 @@ if FAKE_DOCKER_FAIL=1 PATH="$T/bin:$PATH" sh "$T/scripts/backup.sh" >/dev/null 2
 
 PATH="$T/bin:$PATH" sh "$T/scripts/backup.sh" >/dev/null
 [ "$(cat "$T/data/backup/db.sql")" = "-- dump novo" ] || fail "dump novo não foi gravado"
-tar -tzf "$T/data/backup/media.tar.gz" | grep -q 'media/2026/10/a.jpg' || fail "mídia ausente do media.tar.gz"
-[ ! -e "$T/data/backup/media.tar.gz.tmp" ] || fail "sobrou media.tar.gz.tmp"
+[ ! -e "$T/data/backup/media.tar.gz" ] || fail "backup não deve gerar media.tar.gz (a mídia vai pelo snapshot/restic)"
+[ "$(stat -c %a "$T/data/backup")" = 700 ] || fail "permissão de data/backup não é 700"
 
 echo "OK: scripts testados"

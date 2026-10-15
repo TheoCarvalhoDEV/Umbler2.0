@@ -41,9 +41,10 @@ cd /opt/talk
 # 4. Segredos (gera .env com chmod 600; troque pelo seu domínio)
 sh scripts/gen-secrets.sh talk.jvo.adv.br
 
-# 5. Pastas de dados (o app roda como usuário 1000 dentro do container)
-mkdir -p data/media data/backup
-sudo chown -R 1000:1000 data/media
+# 5. Pastas de dados (o app roda como usuário 1000 dentro do container).
+#    700: dumps e mídia têm dados de clientes; nenhuma outra conta do VPS deve lê-los.
+mkdir -p data/media data/backup && chmod 700 data/backup
+sudo chown -R 1000:1000 data/media && sudo chmod 700 data/media
 
 # 6. Subir tudo (a primeira vez compila a imagem: alguns minutos)
 docker compose up -d --build
@@ -122,7 +123,16 @@ git checkout "$(cat data/backup/versao-anterior.txt)"
 docker compose up -d --build app
 ```
 
-Se a atualização tinha migration de banco, restaure também o banco da hora do backup (seção 9, passos 5 a 7). Mensagens recebidas depois do backup se perdem nesse caso.
+Se a atualização tinha migration de banco, restaure também o banco da hora do backup. Pare antes o app e a Evolution: com conexões abertas, o `DROP DATABASE` do dump falha e o banco fica pela metade.
+
+```bash
+docker compose stop app evolution
+docker compose exec -T postgres psql -U postgres -d postgres < data/backup/db.sql > /dev/null
+docker compose up -d
+curl -fsS https://talk.jvo.adv.br/api/health
+```
+
+Até dois erros sobre o papel `postgres` (`current user cannot be dropped`, `role "postgres" already exists`) são normais. Qualquer outro erro deve ser investigado. Mensagens recebidas depois do backup se perdem nesse caso.
 
 ### 6.2 Atualizar a Evolution API (com volta)
 
@@ -161,10 +171,11 @@ Se o canal não voltar a **Conectado**, use **Gerar novo QR / Reconectar** (seç
 
 ## 7. Backup
 
-`scripts/backup.sh` faz duas cópias:
+`scripts/backup.sh` faz o dump do banco:
 
-- **Banco:** `pg_dumpall` dos bancos `talk` e `evolution`. O da Evolution guarda a sessão do WhatsApp, o que evita reescanear o QR. O dump vai para `data/backup/db.sql`, gravado primeiro como `.tmp` e só renomeado no fim. Um dump com falha nunca apaga o último bom.
-- **Mídia:** `data/media` compactada em `data/backup/media.tar.gz`.
+- **Banco:** `pg_dumpall` dos bancos `talk` e `evolution`. O dump vai para `data/backup/db.sql`, gravado primeiro como `.tmp` e só renomeado no fim. Um dump com falha nunca apaga o último bom. A pasta `data/backup` fica com permissão 700.
+- O dump da Evolution guarda as credenciais e as mensagens, mas não as chaves de criptografia (volume `evolution_instances`). Depois de restaurar em servidor novo, gere um novo QR (seção 9, passo 9).
+- **Mídia:** `data/media` **não** é copiada localmente (uma cópia no mesmo disco ocuparia o dobro do espaço e se perderia junto com ele). Ela é coberta pelo snapshot do provedor ou pelo restic (seção 7.1).
 
 Agende uma vez:
 
@@ -198,7 +209,8 @@ Faça uma vez, num VPS descartável ou numa máquina com Docker, seguindo a seç
 
 - o login funcionar;
 - as conversas, contatos e cadastros aparecerem;
-- uma mídia antiga abrir.
+- uma mídia antiga abrir;
+- depois de **Gerar novo QR / Reconectar** (com um número de teste), uma mensagem enviada por um contato que já existia chegar na caixa de entrada.
 
 Depois, destrua a máquina de ensaio: ela contém dados de clientes.
 
@@ -225,11 +237,12 @@ sudo cp /tmp/restauracao/opt/talk/data/backup/db.sql data/backup/
 sudo cp -a /tmp/restauracao/opt/talk/data/media data/
 ```
 
-   - **De um `media.tar.gz`:** `mkdir -p data/backup && tar -xzf media.tar.gz -C data`, com o arquivo copiado para `/opt/talk`.
-4. Ajuste o dono da mídia:
+   - **Do snapshot do provedor:** restaure o snapshot inteiro ou copie dele `data/backup/db.sql` e `data/media`.
+4. Ajuste o dono e as permissões:
 
 ```bash
-sudo chown -R 1000:1000 data/media
+sudo chown -R 1000:1000 data/media && sudo chmod 700 data/media
+chmod 700 data/backup
 ```
 
 5. Suba **só** o Postgres e espere ficar pronto:
@@ -239,7 +252,7 @@ docker compose up -d postgres
 until docker compose exec -T postgres pg_isready -h 127.0.0.1 -U postgres; do sleep 2; done
 ```
 
-6. Restaure os dois bancos:
+6. Restaure os dois bancos. Num servidor que já está rodando, pare antes o app e a Evolution (`docker compose stop app evolution`): com conexões abertas o restore falha.
 
 ```bash
 docker compose exec -T postgres psql -U postgres -d postgres < data/backup/db.sql > /dev/null
@@ -255,7 +268,7 @@ curl -fsS https://talk.jvo.adv.br/api/health
 ```
 
 8. Se o IP mudou, atualize o registro DNS **A** do domínio.
-9. Entre no sistema e confira o canal em **Configurações → Canais**. Se não estiver **Conectado**, use **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório.
+9. Entre no sistema, vá em **Configurações → Canais** e, depois de restaurar em servidor novo, **sempre** use **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório, mesmo que o canal mostre **Conectado**. As chaves de criptografia do WhatsApp ficam no volume `evolution_instances`, que o backup não copia: sem novo QR, as mensagens dos clientes não chegam.
 10. Reative o cron do backup (seção 7) e a cópia fora do servidor (seção 7.1).
 
 ## 10. Checklist da virada
@@ -280,6 +293,7 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Transferir para outro setor: o atendente do setor antigo deixa de ver a conversa.
 - [ ] Finalizar com e sem a mensagem de encerramento; reabrir.
 - [ ] Iniciar conversa: com um contato existente e com um telefone novo.
+- [ ] Responder um contato que aparece sem telefone (só LID): a mensagem chega. Se a Evolution recusar o endereço `@lid`, anote para tratar.
 - [ ] Triagem: o contato novo recebe o menu, escolhe uma opção e a conversa vai para o setor certo.
 - [ ] Anexo `.html` enviado pelo contato é baixado, não aberto no navegador.
 - [ ] Desconectar pelo celular → banner vermelho → **Gerar novo QR / Reconectar** volta a conectar.
