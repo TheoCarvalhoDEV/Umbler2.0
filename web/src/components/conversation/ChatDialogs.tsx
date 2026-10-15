@@ -4,7 +4,7 @@ import type { ChatDetail, SectorDto, UserDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 
 // Native <dialog>: showModal() gives focus trapping, Esc and the backdrop for free.
-function Modal({ title, onCancel, children }: { title: string; onCancel: () => void; children: ReactNode }) {
+export function Modal({ title, onCancel, children }: { title: string; onCancel: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();
@@ -25,7 +25,7 @@ function Modal({ title, onCancel, children }: { title: string; onCancel: () => v
   );
 }
 
-function Actions(props: { busy: boolean; error: string | null; confirmLabel: string; onCancel: () => void; onConfirm: () => void }) {
+export function Actions(props: { busy: boolean; error: string | null; confirmLabel: string; onCancel: () => void; onConfirm: () => void }) {
   return (
     <>
       {props.error && (
