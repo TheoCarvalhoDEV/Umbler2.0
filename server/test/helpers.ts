@@ -36,6 +36,7 @@ export interface SeededUser {
   signature: string | null;
   sectorIds: string[];
   seeAllSectors: boolean;
+  avatarUrl: string | null;
 }
 
 export interface Seeded {
@@ -83,9 +84,9 @@ export async function seedBasics(ctx: { db: Db | Tx }): Promise<Seeded> {
     .returning({ id: channels.id });
 
   return {
-    admin: { ...admin, sectorIds: [] },
-    agentA: { ...agentA, sectorIds: [sectorA.id] },
-    agentB: { ...agentB, sectorIds: [sectorB.id] },
+    admin: { ...admin, sectorIds: [], avatarUrl: null },
+    agentA: { ...agentA, sectorIds: [sectorA.id], avatarUrl: null },
+    agentB: { ...agentB, sectorIds: [sectorB.id], avatarUrl: null },
     sectorA: sectorA.id,
     sectorB: sectorB.id,
     defaultSector: defaultSector.id,

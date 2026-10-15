@@ -31,6 +31,7 @@ const msg = (id: string, sentAt: string, over: Partial<MessageDto> = {}): Messag
   mediaUnavailable: false,
   authorId: null,
   authorName: null,
+  authorAvatarUrl: null,
   replyTo: null,
   reaction: null,
   status: 'sent',

@@ -41,6 +41,7 @@ describe('POST /api/auth/login', () => {
       signature: seed.agentA.signature,
       sectorIds: [seed.sectorA],
       seeAllSectors: false,
+      avatarUrl: null,
     });
     const sid = res.cookies.find((c) => c.name === 'sid');
     expect(sid?.value).toBeTruthy();

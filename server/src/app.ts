@@ -53,6 +53,8 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   });
 
   await app.register(cookie);
+  // Root-level and early so every route module (auth's avatar upload, quick answers, chats) can read multipart bodies.
+  await app.register(multipart, { limits: { fileSize: 64 * 1024 * 1024, files: 1 } });
   app.register(rateLimit, { global: false });
   // Before authPlugin on purpose: websocket's onRequest hook must run before authPlugin's, otherwise a
   // 403 thrown there for a /ws upgrade skips it and the upgrade socket is never destroyed (leaks).
@@ -72,8 +74,6 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerCustomFieldRoutes(app, ctx);
   registerContactRoutes(app, ctx);
   registerUserRoutes(app, ctx);
-  // Root-level so every route module (quick answers here, chats in Task 13) can read multipart bodies.
-  await app.register(multipart, { limits: { fileSize: 64 * 1024 * 1024, files: 1 } });
   registerQuickAnswerRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
   await chatRoutes(app, ctx);

@@ -7,6 +7,7 @@ import { deleteUserSessions } from '../auth/sessions.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { sectors, userSectors, users } from '../db/schema.js';
+import { sendAvatarFile, userAvatarUrl } from '../media/avatar-files.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
 
@@ -39,6 +40,7 @@ async function listUserDtos(db: Db, where?: SQL): Promise<UserDto[]> {
     signature: u.signature,
     active: u.active,
     sectorIds: links.filter((l) => l.userId === u.id).map((l) => l.sectorId),
+    avatarUrl: userAvatarUrl(u),
   }));
 }
 
@@ -87,6 +89,13 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
 
 export function registerUserRoutes(app: FastifyInstance, ctx: AppCtx): void {
   app.get('/api/users', async () => listUserDtos(ctx.db));
+
+  // Any logged-in user (agents' pictures show in every inbox); the auth plugin rejects anonymous /api/*.
+  app.get('/api/users/:id/avatar', async (req, reply) => {
+    const { id } = IdParams.parse(req.params);
+    const [row] = await ctx.db.select({ path: users.avatarPath }).from(users).where(eq(users.id, id));
+    return sendAvatarFile(reply, ctx.config.mediaDir, row?.path);
+  });
 
   app.post('/api/users', async (req) => {
     if (req.user.role !== 'admin') throw forbidden();

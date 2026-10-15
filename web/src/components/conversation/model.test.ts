@@ -10,7 +10,7 @@ const NOW = new Date(2026, 9, 14, 15, 0); // 14/10/2026 15:00 local
 function msg(id: string, sentAt: string, over: Partial<MessageDto> = {}): TimelineItem {
   return {
     type: 'message', id, chatId: 'c1', direction: 'in', kind: 'text', body: id, media: null, mediaUnavailable: false,
-    authorId: null, authorName: null, replyTo: null, reaction: null, status: 'read', error: null, sentAt, ...over,
+    authorId: null, authorName: null, authorAvatarUrl: null, replyTo: null, reaction: null, status: 'read', error: null, sentAt, ...over,
   };
 }
 

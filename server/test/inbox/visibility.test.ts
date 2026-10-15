@@ -6,7 +6,7 @@ import { canSee, loadAuthUser, visibleChatsWhere, type AuthUser, type ChatVisibi
 import { makeTestCtx, seedBasics } from '../helpers.js';
 import { insertChat } from './fixtures.js';
 
-const agent: AuthUser = { id: 'u1', name: 'Ana', email: 'u1@x.com', role: 'agent', signature: null, sectorIds: ['A'], seeAllSectors: false };
+const agent: AuthUser = { id: 'u1', name: 'Ana', email: 'u1@x.com', role: 'agent', signature: null, sectorIds: ['A'], seeAllSectors: false, avatarUrl: null };
 const admin: AuthUser = { ...agent, id: 'adm', email: 'a@x.com', role: 'admin' }; // sector A, "ver todos" off
 const adminAll: AuthUser = { ...admin, seeAllSectors: true };
 

@@ -1,6 +1,7 @@
 import { and, eq, inArray, or, type SQL } from 'drizzle-orm';
 import type { Db, Tx } from '../db/client.js';
 import { chats, users, userSectors } from '../db/schema.js';
+import { userAvatarUrl } from '../media/avatar-files.js';
 
 export interface AuthUser {
   id: string;
@@ -10,6 +11,7 @@ export interface AuthUser {
   signature: string | null;
   sectorIds: string[];
   seeAllSectors: boolean; // only meaningful for admins ("Ver todos os setores")
+  avatarUrl: string | null;
 }
 
 export interface ChatVisibilityFields {
@@ -60,5 +62,6 @@ export async function loadAuthUser(db: Db | Tx, userId: string): Promise<AuthUse
     signature: u.signature,
     sectorIds: rows.map((r) => r.sectorId),
     seeAllSectors: u.seeAllSectors,
+    avatarUrl: userAvatarUrl(u),
   };
 }

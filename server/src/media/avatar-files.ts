@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, resolve, sep } from 'node:path';
@@ -47,4 +48,10 @@ export async function sendAvatarFile(reply: FastifyReply, mediaDir: string, relP
       'Content-Security-Policy': 'sandbox',
     })
     .send(createReadStream(file));
+}
+
+/** `v` is a short hash of the path; every upload gets a new file name, so the URL changes with the picture. */
+export function userAvatarUrl(u: { id: string; avatarPath: string | null }): string | null {
+  if (!u.avatarPath) return null;
+  return `/api/users/${u.id}/avatar?v=${createHash('sha256').update(u.avatarPath).digest('hex').slice(0, 8)}`;
 }
