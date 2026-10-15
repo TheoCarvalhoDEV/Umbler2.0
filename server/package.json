@@ -9,7 +9,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p .",
     "db:generate": "drizzle-kit generate",
-    "seed:admin": "tsx src/auth/seed-admin.ts"
+    "seed:admin": "tsx src/auth/seed-admin.ts",
+    "import:umbler": "tsx src/importer/cli.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",
