@@ -1,4 +1,10 @@
+import { eq } from 'drizzle-orm';
+import type { Db, Tx } from '../db/client.js';
+import { contactFieldValues, contacts, customFields } from '../db/schema.js';
+import type { ChatRow } from '../inbox/chats.js';
+import type { AuthUser } from '../inbox/visibility.js';
 // Spec §5.7: named variables in quick answers, plus conversion of Umbler's positional {{n}}.
+// Chatbot spec 2a §5.3: bots render with this same function plus the `contexto` group.
 export interface QuickAnswerVars {
   atendente: { nome: string; primeiro_nome: string; email: string };
   contato: { nome: string; primeiro_nome: string; telefone: string; email: string };
@@ -18,17 +24,53 @@ function slug(s: string): string {
 
 const NAMED_VAR = /\{\{\s*([^{}.]+)\.([^{}]+?)\s*\}\}/g;
 
-export function renderQuickAnswer(body: string, vars: QuickAnswerVars): string {
+// Later entries win on a slug collision (contextoVars relies on this).
+const slugged = (r: Record<string, string>) => new Map(Object.entries(r).map(([k, v]) => [slug(k), v]));
+
+export function renderQuickAnswer(body: string, vars: QuickAnswerVars & { contexto?: Record<string, string> }): string {
   const groups = new Map<string, Map<string, string>>([
     ['atendente', new Map(Object.entries(vars.atendente))],
     ['contato', new Map(Object.entries(vars.contato))],
-    ['campo', new Map(Object.entries(vars.campo).map(([k, v]) => [slug(k), v]))],
+    ['campo', slugged(vars.campo)],
   ]);
+  // Only bots pass contexto; for quick answers {{contexto.x}} stays literal as before.
+  if (vars.contexto) groups.set('contexto', slugged(vars.contexto));
   return body.replace(NAMED_VAR, (match, group: string, name: string) => {
     const values = groups.get(slug(group));
     // Not one of our groups (e.g. text that merely looks like a variable): leave it.
     return values ? (values.get(slug(name)) ?? '') : match;
   });
+}
+
+export function firstName(s: string): string {
+  return s.trim().split(/\s+/)[0] ?? '';
+}
+
+/** Vars of a chat: its contact, the contact's custom fields (keyed by field name) and the given atendente. */
+export async function buildChatVars(
+  db: Db | Tx,
+  chat: Pick<ChatRow, 'contactId'>,
+  atendente: Pick<AuthUser, 'name' | 'email'> | null,
+): Promise<QuickAnswerVars> {
+  const [contact] = await db.select().from(contacts).where(eq(contacts.id, chat.contactId));
+  const fieldRows = await db
+    .select({ name: customFields.name, value: contactFieldValues.value })
+    .from(contactFieldValues)
+    .innerJoin(customFields, eq(customFields.id, contactFieldValues.fieldId))
+    .where(eq(contactFieldValues.contactId, chat.contactId));
+  const contactName = contact?.name ?? '';
+  return {
+    atendente: atendente
+      ? { nome: atendente.name, primeiro_nome: firstName(atendente.name), email: atendente.email }
+      : { nome: '', primeiro_nome: '', email: '' },
+    contato: {
+      nome: contactName,
+      primeiro_nome: firstName(contactName),
+      telefone: contact?.phone ?? '',
+      email: contact?.email ?? '',
+    },
+    campo: Object.fromEntries(fieldRows.map((f) => [f.name, f.value])),
+  };
 }
 
 const ENTITY = new Map([

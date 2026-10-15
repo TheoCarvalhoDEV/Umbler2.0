@@ -5,12 +5,12 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { QuickAnswerDto } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
-import { contactFieldValues, contacts, customFields, quickAnswers } from '../db/schema.js';
+import { quickAnswers } from '../db/schema.js';
 import { getChatForUser } from '../inbox/chats.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { forbidden, notFound } from '../lib/http-error.js';
 import { mediaResponseHeaders, saveMedia } from '../messages/media.js';
-import { renderQuickAnswer } from '../messages/quick-answers.js';
+import { buildChatVars, renderQuickAnswer } from '../messages/quick-answers.js';
 
 type QaRow = typeof quickAnswers.$inferSelect;
 type Upload = { buffer: Buffer; mime: string; name: string };
@@ -55,7 +55,6 @@ const toDto = (q: QaRow): QuickAnswerDto => ({
 });
 const canView = (u: AuthUser, q: QaRow) => q.visibility === 'all' || q.ownerId === u.id;
 const canEdit = (u: AuthUser, q: QaRow) => q.ownerId === u.id || (u.role === 'admin' && q.visibility === 'all');
-const firstName = (s: string) => s.trim().split(/\s+/)[0] ?? '';
 
 async function readInput(req: FastifyRequest): Promise<{ fields: Record<string, unknown>; file: Upload | null }> {
   if (!req.isMultipart()) return { fields: (req.body ?? {}) as Record<string, unknown>, file: null };
@@ -144,24 +143,7 @@ export function registerQuickAnswerRoutes(app: FastifyInstance, ctx: AppCtx): vo
   app.post('/api/quick-answers/:id/render', async (req) => {
     const qa = await load(ctx, req.user, IdParams.parse(req.params).id);
     const chat = await getChatForUser(ctx, req.user, RenderBody.parse(req.body).chatId);
-    const [contact] = await ctx.db.select().from(contacts).where(eq(contacts.id, chat.contactId));
-    const fieldRows = await ctx.db
-      .select({ name: customFields.name, value: contactFieldValues.value })
-      .from(contactFieldValues)
-      .innerJoin(customFields, eq(customFields.id, contactFieldValues.fieldId))
-      .where(eq(contactFieldValues.contactId, chat.contactId));
-    const contactName = contact?.name ?? '';
-    const text = renderQuickAnswer(qa.body, {
-      atendente: { nome: req.user.name, primeiro_nome: firstName(req.user.name), email: req.user.email },
-      contato: {
-        nome: contactName,
-        primeiro_nome: firstName(contactName),
-        telefone: contact?.phone ?? '',
-        email: contact?.email ?? '',
-      },
-      campo: Object.fromEntries(fieldRows.map((f) => [f.name, f.value])),
-    });
-    return { text };
+    return { text: renderQuickAnswer(qa.body, await buildChatVars(ctx.db, chat, req.user)) };
   });
 
   // Spec §4: an attachment of an owner-only answer is served to its owner only (load() → 404).

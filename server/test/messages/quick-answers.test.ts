@@ -69,3 +69,26 @@ describe('convertUmblerVariables', () => {
     expect(renderQuickAnswer(body, vars)).toBe('Oi Maria, sou Ana. Processo 0001234-56.2026.8.11.0041');
   });
 });
+
+describe('renderQuickAnswer with contexto (bots)', () => {
+  const botVars = {
+    ...vars,
+    contexto: { cpf: '123.456.789-00', 'cpf:raw': '12345678900', 'cpf:label': '', menu: '2', 'menu:raw': 'Financeiro', 'menu:label': 'Financeiro' },
+  };
+
+  it.each([
+    ['CPF {{contexto.cpf}}', 'CPF 123.456.789-00'],
+    ['CPF digitado {{contexto.cpf:raw}}', 'CPF digitado 12345678900'],
+    ['{{ Contexto.CPF }} / {{contexto.CPF:RAW}}', '123.456.789-00 / 12345678900'],
+    ['Opção {{contexto.menu}} ({{contexto.menu:label}})', 'Opção 2 (Financeiro)'],
+    ['Sem valor: [{{contexto.inexistente}}] [{{contexto.cpf:label}}]', 'Sem valor: [] []'],
+    ['{{contato.primeiro_nome}}, CPF {{campo.cpf}} = {{contexto.cpf}}', 'Maria, CPF 123.456.789-00 = 123.456.789-00'],
+    ['Bem-vindo à {{empresa}} {{1}}', 'Bem-vindo à {{empresa}} {{1}}'],
+  ])('%j renders %j', (body, expected) => {
+    expect(renderQuickAnswer(body, botVars)).toBe(expected);
+  });
+
+  it('keeps {{contexto.x}} literal when no contexto is given (quick answers)', () => {
+    expect(renderQuickAnswer('{{contexto.cpf}}', vars)).toBe('{{contexto.cpf}}');
+  });
+});
