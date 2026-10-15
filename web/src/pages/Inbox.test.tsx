@@ -8,7 +8,7 @@ import { Inbox } from './Inbox';
 
 const chatA: ChatListItem = {
   id: 'a',
-  contact: { id: 'ct1', name: 'Ana Souza', phone: '5565999991111' },
+  contact: { id: 'ct1', name: 'Ana Souza', phone: '5565999991111', avatarUrl: null },
   channelId: 'ch1',
   sectorId: 's1',
   ownerId: 'u1',
@@ -24,7 +24,7 @@ const chatA: ChatListItem = {
 const chatB: ChatListItem = {
   ...chatA,
   id: 'b',
-  contact: { id: 'ct2', name: null, phone: '5565999990000' },
+  contact: { id: 'ct2', name: null, phone: '5565999990000', avatarUrl: null },
   ownerId: null,
   private: false,
   unread: 1,

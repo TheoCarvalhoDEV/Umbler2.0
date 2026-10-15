@@ -16,7 +16,7 @@ vi.mock('../../lib/api', async (importOriginal) => ({
 
 const contact: ContactDto = {
   id: 'c1', name: 'Maria Souza', phone: '5565999991234', lid: null, email: null, landline: null,
-  address: null, blocked: false, tagIds: [], fields: {}, createdAt: '2026-10-01T12:00:00.000Z',
+  address: null, blocked: false, tagIds: [], fields: {}, createdAt: '2026-10-01T12:00:00.000Z', avatarUrl: null,
 };
 
 function renderForm(existing?: ContactDto) {

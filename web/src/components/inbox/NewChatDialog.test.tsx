@@ -12,7 +12,7 @@ function json(data: unknown, status = 200): Response {
 
 const ana: ContactDto = {
   id: 'ct-ana', name: 'Ana Souza', phone: '5565999991111', lid: null, email: null, landline: null,
-  address: null, blocked: false, tagIds: [], fields: {}, createdAt: '2026-10-01T10:00:00.000Z',
+  address: null, blocked: false, tagIds: [], fields: {}, createdAt: '2026-10-01T10:00:00.000Z', avatarUrl: null,
 };
 
 const calls: Array<{ method: string; path: string; body: unknown }> = [];

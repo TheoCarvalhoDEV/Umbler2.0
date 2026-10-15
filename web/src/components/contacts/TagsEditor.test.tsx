@@ -17,7 +17,7 @@ vi.mock('../../lib/api', async (importOriginal) => ({
 
 const contact: ContactDto = {
   id: 'c1', name: 'Maria', phone: '5565999991234', lid: null, email: null, landline: null,
-  address: null, blocked: false, tagIds: ['t1'], fields: {}, createdAt: '2026-10-01T12:00:00.000Z',
+  address: null, blocked: false, tagIds: ['t1'], fields: {}, createdAt: '2026-10-01T12:00:00.000Z', avatarUrl: null,
 };
 const tags: TagDto[] = [
   { id: 't1', name: 'Cliente', emoji: null, color: '#2563eb', position: 0 },

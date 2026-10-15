@@ -79,7 +79,7 @@ describe('createHub.publishChat', () => {
 
     const expected = {
       id: chat.id,
-      contact: { id: contactId, name: 'Maria Souza', phone },
+      contact: { id: contactId, name: 'Maria Souza', phone, avatarUrl: null },
       channelId: s.channelId,
       sectorId: s.sectorA,
       ownerId: null,

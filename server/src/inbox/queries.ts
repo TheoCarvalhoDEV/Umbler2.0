@@ -4,6 +4,7 @@ import type { ChatDetail, ChatListFilters, ChatListItem, TimelineItem } from '@t
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { chatEvents, chatPins, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
+import { avatarUrl } from '../contacts/avatar.js';
 import { badRequest } from '../lib/http-error.js';
 import { toMessageDto } from '../messages/dto.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
@@ -35,7 +36,13 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string): Promise<ChatListItem> {
   const [contact] = await db
-    .select({ id: contacts.id, name: contacts.name, phone: contacts.phone })
+    .select({
+      id: contacts.id,
+      name: contacts.name,
+      phone: contacts.phone,
+      avatarPath: contacts.avatarPath,
+      avatarCheckedAt: contacts.avatarCheckedAt,
+    })
     .from(contacts)
     .where(eq(contacts.id, chat.contactId));
   const pin = await db
@@ -51,7 +58,9 @@ export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string)
     .orderBy(asc(tags.position));
   return {
     id: chat.id,
-    contact: contact ?? { id: chat.contactId, name: null, phone: null },
+    contact: contact
+      ? { id: contact.id, name: contact.name, phone: contact.phone, avatarUrl: avatarUrl(contact) }
+      : { id: chat.contactId, name: null, phone: null, avatarUrl: null },
     channelId: chat.channelId,
     sectorId: chat.sectorId,
     ownerId: chat.ownerId,

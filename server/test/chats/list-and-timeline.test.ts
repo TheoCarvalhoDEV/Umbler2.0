@@ -76,7 +76,7 @@ describe('GET /api/chats', () => {
     expect(ids(await list(headers, '?q=556599990001'))).toEqual([c1.chatId]);
     expect(ids(await list(headers, '?q=8888'))).toEqual([c2.chatId]);
     expect((await list(headers, '?q=maria')).items[0].contact).toEqual({
-      id: c1.contactId, name: 'Maria Souza', phone: '5565999990001',
+      id: c1.contactId, name: 'Maria Souza', phone: '5565999990001', avatarUrl: null,
     });
   });
 

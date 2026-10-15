@@ -93,7 +93,7 @@ describe('GET /ws', () => {
 
     expect(await received).toEqual({
       type: 'chat.updated',
-      chat: expect.objectContaining({ id: chatId, sectorId: s.sectorA, contact: { id: contactId, name: 'Ana Prado', phone: '5565999991234' } }),
+      chat: expect.objectContaining({ id: chatId, sectorId: s.sectorA, contact: { id: contactId, name: 'Ana Prado', phone: '5565999991234', avatarUrl: null } }),
     });
   });
 

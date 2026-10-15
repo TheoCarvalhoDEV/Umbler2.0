@@ -6,7 +6,7 @@ import { applyWsEvent, connectWs, onWsEvent } from './ws';
 
 const chat = (id: string, over: Partial<ChatListItem> = {}): ChatListItem => ({
   id,
-  contact: { id: `ct-${id}`, name: `Contato ${id}`, phone: '5565999990000' },
+  contact: { id: `ct-${id}`, name: `Contato ${id}`, phone: '5565999990000', avatarUrl: null },
   channelId: 'ch1',
   sectorId: 's1',
   ownerId: null,
