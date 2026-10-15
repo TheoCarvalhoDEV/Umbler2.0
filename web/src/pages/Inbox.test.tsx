@@ -46,7 +46,7 @@ beforeEach(() => {
     calls.push({ method, url });
     if (url.pathname === '/api/sectors') return json([{ id: 's1', name: 'Financeiro', position: 1, isDefault: false }]);
     if (url.pathname === '/api/users') {
-      return json([{ id: 'u1', name: 'Maria Lima', email: 'maria@exemplo.com.br', role: 'agent', signature: null, active: true, sectorIds: ['s1'] }]);
+      return json([{ id: 'u1', name: 'Maria Lima', email: 'maria@exemplo.com.br', role: 'agent', signature: null, active: true, sectorIds: ['s1'], avatarUrl: '/api/users/u1/avatar?v=abc' }]);
     }
     if (url.pathname === '/api/tags') return json([]);
     if (url.pathname === '/api/chats/a/pin') return new Response(null, { status: 204 });
@@ -90,7 +90,7 @@ it('renders chat items with preview, unread, owner, sector, lock and pin', async
   expect(screen.getByLabelText('Não lidas: 3')).toBeTruthy();
   expect(screen.getByLabelText('Conversa privada')).toBeTruthy();
   expect(screen.getByLabelText('Fixada')).toBeTruthy();
-  expect((await screen.findByTitle('Maria Lima')).textContent).toBe('ML');
+  expect((await screen.findByTitle('Maria Lima')).querySelector('img')?.getAttribute('src')).toBe('/api/users/u1/avatar?v=abc'); // owner picture
   expect(document.querySelector('img[src="/api/contacts/ct1/avatar?v=1"]')).toBeTruthy(); // contact picture
   expect((await screen.findAllByText('Financeiro')).length).toBe(2);
 });

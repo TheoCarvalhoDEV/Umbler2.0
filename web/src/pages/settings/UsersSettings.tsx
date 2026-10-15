@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Role, SectorDto, UserDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
+import { Avatar } from '../../components/Avatar';
 import { ErrorText, Loading, Section, btn, btnPrimary, field, send, useSend } from '../../components/settings/common';
 
 interface UserInput {
@@ -87,7 +88,12 @@ export function UsersSettings() {
         <tbody>
           {users.data.map((u) => (
             <tr key={u.id} className={`border-b border-border ${u.active ? '' : 'text-muted'}`}>
-              <td className="py-2">{u.name}</td>
+              <td className="py-2">
+                <span className="flex items-center gap-2">
+                  <Avatar name={u.name} src={u.avatarUrl} className="size-7 text-xs bg-primary text-white" />
+                  {u.name}
+                </span>
+              </td>
               <td className="py-2">{u.email}</td>
               <td className="py-2">{u.role === 'admin' ? 'Administrador' : 'Atendente'}</td>
               <td className="py-2">{u.sectorIds.map((id) => sectorName.get(id)).filter(Boolean).join(', ') || '—'}</td>

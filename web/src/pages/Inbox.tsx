@@ -59,7 +59,7 @@ export function Inbox() {
   const users = useQuery({ queryKey: qk.users, queryFn: api.users.list });
   const tags = useQuery({ queryKey: qk.tags, queryFn: api.tags.list });
   const sectorName = new Map((sectors.data ?? []).map((s) => [s.id, s.name]));
-  const userName = new Map((users.data ?? []).map((u) => [u.id, u.name]));
+  const userById = new Map((users.data ?? []).map((u) => [u.id, u]));
   const badges: Record<ChatTab, number> = { inbox: useUnreadChats('inbox'), waiting: useUnreadChats('waiting'), closed: 0 };
 
   const list = useChatList(buildChatQuery(tab, q, filters));
@@ -201,7 +201,7 @@ export function Inbox() {
               chat={c}
               active={c.id === activeId}
               sectorName={sectorName.get(c.sectorId) ?? null}
-              ownerName={c.ownerId ? (userName.get(c.ownerId) ?? null) : null}
+              owner={c.ownerId ? (userById.get(c.ownerId) ?? null) : null}
               onOpen={() => navigate(`/chats/${c.id}`)}
               onTogglePin={() => pin.mutate(c)}
             />
