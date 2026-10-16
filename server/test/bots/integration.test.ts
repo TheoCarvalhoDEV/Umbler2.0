@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BotGraph } from '@talk/shared';
 import type { InboundReply } from '../../src/bots/registry.js';
+import { startRun } from '../../src/bots/engine.js';
 import { createBot } from '../../src/bots/repo.js';
 import { botRuns, bots, chats, contacts, messages, settings } from '../../src/db/schema.js';
 import { handleInbound, type IngestHooks } from '../../src/messages/ingest.js';
@@ -177,6 +178,22 @@ describe('ingest and bots', () => {
     expect(replies).toEqual([
       { messageId: stored!.id, kind: 'text', body: '2', mediaMime: null, mediaName: null, createdAt: stored!.createdAt },
     ]);
+  });
+
+  it('a manual bot started while the triage menu is pending takes the next reply alone', async () => {
+    await ingest(msg({ body: 'Bom dia' }));
+    const chat = await chatOf(PHONE);
+    await ctx.db.update(chats).set({ triagePending: true }).where(eq(chats.id, chat.id)); // the triage menu went out
+    const g = menuGraph();
+    g.nodes[0] = { ...g.nodes[0]!, type: 'start_manual' };
+    const bot = await createBot(ctx.db, { name: 'Manual', graph: g, valid: true, publish: true, createdBy: null, manualStart: true });
+    await ctx.db.update(bots).set({ status: 'active' }).where(eq(bots.id, bot.id));
+    await startRun(ctx, { botId: bot.id, chatId: chat.id, entry: 'manual', startedBy: seed.admin.id });
+
+    expect((await chatOf(PHONE)).triagePending).toBe(false);
+    await ingest(msg({ body: '1' }));
+    expect(triage.calls).toEqual([`triage:start:${chat.id}`]);
+    expect(sentTexts()).toEqual([MENU_TEXT, 'Certo!']);
   });
 
   it('outbound and echo messages neither start nor resume bots', async () => {

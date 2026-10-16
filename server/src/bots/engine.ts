@@ -78,6 +78,8 @@ async function startRunLocked(ctx: AppCtx, input: StartRunInput): Promise<BotRun
       parentRunId: input.parentRunId ?? null,
       startedBy: input.startedBy,
     });
+    // the bot takes the conversation: a pending triage menu must not also answer the contact's next reply
+    if (input.entry !== 'call') await tx.update(chats).set({ triagePending: false }).where(eq(chats.id, chat.id));
     // keep updated_at: a run is not an edit of the bot ("atualizado em" in the list)
     await tx.update(bots).set({ runCount: sql`${bots.runCount} + 1`, updatedAt: sql`${bots.updatedAt}` }).where(eq(bots.id, bot.id));
     await addEvent(tx, chat.id, 'bot_started', eventData(bot, row.id), null);
