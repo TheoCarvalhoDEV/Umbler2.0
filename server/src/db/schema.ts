@@ -14,7 +14,7 @@ import {
   varchar,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
-import type { BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind } from '@talk/shared';
+import type { BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, MessageChangeSource } from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
 const id = () => uuid('id').primaryKey().$defaultFn(() => randomUUID());
@@ -196,6 +196,15 @@ export const messages = pgTable(
     status: text('status').$type<'pending' | 'sent' | 'delivered' | 'read' | 'failed'>().notNull().default('pending'),
     error: text('error'),
     botRunId: uuid('bot_run_id').references((): AnyPgColumn => botRuns.id, { onDelete: 'set null' }), // set = sent by a chatbot
+    // Message actions (spec 2026-10-16 §8). `reaction` is the contact's; this is the office's (agent or office phone).
+    officeReaction: text('office_reaction'),
+    // Deleted for everyone: the text stays for the team, the bubble shows who deleted it.
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedBy: uuid('deleted_by').references(() => users.id, { onDelete: 'set null' }), // office deletes only
+    deletedSource: text('deleted_source').$type<MessageChangeSource>(),
+    editedAt: timestamp('edited_at', { withTimezone: true }), // previous texts live in message_edits
+    forwardedFromId: uuid('forwarded_from_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
+    mediaSha256: text('media_sha256'), // hex digest of the stored file; dedupes the recent stickers (spec §6)
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
@@ -305,4 +314,21 @@ export const botRuns = pgTable(
       .on(t.chatId, t.botId)
       .where(sql`${t.state} in ('running','waiting_reply','waiting_timer','waiting_flow') and ${t.depth} = 0`),
   ],
+);
+
+/** Spec §5: one row per edit, holding the text the message had before it. */
+export const messageEdits = pgTable(
+  'message_edits',
+  {
+    id: id(),
+    messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
+    previousBody: text('previous_body'),
+    source: text('source').$type<MessageChangeSource>().notNull(),
+    editedBy: uuid('edited_by').references(() => users.id, { onDelete: 'set null' }), // null unless source = 'office'
+    // WhatsApp's encrypted edit format: the message was edited but the new text never reached us.
+    newTextUnavailable: boolean('new_text_unavailable').notNull().default(false),
+    // DB now() (microseconds), not a JS Date: two edits in the same millisecond still sort.
+    editedAt: timestamp('edited_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('message_edits_message_idx').on(t.messageId, t.editedAt)],
 );
