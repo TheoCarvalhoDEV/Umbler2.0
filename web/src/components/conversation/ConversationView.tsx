@@ -96,7 +96,7 @@ function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOp
         onToggleContactPanel={onToggleContactPanel}
         onOpenChat={onOpenChat}
       />
-      <Timeline chatId={chatId} onReply={setReplyTo} />
+      <Timeline chatId={chatId} onReply={setReplyTo} chatOpen={chat.state === 'open'} />
       {chat.state === 'open' ? (
         <Composer chatId={chatId} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />
       ) : (

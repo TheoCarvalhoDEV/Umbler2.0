@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { MessageDto } from '@talk/shared';
+import type { Me, MessageDto } from '@talk/shared';
+import { qk } from '../../lib/api';
+import { confirmDialog } from '../../lib/confirm';
 import { MessageBubble } from './MessageBubble';
+
+vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
 
 // jsdom has no modal <dialog> API; the browser opens ChatDialogs' Modal with showModal()
 HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
@@ -39,10 +43,16 @@ const base: MessageDto = {
   status: 'sent', error: null, sentAt: '2026-10-15T12:00:00.000Z',
 };
 
-function renderBubble(m: MessageDto) {
+const ME: Me = {
+  id: 'u1', name: 'Ana Lima', email: 'ana@teste.local', role: 'agent', signature: null, sectorIds: [], seeAllSectors: false, avatarUrl: null,
+};
+
+function renderBubble(m: MessageDto, opts: { chatOpen?: boolean } = {}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc.setQueryData(qk.me, ME);
   return render(
-    <QueryClientProvider client={new QueryClient()}>
-      <MessageBubble m={m} onReply={() => {}} />
+    <QueryClientProvider client={qc}>
+      <MessageBubble m={m} onReply={() => {}} chatOpen={opts.chatOpen ?? false} />
     </QueryClientProvider>,
   ).container;
 }
@@ -116,5 +126,106 @@ describe('MessageBubble tags and reactions', () => {
     expect(await screen.findByText('Olá!')).toBeTruthy();
     expect(screen.getByRole('dialog', { name: 'Versões anteriores' })).toBeTruthy();
     expect(calls).toEqual([{ method: 'GET', path: '/api/messages/m1/edits', body: undefined }]);
+  });
+});
+
+describe('MessageBubble action menu', () => {
+  const recent = { ...base, sentAt: new Date(Date.now() - 60_000).toISOString() };
+  const ago = (ms: number) => ({ ...base, sentAt: new Date(Date.now() - ms).toISOString() });
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Ações da mensagem' }));
+  const labels = () => screen.getAllByRole('menuitem').map((b) => b.firstChild?.textContent);
+  const item = (name: string) => screen.getByRole('menuitem', { name: new RegExp(`^${name}`) }) as HTMLButtonElement;
+
+  it('offers every action on my recent text in an open chat', () => {
+    renderBubble(recent, { chatOpen: true });
+    openMenu();
+    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar', 'Editar', 'Apagar para todos']);
+    expect(screen.getAllByRole('menuitem').every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it('keeps expired actions, disabled, with the hint', () => {
+    renderBubble(ago(20 * 60_000), { chatOpen: true });
+    openMenu();
+    expect(item('Editar').disabled).toBe(true);
+    expect(item('Editar').textContent).toBe('EditarSó até 15 min após o envio');
+    expect(item('Apagar para todos').disabled).toBe(false);
+    cleanup();
+    renderBubble(ago(49 * 3_600_000), { chatOpen: true });
+    openMenu();
+    expect(item('Apagar para todos').disabled).toBe(true);
+    expect(screen.getByText('Só até 48 h após o envio')).toBeTruthy();
+  });
+
+  it('leaves out what does not apply: inbound, deleted and closed-chat messages', () => {
+    renderBubble({ ...recent, direction: 'in', authorId: null, authorName: null, authorAvatarUrl: null }, { chatOpen: true });
+    openMenu();
+    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar']);
+    cleanup();
+    renderBubble({ ...recent, deleted: { at: recent.sentAt, source: 'office', byName: 'Ana Lima' } }, { chatOpen: true });
+    openMenu();
+    expect(labels()).toEqual(['Copiar']);
+    cleanup();
+    renderBubble(recent, { chatOpen: false });
+    openMenu();
+    expect(labels()).toEqual(['Copiar']);
+  });
+
+  it('reacts with a quick emoji', async () => {
+    stubFetch({ 'POST /api/messages/m1/reaction': { ...recent, officeReaction: '👍' } });
+    renderBubble(recent, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Reagir'));
+    fireEvent.click(screen.getByRole('button', { name: 'Reagir com 👍' }));
+    await waitFor(() => expect(calls).toEqual([{ method: 'POST', path: '/api/messages/m1/reaction', body: { emoji: '👍' } }]));
+  });
+
+  it('reacts with another emoji typed or picked in the box, one only', async () => {
+    stubFetch({ 'POST /api/messages/m1/reaction': { ...recent, officeReaction: '🎉' } });
+    renderBubble(recent, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Reagir'));
+    const box = screen.getByLabelText('Outro emoji');
+    fireEvent.change(box, { target: { value: 'abc' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(screen.getByRole('alert').textContent).toBe('Escolha um emoji');
+    fireEvent.change(box, { target: { value: '🎉🎉' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(calls).toEqual([{ method: 'POST', path: '/api/messages/m1/reaction', body: { emoji: '🎉' } }]));
+  });
+
+  it('asks before deleting for everyone, with the spec text', async () => {
+    stubFetch({ 'DELETE /api/messages/m1': { ...recent, deleted: { at: recent.sentAt, source: 'office', byName: 'Ana Lima' } } });
+    renderBubble(recent, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Apagar para todos'));
+    await waitFor(() => expect(calls).toEqual([{ method: 'DELETE', path: '/api/messages/m1', body: undefined }]));
+    expect(confirmDialog).toHaveBeenCalledWith({
+      title: 'Apagar para todos?', body: 'O contato deixa de ver esta mensagem.', confirmLabel: 'Apagar para todos',
+    });
+  });
+
+  it('edits in place: Esc cancels, Enter saves', async () => {
+    stubFetch({ 'PATCH /api/messages/m1': { ...recent, body: 'Olá, tudo bem?' } });
+    renderBubble(recent, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Editar'));
+    const box = () => screen.getByLabelText('Editar mensagem') as HTMLTextAreaElement;
+    expect(box().value).toBe('Olá');
+    fireEvent.keyDown(box(), { key: 'Escape' });
+    expect(screen.queryByLabelText('Editar mensagem')).toBeNull();
+
+    openMenu();
+    fireEvent.click(item('Editar'));
+    fireEvent.change(box(), { target: { value: 'Olá, tudo bem?' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByLabelText('Editar mensagem')).toBeNull());
+    expect(calls).toEqual([{ method: 'PATCH', path: '/api/messages/m1', body: { text: 'Olá, tudo bem?' } }]);
+  });
+
+  it('opens the forward dialog', () => {
+    renderBubble(recent, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Encaminhar'));
+    expect(screen.getByRole('dialog', { name: 'Encaminhar mensagem' })).toBeTruthy();
   });
 });

@@ -8,7 +8,16 @@ import { TIMELINE_PAGE_SIZE, buildTimelineRows, eventText, mergeTimelinePages, t
 
 const EDGE_PX = 80;
 
-export function Timeline({ chatId, onReply }: { chatId: string; onReply: (m: MessageDto) => void }) {
+export function Timeline({
+  chatId,
+  onReply,
+  chatOpen = false,
+}: {
+  chatId: string;
+  onReply: (m: MessageDto) => void;
+  /** Spec §2: message actions only in an open chat. */
+  chatOpen?: boolean;
+}) {
   const timeline = useInfiniteQuery({
     queryKey: qk.timeline(chatId),
     queryFn: ({ pageParam }) => api.chats.timeline(chatId, { before: pageParam, limit: TIMELINE_PAGE_SIZE }),
@@ -95,7 +104,7 @@ export function Timeline({ chatId, onReply }: { chatId: string; onReply: (m: Mes
             </p>
           );
         }
-        return <MessageBubble key={row.key} m={item} onReply={onReply} />;
+        return <MessageBubble key={row.key} m={item} onReply={onReply} chatOpen={chatOpen} />;
       })}
     </div>
   );
