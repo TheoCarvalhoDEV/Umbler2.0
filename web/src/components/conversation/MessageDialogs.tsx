@@ -60,8 +60,9 @@ export function ForwardDialog({ message, onClose }: { message: MessageDto; onClo
   const searching = term.length >= 2;
 
   // ponytail: one request per keystroke (cached per term), like NewChatDialog; debounce if search gets slow
+  // Not qk.chatList: that prefix holds infinite-query data ({pages}) and ws.ts mapChatLists would throw on this plain result.
   const chatQuery = { tab: 'inbox' as const, q: term, limit: 5 };
-  const chats = useQuery({ queryKey: qk.chatList(chatQuery), queryFn: () => api.chats.list(chatQuery), enabled: searching });
+  const chats = useQuery({ queryKey: ['chats', 'forward-search', chatQuery], queryFn: () => api.chats.list(chatQuery), enabled: searching });
   const contactQuery = { q: term, limit: 5 };
   const contacts = useQuery({ queryKey: qk.contactList(contactQuery), queryFn: () => api.contacts.list(contactQuery), enabled: searching });
   const openChats = searching ? (chats.data?.items ?? []) : [];

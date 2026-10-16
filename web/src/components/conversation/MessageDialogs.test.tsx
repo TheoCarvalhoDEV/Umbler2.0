@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ChatListItem, ContactDto, MessageDto } from '@talk/shared';
+import { applyWsEvent } from '../../lib/ws';
 import { ForwardDialog } from './MessageDialogs';
 
 HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
@@ -52,9 +53,9 @@ const contact = (id: string, name: string): ContactDto => ({
   createdAt: '2026-10-01T12:00:00.000Z', avatarUrl: null,
 });
 
-function renderDialog(onClose = vi.fn()) {
+function renderDialog(onClose = vi.fn(), qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={qc}>
       <ForwardDialog message={message()} onClose={onClose} />
     </QueryClientProvider>,
   );
@@ -118,5 +119,16 @@ describe('ForwardDialog', () => {
     fireEvent.change(screen.getByLabelText('Conversa ou contato'), { target: { value: 'Ma' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Mário Lima' }));
     expect((await screen.findByRole('alert')).textContent).toBe('Esta mídia não está disponível para encaminhar');
+  });
+
+  it('keeps its search results out of the chat-list cache, so a chat.updated event after a search does not throw', async () => {
+    stubFetch(SEARCH);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderDialog(vi.fn(), qc);
+    fireEvent.change(screen.getByLabelText('Conversa ou contato'), { target: { value: 'Ma' } });
+    await screen.findByText('Conversas abertas');
+
+    expect(() => applyWsEvent(qc, { type: 'chat.updated', chat: chatItem('c2', 'k2', 'Maria Souza') })).not.toThrow();
+    expect(() => applyWsEvent(qc, { type: 'chat.removed', chatId: 'c2' })).not.toThrow();
   });
 });
