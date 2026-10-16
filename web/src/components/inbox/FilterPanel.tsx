@@ -21,7 +21,7 @@ interface Props {
 export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
   const ids = { sector: useId(), owner: useId(), tag: useId(), from: useId(), to: useId() };
   const set = (patch: Partial<InboxFilters>) => onChange({ ...value, ...patch });
-  const field = 'mt-1 w-full rounded bg-panel px-2 py-1.5 text-sm outline-none';
+  const field = 'mt-1 w-full rounded bg-panel px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
 
   return (
     <div className="space-y-2 border-b border-border p-3 text-sm">
@@ -38,7 +38,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
         <label htmlFor={ids.owner} className="text-muted">Atendente</label>
         <select id={ids.owner} value={value.ownerId} onChange={(e) => set({ ownerId: e.target.value })} className={field}>
           <option value="">Todos</option>
-          <option value={NO_OWNER}>Sem dono</option>
+          <option value={NO_OWNER}>Sem atendente</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}
@@ -81,7 +81,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
           </div>
         )}
       </fieldset>
-      <button type="button" onClick={() => onChange(EMPTY_FILTERS)} className="text-primary underline">
+      <button type="button" onClick={() => onChange(EMPTY_FILTERS)} className="text-link underline">
         Limpar filtros
       </button>
     </div>

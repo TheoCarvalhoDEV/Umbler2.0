@@ -4,6 +4,7 @@ import { tagColorHex, type TagDto } from '@talk/shared';
 import { TagForm, type TagInput } from '../../components/settings/TagForm';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
 import { api, qk } from '../../lib/api';
+import { confirmDialog } from '../../lib/confirm';
 
 export function TagsSettings() {
   const tags = useQuery({ queryKey: qk.tags, queryFn: api.tags.list });
@@ -26,8 +27,9 @@ export function TagsSettings() {
     );
   }
 
-  function remove(t: TagDto) {
-    if (window.confirm(`Excluir a etiqueta "${t.name}"? Ela sai de todos os contatos.`)) {
+  async function remove(t: TagDto) {
+    const body = 'Ela sai de todos os contatos.';
+    if (await confirmDialog({ title: `Excluir a etiqueta "${t.name}"?`, body, confirmLabel: 'Excluir etiqueta' })) {
       save.mutate(() => send(`/api/tags/${t.id}`, 'DELETE'));
     }
   }

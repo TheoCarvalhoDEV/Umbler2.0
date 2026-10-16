@@ -1,10 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AddressBookIcon,
   ChatCircleDotsIcon,
-  ChatsCircleIcon,
   GearSixIcon,
   SignOutIcon,
   WarningCircleIcon,
@@ -16,6 +15,7 @@ import { Avatar } from '../Avatar';
 import { connectWs } from '../../lib/ws';
 import { NotificationPermissionButton, useMessageNotifications } from '../../lib/notify';
 import { NotificationToasts } from './NotificationToasts';
+import { readThemePref, setThemePref, type ThemePref } from '../../lib/theme';
 
 function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon: Icon }) {
   return (
@@ -26,13 +26,44 @@ function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon
       className={({ isActive }) =>
         `relative flex size-11 items-center justify-center rounded-xl transition-colors ${
           isActive
-            ? 'bg-sidebar-active text-white before:absolute before:-left-2.5 before:h-6 before:w-1 before:rounded-r before:bg-primary'
+            ? 'bg-sidebar-active text-nav-on before:absolute before:-left-2.5 before:h-6 before:w-1 before:rounded-r before:bg-primary'
             : 'text-muted hover:bg-sidebar-hover hover:text-fg'
         }`
       }
     >
       {({ isActive }) => <IconCmp size={24} weight={isActive ? 'fill' : 'regular'} />}
     </NavLink>
+  );
+}
+
+const THEMES: Array<[ThemePref, string]> = [
+  ['system', 'Sistema'],
+  ['light', 'Claro'],
+  ['dark', 'Escuro'],
+];
+
+function ThemePicker() {
+  const [pref, setPref] = useState(readThemePref);
+  return (
+    <fieldset className="px-3 py-2">
+      <legend className="mb-1 text-xs text-muted">Tema</legend>
+      <div className="flex rounded-lg bg-surface p-0.5">
+        {THEMES.map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={pref === value}
+            onClick={() => {
+              setThemePref(value);
+              setPref(value);
+            }}
+            className={`flex-1 rounded-md py-1 text-sm ${pref === value ? 'bg-panel font-medium text-fg shadow-sm' : 'text-muted hover:text-fg'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
   );
 }
 
@@ -59,6 +90,7 @@ function UserMenu() {
           <p className="truncate text-sm font-medium">{me.name}</p>
           <p className="truncate text-xs text-muted">{me.email}</p>
         </div>
+        <ThemePicker />
         <NotificationPermissionButton />
         <button
           type="button"
@@ -78,7 +110,7 @@ function ChannelBanner() {
   const down = (data ?? []).filter((c) => c.status !== 'connected');
   if (down.length === 0) return null;
   return (
-    <div role="alert" className="flex items-center gap-2 bg-danger px-4 py-2 text-sm font-medium text-white">
+    <div role="alert" className="flex items-center gap-2 bg-danger-strong px-4 py-2 text-sm font-medium text-white">
       <WarningCircleIcon size={18} weight="fill" />
       <span>WhatsApp desconectado: {down.map((c) => c.name).join(', ')}.</span>
       {me.role === 'admin' && (
@@ -98,7 +130,7 @@ export default function AppLayout() {
   return (
     <div className="flex h-dvh bg-surface text-fg">
       <nav className="flex w-16 shrink-0 flex-col items-center gap-1 bg-sidebar py-3" aria-label="Menu principal">
-        <ChatsCircleIcon size={32} weight="fill" className="mb-4 text-primary" aria-hidden />
+        <img src="/logo-mark.png" alt="" className="brand-logo mb-4 size-11" />
         <NavItem to="/chats" label="Conversas" icon={ChatCircleDotsIcon} />
         <NavItem to="/contacts" label="Contatos" icon={AddressBookIcon} />
         <NavItem to="/configuracoes" label="Configurações" icon={GearSixIcon} />

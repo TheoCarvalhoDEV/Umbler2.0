@@ -1,10 +1,9 @@
 import type { FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router';
-import { ChatsCircleIcon } from '@phosphor-icons/react';
 import { useLogin, useMe, useSessionSync } from '../lib/auth';
 
 const inputClass =
-  'w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-fg outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/30';
+  'w-full rounded-lg border border-field bg-surface px-3 py-2.5 text-fg outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/30';
 
 export default function Login() {
   const me = useMe();
@@ -29,7 +28,7 @@ export default function Login() {
         className="w-full max-w-sm space-y-5 rounded-2xl border border-border bg-panel p-8 shadow-2xl"
       >
         <div className="flex flex-col items-center gap-2 text-center">
-          <ChatsCircleIcon size={44} weight="fill" className="text-primary" />
+          <img src="/logo.png" alt="" className="brand-logo size-28" />
           <h1 className="text-xl font-semibold">Atendimento</h1>
           <p className="text-sm text-muted">Entre com seu e-mail e senha.</p>
         </div>

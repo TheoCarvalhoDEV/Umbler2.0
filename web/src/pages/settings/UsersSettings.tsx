@@ -5,6 +5,7 @@ import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { Avatar } from '../../components/Avatar';
 import { ErrorText, Loading, Section, btn, btnPrimary, field, send, useSend } from '../../components/settings/common';
+import { confirmDialog } from '../../lib/confirm';
 
 interface UserInput {
   name: string;
@@ -47,8 +48,9 @@ export function UsersSettings() {
     );
   }
 
-  function toggleActive(u: UserDto) {
-    if (u.active && !window.confirm(`Desativar ${u.name}? A pessoa perde o acesso na hora.`)) return;
+  async function toggleActive(u: UserDto) {
+    const body = 'A pessoa perde o acesso na hora.';
+    if (u.active && !(await confirmDialog({ title: `Desativar ${u.name}?`, body, confirmLabel: 'Desativar', cancelLabel: 'Manter ativo' }))) return;
     save.mutate(() => send(`/api/users/${u.id}`, 'PATCH', { active: !u.active }));
   }
 

@@ -19,7 +19,7 @@ export const FIELD_INPUT_TYPE: Record<CustomFieldDto['kind'], string> = {
 };
 
 export const inputClass =
-  'w-full rounded-md border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none';
+  'w-full rounded-md border border-field px-3 py-2 text-sm focus:border-primary focus:outline-none';
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -78,7 +78,7 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
       if (Object.keys(fields).length) saved = await api.contacts.setFields(saved.id, fields);
       onSaved(saved);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ocorreu um erro');
+      setError(err instanceof Error ? err.message : 'Não foi possível concluir. Tente de novo.');
     } finally {
       setSaving(false);
     }

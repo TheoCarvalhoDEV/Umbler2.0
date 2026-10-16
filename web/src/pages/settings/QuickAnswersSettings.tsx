@@ -6,6 +6,7 @@ import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { QuickAnswerForm, type QuickAnswerInput } from '../../components/settings/QuickAnswerForm';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
+import { confirmDialog } from '../../lib/confirm';
 
 export function QuickAnswersSettings() {
   const me = useCurrentUser();
@@ -45,8 +46,8 @@ export function QuickAnswersSettings() {
     );
   }
 
-  function remove(a: QuickAnswerDto) {
-    if (window.confirm(`Excluir a resposta rápida "${a.name}"?`)) save.mutate(() => send(`/api/quick-answers/${a.id}`, 'DELETE'));
+  async function remove(a: QuickAnswerDto) {
+    if (await confirmDialog({ title: `Excluir a resposta rápida "${a.name}"?`, confirmLabel: 'Excluir' })) save.mutate(() => send(`/api/quick-answers/${a.id}`, 'DELETE'));
   }
 
   return (
