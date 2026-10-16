@@ -34,7 +34,12 @@ export type InboundEvent =
       kind: MessageKind; body: string | null; hasMedia: boolean;
       mediaMime: string | null; mediaName: string | null;
       replyToExternalId: string | null; sentAt: Date; raw: unknown }
-  | { type: 'reaction'; instance: string; targetExternalId: string; emoji: string | null }
+  // fromMe: the office reacted (from its phone, or the echo of our own sendReaction). parse.ts always fills it.
+  | { type: 'reaction'; instance: string; targetExternalId: string; emoji: string | null; fromMe?: boolean }
+  // Deleted for everyone: by the contact, or (fromMe) by the office phone or our own deleteMessageForEveryone.
+  | { type: 'revoke'; instance: string; targetExternalId: string; fromMe: boolean }
+  // An edit; text null = WhatsApp's encrypted edit format, the new text is unknown.
+  | { type: 'edit'; instance: string; targetExternalId: string; fromMe: boolean; text: string | null }
   | { type: 'status'; instance: string; externalId: string; status: 'sent' | 'delivered' | 'read' | 'failed' }
   | { type: 'connection'; instance: string; status: ChannelStatus; phone: string | null } // phone from `wuid` (owner JID) via phoneFromJid, null when absent
   | { type: 'qrcode'; instance: string; qrBase64: string }

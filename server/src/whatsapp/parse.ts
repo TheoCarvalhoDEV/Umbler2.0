@@ -47,6 +47,8 @@ export function parseEvolutionWebhook(body: unknown): InboundEvent[] {
       return items.map((d) => parseUpsert(instance, d));
     case 'messages.update':
       return items.map((d) => parseUpdate(instance, d));
+    case 'messages.delete':
+      return items.map((d) => parseDelete(instance, d));
     case 'connection.update':
       return [parseConnection(instance, body.data)];
     case 'qrcode.updated':
@@ -82,12 +84,19 @@ function parseUpsert(instance: string, data: unknown): InboundEvent {
   if (!msg || !Object.keys(msg).some((k) => !META.has(k))) return ignored('empty message');
   if (msg.protocolMessage) return ignored('protocol');
   if (msg.editedMessage) return ignored('edit');
+  if (isObj(msg.secretEncryptedMessage)) {
+    // WhatsApp's newer edit format, encrypted (Baileys rc9 does not decrypt it): the target becomes "edited", its
+    // new text unknown. secretEncType 2 = MESSAGE_EDIT (WAProto); 1 = EVENT_EDIT and anything else is skipped.
+    const secret = msg.secretEncryptedMessage;
+    const target = str(secret.targetMessageKey?.id);
+    const isEdit = secret.secretEncType === 2 || secret.secretEncType === 'MESSAGE_EDIT';
+    return isEdit && target ? { type: 'edit', instance, targetExternalId: target, fromMe, text: null } : ignored('secret message');
+  }
   if (isObj(msg.reactionMessage)) {
-    // The office reacting from the phone would overwrite the contact's reaction (one slot per message).
-    if (fromMe) return ignored('own reaction');
     const target = str(msg.reactionMessage.key?.id);
     if (!target) return ignored('invalid reaction');
-    return { type: 'reaction', instance, targetExternalId: target, emoji: str(msg.reactionMessage.text) };
+    // fromMe = the office reacted from its phone (or our own sendReaction's echo): it fills the office's slot.
+    return { type: 'reaction', instance, targetExternalId: target, emoji: str(msg.reactionMessage.text), fromMe };
   }
 
   let kind: MessageKind = 'unsupported';
@@ -138,12 +147,45 @@ function parseUpdate(instance: string, data: unknown): InboundEvent {
   const key = isObj(data.key) ? data.key : {};
   const remoteJid = str(data.remoteJid ?? key.remoteJid) ?? '';
   if (remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast')) return ignored('group status');
+  const externalId = str(data.keyId) ?? str(key.id);
+  // An edit by anyone (Baileys MESSAGE_EDIT): message.editedMessage.message is the new content. The remoteJid may
+  // still be the @lid (Evolution only rewrites upserts), so the target is matched by id alone.
+  if (isObj(data.message) && isObj(data.message.editedMessage)) {
+    if (!externalId) return ignored('missing id');
+    const text = editedText(data.message.editedMessage.message);
+    const fromMe = (data.fromMe ?? key.fromMe) === true;
+    return text === null ? ignored('edit without text') : { type: 'edit', instance, targetExternalId: externalId, fromMe, text };
+  }
   // Statuses only matter for messages we sent; READ on an inbound message means the office read it on the phone.
   if ((data.fromMe ?? key.fromMe) === false) return ignored('status of inbound message');
-  const externalId = str(data.keyId) ?? str(key.id);
   if (!externalId) return ignored('missing id');
   const status = STATUS.get(String(data.status));
   return status ? { type: 'status', instance, externalId, status } : ignored(`status ${String(data.status)}`);
+}
+
+/** New text of an edit: the content itself, or protocolMessage.editedMessage in the upsert shape. null = no text. */
+function editedText(content: unknown): string | null {
+  let m = unwrap(content);
+  if (m && isObj(m.protocolMessage) && isObj(m.protocolMessage.editedMessage)) m = unwrap(m.protocolMessage.editedMessage);
+  if (!m) return null;
+  if (typeof m.conversation === 'string') return m.conversation;
+  if (isObj(m.extendedTextMessage)) return str(m.extendedTextMessage.text);
+  for (const k of ['imageMessage', 'videoMessage']) if (isObj(m[k])) return str(m[k].caption);
+  return null;
+}
+
+/**
+ * messages.delete: a revoke by the contact or the office phone (`data` = the key plus status, BS:1656), or our own
+ * deleteMessageForEveryone (`data.key` = the key, `data.id` = Evolution's row id, BS:3804).
+ */
+function parseDelete(instance: string, data: unknown): InboundEvent {
+  if (!isObj(data)) return ignored('invalid delete');
+  const key = isObj(data.key) ? data.key : data;
+  const remoteJid = str(key.remoteJid) ?? '';
+  if (remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast')) return ignored('group delete');
+  const target = str(key.id);
+  if (!target) return ignored('missing id');
+  return { type: 'revoke', instance, targetExternalId: target, fromMe: key.fromMe === true };
 }
 
 function parseConnection(instance: string, data: unknown): InboundEvent {

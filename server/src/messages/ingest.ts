@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import { getChannelByInstance, setChannelQr, setChannelStatus } from '../channels/service.js';
 import { refreshAvatarInBackground } from '../contacts/avatar.js';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
-import { chats, contacts, messages } from '../db/schema.js';
+import { chats, contacts, messageEdits, messages } from '../db/schema.js';
 import { resumeBotsOnReply, startChannelBot } from '../bots/hooks.js';
 import type { InboundReply } from '../bots/registry.js';
+import { addEvent } from '../inbox/events.js';
 import { findOrOpenChat, getDefaultSectorId, type ChatRow } from '../inbox/chats.js';
 import { handleTriageReply, startTriage } from '../triage/triage.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
@@ -16,6 +17,8 @@ import { saveMedia } from './media.js';
 
 type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
 type StatusEvent = Extract<InboundEvent, { type: 'status' }>;
+type RevokeEvent = Extract<InboundEvent, { type: 'revoke' }>;
+type EditEvent = Extract<InboundEvent, { type: 'edit' }>;
 type MessageStatus = (typeof messages.$inferSelect)['status'];
 type Contact = typeof contacts.$inferSelect;
 
@@ -58,7 +61,9 @@ export async function handleInbound(ctx: AppCtx, events: InboundEvent[], hooks: 
     // §5.6: the admin's QR comes from qrcode.updated; GET /api/channels/:id/qr (Task 14) serves the latest one.
     if (ev.type === 'qrcode') setChannelQr(ctx, ev.instance, ev.qrBase64);
     else if (ev.type === 'status') await applyStatus(ctx, channel.id, ev);
-    else if (ev.type === 'reaction') await applyReaction(ctx, channel.id, ev.targetExternalId, ev.emoji);
+    else if (ev.type === 'reaction') await applyReaction(ctx, channel.id, ev.targetExternalId, ev.emoji, ev.fromMe === true);
+    else if (ev.type === 'revoke') await applyRevoke(ctx, channel.id, ev);
+    else if (ev.type === 'edit') await applyEdit(ctx, channel.id, ev);
     else await ingestMessage(ctx, channel.id, ev, h);
   }
 }
@@ -78,14 +83,81 @@ async function applyStatus(ctx: AppCtx, channelId: string, ev: StatusEvent): Pro
   if (row) await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
 }
 
-/** Reactions never create chats nor touch unread/waiting (§5.1). Unknown target → ignored. */
-async function applyReaction(ctx: AppCtx, channelId: string, targetExternalId: string, emoji: string | null): Promise<void> {
+/**
+ * Reactions never create chats nor touch unread/waiting (§5.1). Unknown target → ignored. `office` (fromMe) fills the
+ * office's slot, so a reaction made on the office phone never overwrites the contact's (spec §3).
+ */
+async function applyReaction(
+  ctx: AppCtx,
+  channelId: string,
+  targetExternalId: string,
+  emoji: string | null,
+  office = false,
+): Promise<void> {
+  const value = emoji || null;
   const [row] = await ctx.db
     .update(messages)
-    .set({ reaction: emoji || null })
+    .set(office ? { officeReaction: value } : { reaction: value })
     .where(and(eq(messages.channelId, channelId), eq(messages.externalId, targetExternalId)))
     .returning({ id: messages.id, chatId: messages.chatId });
   if (row) await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
+}
+
+/** fromMe = the office phone. The office's own API actions are saved before their echo arrives (messages/actions.ts). */
+const changeSource = (fromMe: boolean): 'phone' | 'contact' => (fromMe ? 'phone' : 'contact');
+
+/**
+ * Spec §4: deleted for everyone by the contact or the office phone. The text stays; deleted_at/source mark it and a
+ * message_deleted event goes to the timeline. A row that is already deleted (a retried webhook, or the echo of our own
+ * delete, claimed before the Evolution call) and an unknown target change nothing.
+ */
+async function applyRevoke(ctx: AppCtx, channelId: string, ev: RevokeEvent): Promise<void> {
+  const source = changeSource(ev.fromMe);
+  const row = await ctx.db.transaction(async (tx) => {
+    const [r] = await tx
+      .update(messages)
+      .set({ deletedAt: new Date(), deletedSource: source })
+      .where(and(eq(messages.channelId, channelId), eq(messages.externalId, ev.targetExternalId), isNull(messages.deletedAt)))
+      .returning({ id: messages.id, chatId: messages.chatId });
+    if (r) await addEvent(tx, r.chatId, 'message_deleted', { messageId: r.id, source }, null);
+    return r;
+  });
+  if (!row) return;
+  await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
+  await ctx.hub.publishChat(row.chatId); // an open timeline refetches on chat.updated and shows the event
+}
+
+/**
+ * Spec §5: edited by the contact or the office phone. The previous text goes to message_edits; text null (WhatsApp's
+ * encrypted format) keeps the body and flags the new text as unavailable. A text equal to the current body is the echo
+ * of our own edit (saved before the call) or a retried webhook: nothing changes. Deleted messages are never edited.
+ */
+async function applyEdit(ctx: AppCtx, channelId: string, ev: EditEvent): Promise<void> {
+  const source = changeSource(ev.fromMe);
+  const row = await ctx.db.transaction(async (tx) => {
+    const [target] = await tx
+      .select()
+      .from(messages)
+      .where(and(eq(messages.channelId, channelId), eq(messages.externalId, ev.targetExternalId)))
+      .for('update');
+    if (!target || target.deletedAt) return null;
+    if (ev.text !== null && ev.text === target.body) return null;
+    // ponytail: a retried webhook of an encrypted edit (text null) adds a second history row; dedupe by the edit's own
+    // WhatsApp id if that ever shows up. The chat preview keeps the old text too.
+    const [edit] = await tx
+      .insert(messageEdits)
+      .values({ messageId: target.id, previousBody: target.body, source, newTextUnavailable: ev.text === null })
+      .returning({ editedAt: messageEdits.editedAt });
+    await tx
+      .update(messages)
+      .set({ editedAt: edit!.editedAt, ...(ev.text !== null ? { body: ev.text } : {}) })
+      .where(eq(messages.id, target.id));
+    await addEvent(tx, target.chatId, 'message_edited', { messageId: target.id, source }, null);
+    return target;
+  });
+  if (!row) return;
+  await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
+  await ctx.hub.publishChat(row.chatId);
 }
 
 async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, hooks: Required<IngestHooks>): Promise<void> {

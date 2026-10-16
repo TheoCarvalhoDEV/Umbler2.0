@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getChannelQr } from '../../src/channels/service.js';
-import { channels, chats, contacts, messages } from '../../src/db/schema.js';
+import { channels, chats, contacts, messageEdits, messages } from '../../src/db/schema.js';
 import { handleInbound, MEDIA_UNAVAILABLE, type IngestHooks } from '../../src/messages/ingest.js';
 import { parseEvolutionWebhook } from '../../src/whatsapp/parse.js';
 import type { InboundEvent } from '../../src/whatsapp/types.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
+import { eventsOf } from '../inbox/fixtures.js';
 
 type Ctx = Awaited<ReturnType<typeof makeTestCtx>>;
 type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
@@ -415,5 +417,109 @@ describe('handleInbound: channel events', () => {
 
     await ingest({ type: 'connection', instance: 'talk-test', status: 'connected', phone: '5565988887777' });
     expect(getChannelQr(ctx, 'talk-test')).toBeNull();
+  });
+});
+
+describe('handleInbound: office reactions, deletes and edits', () => {
+  const fixture = (name: string): unknown =>
+    JSON.parse(readFileSync(new URL(`../fixtures/evolution/${name}.json`, import.meta.url), 'utf8'));
+  const edits = () => ctx.db.select().from(messageEdits);
+  const kinds = async (chatId: string, kind: string) => (await eventsOf(ctx, chatId)).filter((e) => e.kind === kind);
+  async function stored(over: Partial<MessageEvent> = {}) {
+    const ev = msg(over);
+    await ingest(ev);
+    const [row] = await ctx.db.select().from(messages).where(eq(messages.externalId, ev.externalId));
+    return row!;
+  }
+
+  it('puts a reaction made on the office phone in the office slot and keeps the contact one', async () => {
+    const m = await stored();
+    await ingest({ type: 'reaction', instance: 'talk-test', targetExternalId: m.externalId!, emoji: '👍', fromMe: false });
+    await ingest({ type: 'reaction', instance: 'talk-test', targetExternalId: m.externalId!, emoji: '❤️', fromMe: true });
+    expect((await allMessages())[0]).toMatchObject({ reaction: '👍', officeReaction: '❤️' });
+    await ingest({ type: 'reaction', instance: 'talk-test', targetExternalId: m.externalId!, emoji: null, fromMe: true });
+    expect((await allMessages())[0]).toMatchObject({ reaction: '👍', officeReaction: null });
+  });
+
+  it('a revoke by the contact keeps the text, marks it deleted and logs the event once', async () => {
+    const m = await stored({ body: 'mensagem que o contato apagou' });
+    const revoke = { type: 'revoke' as const, instance: 'talk-test', targetExternalId: m.externalId!, fromMe: false };
+    await ingest(revoke);
+    await ingest(revoke); // Evolution retry
+
+    const [after] = await allMessages();
+    expect(after).toMatchObject({ body: 'mensagem que o contato apagou', deletedSource: 'contact', deletedBy: null });
+    expect(after.deletedAt).toBeInstanceOf(Date);
+    expect(await kinds(m.chatId, 'message_deleted')).toMatchObject([{ authorId: null, data: { messageId: m.id, source: 'contact' } }]);
+    expect(hubEvents('message.updated').at(-1)).toMatchObject({ chatId: m.chatId, messageId: m.id });
+    expect(chatPublishes(m.chatId).length).toBeGreaterThan(1); // the ingest publish, then the delete's
+  });
+
+  it('a revoke from the office phone is source phone', async () => {
+    const m = await stored({ direction: 'out', body: 'enviada pelo celular' });
+    await ingest({ type: 'revoke', instance: 'talk-test', targetExternalId: m.externalId!, fromMe: true });
+    expect((await allMessages())[0]).toMatchObject({ deletedSource: 'phone' });
+    expect(await kinds(m.chatId, 'message_deleted')).toMatchObject([{ data: { source: 'phone' } }]);
+  });
+
+  it('a contact edit replaces the body and keeps the previous text in the history', async () => {
+    const m = await stored({ body: 'Olá, preciso de ajuda' });
+    await ingest({ type: 'edit', instance: 'talk-test', targetExternalId: m.externalId!, fromMe: false, text: 'Olá, preciso de ajuda urgente' });
+
+    const [after] = await allMessages();
+    expect(after.body).toBe('Olá, preciso de ajuda urgente');
+    expect(after.editedAt).toBeInstanceOf(Date);
+    expect(await edits()).toMatchObject([
+      { messageId: m.id, previousBody: 'Olá, preciso de ajuda', source: 'contact', editedBy: null, newTextUnavailable: false },
+    ]);
+    expect((await edits())[0]!.editedAt.getTime()).toBe(after.editedAt!.getTime());
+    expect(await kinds(m.chatId, 'message_edited')).toMatchObject([{ data: { messageId: m.id, source: 'contact' } }]);
+  });
+
+  it('matches an edit by WhatsApp id even when it carries an @lid remoteJid', async () => {
+    await ingest(...parseEvolutionWebhook(fixture('text-in')));
+    await ingest(...parseEvolutionWebhook(fixture('edit-update-in')));
+    expect((await allMessages())[0]!.body).toBe('Olá, preciso de ajuda urgente');
+  });
+
+  it('the encrypted edit format marks the target, keeps its text and adds no bubble', async () => {
+    await ingest(...parseEvolutionWebhook(fixture('text-in')));
+    await ingest(...parseEvolutionWebhook(fixture('secret-edit-in')));
+
+    const all = await allMessages();
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ externalId: 'MSG-TEXT-IN', kind: 'text', body: 'Olá, preciso de ajuda' });
+    expect(all[0]!.editedAt).toBeInstanceOf(Date);
+    expect(await edits()).toMatchObject([{ previousBody: 'Olá, preciso de ajuda', source: 'contact', newTextUnavailable: true }]);
+  });
+
+  it('ignores the echoes of the office actions (Review Focus 1)', async () => {
+    const m = await stored({ direction: 'out', body: 'apagada pelo atendente' });
+    await ctx.db
+      .update(messages)
+      .set({ deletedAt: new Date(), deletedBy: seed.agentA.id, deletedSource: 'office', officeReaction: '👍' })
+      .where(eq(messages.id, m.id));
+    await ingest({ type: 'revoke', instance: 'talk-test', targetExternalId: m.externalId!, fromMe: true });
+    await ingest({ type: 'reaction', instance: 'talk-test', targetExternalId: m.externalId!, emoji: '👍', fromMe: true });
+    const [after] = await ctx.db.select().from(messages).where(eq(messages.id, m.id));
+    expect(after).toMatchObject({ deletedSource: 'office', deletedBy: seed.agentA.id, officeReaction: '👍' });
+    expect(await kinds(m.chatId, 'message_deleted')).toEqual([]);
+
+    const n = await stored({ direction: 'out', body: 'já editado pelo sistema' });
+    await ingest({ type: 'edit', instance: 'talk-test', targetExternalId: n.externalId!, fromMe: true, text: 'já editado pelo sistema' });
+    expect(await edits()).toEqual([]);
+    expect(await kinds(n.chatId, 'message_edited')).toEqual([]);
+  });
+
+  it('ignores unknown targets and never edits a deleted message', async () => {
+    await ingest({ type: 'revoke', instance: 'talk-test', targetExternalId: 'NAO-EXISTE', fromMe: false });
+    await ingest({ type: 'edit', instance: 'talk-test', targetExternalId: 'NAO-EXISTE', fromMe: false, text: 'x' });
+    expect(hubEvents('message.updated')).toHaveLength(0);
+
+    const m = await stored({ body: 'apagada' });
+    await ingest({ type: 'revoke', instance: 'talk-test', targetExternalId: m.externalId!, fromMe: false });
+    await ingest({ type: 'edit', instance: 'talk-test', targetExternalId: m.externalId!, fromMe: false, text: 'editada depois' });
+    expect((await allMessages())[0]!.body).toBe('apagada');
+    expect(await edits()).toEqual([]);
   });
 });

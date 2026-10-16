@@ -1,0 +1,9 @@
+{
+  "event": "messages.delete",
+  "instance": "talk-test",
+  "data": { "remoteJid": "556599999999@s.whatsapp.net", "fromMe": false, "id": "MSG-TEXT-IN", "status": "DELETED" },
+  "date_time": "2025-10-14T11:10:00.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}
