@@ -19,6 +19,27 @@ describe('createFakeGateway', () => {
     ]);
   });
 
+  it('records the message actions; stickers get ids like every send; failNext applies to them', async () => {
+    const wa = createFakeGateway();
+    const key = { address: '5565999999999', externalId: 'WA-1', fromMe: true };
+    await wa.sendReaction('talk-test', key, '👍');
+    await wa.deleteForEveryone('talk-test', key);
+    await wa.editText('talk-test', key, 'novo');
+    expect(await wa.sendSticker('talk-test', '5565999999999', 'UklGRg==')).toEqual({ externalId: 'fake-1' });
+    await wa.setWebhook('talk-test', 'http://app:3000/webhooks/evolution/s');
+
+    expect(wa.sent).toEqual([
+      { method: 'sendReaction', instance: 'talk-test', phone: '5565999999999', payload: { key, emoji: '👍' } },
+      { method: 'deleteForEveryone', instance: 'talk-test', phone: '5565999999999', payload: { key } },
+      { method: 'editText', instance: 'talk-test', phone: '5565999999999', payload: { key, text: 'novo' } },
+      { method: 'sendSticker', instance: 'talk-test', phone: '5565999999999', payload: { base64: 'UklGRg==' } },
+      { method: 'setWebhook', instance: 'talk-test', payload: { webhookUrl: 'http://app:3000/webhooks/evolution/s' } },
+    ]);
+
+    wa.failNext();
+    await expect(wa.deleteForEveryone('talk-test', key)).rejects.toThrow('fake gateway failure');
+  });
+
   it('records createInstance and connect but not read-only calls', async () => {
     const wa = createFakeGateway();
     await wa.createInstance('talk-test', 'http://app:3000/webhooks/evolution/s');
