@@ -14,6 +14,7 @@ interface Props {
 
 export function ChatListItem({ chat, sectorName, owner, active, onOpen, onTogglePin }: Props) {
   const title = contactLabel(chat.contact);
+  const unread = chat.unread > 0;
   return (
     <li className={`flex items-stretch border-b border-border ${active ? 'bg-sidebar-active' : 'hover:bg-panel'}`}>
       <button
@@ -25,16 +26,16 @@ export function ChatListItem({ chat, sectorName, owner, active, onOpen, onToggle
         <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 text-sm bg-sidebar-active" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1">
-            <span className="truncate font-medium">{title}</span>
+            <span className={`truncate ${unread ? 'font-bold' : 'font-medium'}`}>{title}</span>
             {chat.private && <LockSimple aria-label="Conversa privada" className="shrink-0 text-muted" />}
             {chat.pinned && <PushPin aria-label="Fixada" weight="fill" className="shrink-0 text-muted" />}
-            <span className="ml-auto shrink-0 text-xs text-muted">
+            <span className={`ml-auto shrink-0 text-xs ${unread ? 'font-semibold text-link' : 'text-muted'}`}>
               {chat.lastMessageAt ? listTime(chat.lastMessageAt) : ''}
             </span>
           </span>
           <span className="flex items-center gap-2">
-            <span className="truncate text-sm text-muted">{chat.lastMessagePreview ?? ''}</span>
-            {chat.unread > 0 && (
+            <span className={`truncate text-sm ${unread ? 'text-fg' : 'text-muted'}`}>{chat.lastMessagePreview ?? ''}</span>
+            {unread && (
               <span
                 aria-label={`Não lidas: ${chat.unread}`}
                 className="ml-auto shrink-0 rounded-full bg-primary px-1.5 text-xs font-semibold text-white"

@@ -3,7 +3,7 @@ import type { SectorDto, TriageMenuDto } from '@talk/shared';
 
 export type TriageOptionInput = TriageMenuDto['options'][number];
 
-const cell = 'w-full rounded border border-border px-2 py-1 text-sm';
+const cell = 'w-full rounded border border-field px-2 py-1 text-sm';
 
 export function TriageOptionsEditor({
   options,

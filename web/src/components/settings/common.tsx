@@ -20,7 +20,7 @@ export function useSend(...refresh: QueryKey[]) {
 
 export const btn = 'rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover disabled:opacity-50';
 export const btnPrimary = 'rounded bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50';
-export const field = 'mt-1 w-full rounded border border-border px-2 py-1.5 text-sm';
+export const field = 'mt-1 w-full rounded border border-field px-2 py-1.5 text-sm';
 
 export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
@@ -38,7 +38,7 @@ export function ErrorText({ error }: { error: unknown }) {
   if (!error) return null;
   return (
     <p role="alert" className="my-2 text-sm text-danger">
-      {error instanceof Error ? error.message : 'Ocorreu um erro'}
+      {error instanceof Error ? error.message : 'Não foi possível concluir. Tente de novo.'}
     </p>
   );
 }
