@@ -169,7 +169,8 @@ export function CheckList({
       ) : (
         <div className="mt-0.5 max-h-40 space-y-0.5 overflow-y-auto">
           {items.map((it) => (
-            <label key={it.id} className="flex items-center gap-2 text-sm">
+            // w-fit: only the checkbox and its text toggle, not a click anywhere across the node card
+            <label key={it.id} className="flex w-fit items-center gap-2 text-sm">
               <input type="checkbox" checked={selected.includes(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} />
               {it.label}
             </label>

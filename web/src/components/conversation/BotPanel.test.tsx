@@ -108,7 +108,11 @@ describe('BotPanel', () => {
   it('says so when no chatbot can be started manually', async () => {
     stubFetch({ 'GET /api/bots/manual': [], 'GET /api/chats/c1/bot-runs': [] });
     renderPanel();
-    expect(await screen.findByText('Nenhum chatbot disponível para início manual.')).toBeTruthy();
+    expect(
+      await screen.findByText(
+        'Nenhum chatbot pode ser iniciado por aqui. No editor, use o bloco “Iniciar manualmente” e marque “Permitir que atendentes iniciem pela conversa”.',
+      ),
+    ).toBeTruthy();
   });
 
   it('shows the server error and stays open when the start fails', async () => {

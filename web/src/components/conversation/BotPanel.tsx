@@ -51,7 +51,10 @@ export function BotPanel({ chatId, onClose }: BotPanelProps) {
       {manual.isPending ? (
         <p className="px-1 py-1 text-muted">Carregando…</p>
       ) : bots.length === 0 ? (
-        <p className="px-1 py-1 text-muted">Nenhum chatbot disponível para início manual.</p>
+        <p className="px-1 py-1 text-muted">
+          Nenhum chatbot pode ser iniciado por aqui. No editor, use o bloco “Iniciar manualmente” e marque “Permitir que atendentes
+          iniciem pela conversa”.
+        </p>
       ) : (
         <ul className="max-h-60 overflow-y-auto">
           {bots.map((b) => {
