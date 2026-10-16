@@ -50,7 +50,7 @@ export function Actions(props: { busy: boolean; error: string | null; confirmLab
   );
 }
 
-const field = 'mt-1 block w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-fg';
+const field = 'mt-1 block w-full rounded border border-field bg-surface px-2 py-1.5 text-sm text-fg';
 
 export function TransferDialog(props: {
   chat: ChatDetail;
@@ -86,7 +86,7 @@ export function TransferDialog(props: {
       <label className="block text-sm">
         Atendente
         <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} className={field}>
-          <option value="">Ninguém (fila do setor)</option>
+          <option value="">Sem atendente (fila do setor)</option>
           {agents.map((u) => (
             <option key={u.id} value={u.id}>
               {u.name}

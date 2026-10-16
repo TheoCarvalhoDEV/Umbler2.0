@@ -5,8 +5,10 @@ import { createBrowserRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { routes } from './App';
 import { createQueryClient } from './lib/auth';
+import { watchSystemTheme } from './lib/theme';
 import './index.css';
 
+watchSystemTheme();
 const queryClient = createQueryClient();
 const router = createBrowserRouter(routes);
 

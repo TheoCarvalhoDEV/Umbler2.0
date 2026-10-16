@@ -13,7 +13,7 @@ export interface InboxFilters {
 }
 
 export const EMPTY_FILTERS: InboxFilters = { sectorId: '', ownerId: '', tagId: '', period: 'any', rangeFrom: '', rangeTo: '' };
-/** ownerId sentinel for "Sem dono" (server: owner_id IS NULL). */
+/** ownerId sentinel for "Sem atendente" (server: owner_id IS NULL). */
 export const NO_OWNER = 'none';
 export const PAGE_SIZE = 50;
 

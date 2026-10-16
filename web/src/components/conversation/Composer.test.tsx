@@ -130,7 +130,7 @@ describe('Composer', () => {
   it('notes mode posts to /notes and hides the signature toggle', async () => {
     stubFetch({ 'POST /api/chats/c1/notes': message({ kind: 'note' }) });
     renderComposer();
-    fireEvent.click(screen.getByRole('button', { name: 'Notas' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Nota interna' }));
     expect(box().placeholder).toMatch(/nota interna/i);
     expect(screen.queryByRole('checkbox', { name: 'Assinatura' })).toBeNull();
     fireEvent.change(box(), { target: { value: 'Cliente pediu retorno amanhã' } });

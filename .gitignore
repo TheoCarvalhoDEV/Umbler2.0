@@ -8,3 +8,4 @@ dist/
 !.env.dev.example
 data/
 *.log
+.env.dev

@@ -262,7 +262,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
               mode === m ? (m === 'note' ? 'bg-yellow-200 text-zinc-900' : 'bg-primary text-white') : 'text-muted hover:bg-panel'
             }`}
           >
-            {m === 'message' ? 'Mensagem' : 'Notas'}
+            {m === 'message' ? 'Mensagem' : 'Nota interna'}
           </button>
         ))}
       </div>
@@ -327,7 +327,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
               className={`field-sizing-content block max-h-48 min-h-10 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 ${
                 isNote
                   ? 'border-yellow-300 bg-yellow-100 text-zinc-900 placeholder:text-zinc-500 focus:ring-yellow-300'
-                  : 'border-border bg-panel text-fg placeholder:text-muted focus:ring-primary'
+                  : 'border-field bg-panel text-fg placeholder:text-muted focus:ring-primary'
               }`}
             />
           </div>

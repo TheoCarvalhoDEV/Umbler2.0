@@ -10,6 +10,7 @@ import { NotesList } from './NotesList';
 import { TagsEditor } from './TagsEditor';
 import { formatPhone } from '../../lib/format';
 import { Avatar } from '../Avatar';
+import { confirmDialog } from '../../lib/confirm';
 
 const dateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
@@ -43,7 +44,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`border-b-2 px-3 py-3 text-sm font-medium ${active ? 'border-primary text-primary' : 'border-transparent text-muted hover:text-fg'}`}
+      className={`border-b-2 px-3 py-3 text-sm font-medium ${active ? 'border-primary text-link' : 'border-transparent text-muted hover:text-fg'}`}
     >
       {children}
     </button>
@@ -128,11 +129,13 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
     );
   }
 
-  function toggleBlock() {
-    const question = contact.blocked
-      ? 'Desbloquear este contato? As mensagens dele voltarão a ser recebidas.'
-      : 'Bloquear este contato? As mensagens dele deixarão de ser recebidas.';
-    if (window.confirm(question)) block.mutate(!contact.blocked);
+  async function toggleBlock() {
+    const ok = await confirmDialog(
+      contact.blocked
+        ? { title: 'Desbloquear este contato?', body: 'As mensagens dele voltarão a ser recebidas.', confirmLabel: 'Desbloquear', danger: false }
+        : { title: 'Bloquear este contato?', body: 'As mensagens dele deixarão de ser recebidas.', confirmLabel: 'Bloquear' },
+    );
+    if (ok) block.mutate(!contact.blocked);
   }
 
   const address = ADDRESS_FIELDS.map(([key]) => contact.address?.[key]).filter(Boolean).join(', ');
@@ -193,7 +196,7 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
 
       <button
         type="button"
-        onClick={toggleBlock}
+        onClick={() => void toggleBlock()}
         disabled={block.isPending}
         className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-danger hover:bg-danger/15 disabled:opacity-50"
       >
@@ -214,7 +217,7 @@ function ContactChats({ contactId, onNavigate }: { contactId: string; onNavigate
           <Link to={`/chats/${c.id}`} onClick={onNavigate} className="block rounded px-1 py-2 hover:bg-sidebar-hover">
             <div className="flex justify-between text-sm">
               <span className="font-medium">{sectors.find((s) => s.id === c.sectorId)?.name ?? '—'}</span>
-              <span className={c.state === 'open' ? 'text-primary' : 'text-muted'}>
+              <span className={c.state === 'open' ? 'text-link' : 'text-muted'}>
                 {c.state === 'open' ? 'Aberta' : 'Finalizada'}
               </span>
             </div>

@@ -40,7 +40,7 @@ export function NewChatDialog({ sectors, onClose }: Props) {
       onClose();
       navigate(`/chats/${chat.id}`);
     },
-    onError: (err) => setError(err instanceof Error ? err.message : 'Ocorreu um erro'),
+    onError: (err) => setError(err instanceof Error ? err.message : 'Não foi possível concluir. Tente de novo.'),
   });
 
   function submit(e: FormEvent) {
@@ -75,7 +75,7 @@ export function NewChatDialog({ sectors, onClose }: Props) {
         {contact ? (
           <div className="flex items-center gap-2 rounded bg-surface px-3 py-2 text-sm">
             <span className="flex-1 truncate">{contactLabel(contact)}</span>
-            <button type="button" onClick={() => setContact(null)} className="text-primary underline">Trocar</button>
+            <button type="button" onClick={() => setContact(null)} className="text-link underline">Trocar</button>
           </div>
         ) : (
           <>

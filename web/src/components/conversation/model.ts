@@ -105,7 +105,7 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
 }
 
 export function errorMessage(e: unknown): string {
-  return e instanceof Error && e.message ? e.message : 'Ocorreu um erro';
+  return e instanceof Error && e.message ? e.message : 'Não foi possível concluir. Tente de novo.';
 }
 
 /** §7: 409 = the chat changed under us (another agent acted first). */
