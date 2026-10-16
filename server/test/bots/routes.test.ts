@@ -62,7 +62,10 @@ const noStartGraph = (): BotGraph => ({
   edges: [],
 });
 
-const NO_CHANNEL = { nodeId: 'inicio', message: 'Marque ao menos um canal neste início' };
+const NO_CHANNEL = {
+  nodeId: 'inicio',
+  message: 'Marque ao menos um canal neste início ou, se este fluxo só é acionado por outro, troque este bloco por "Iniciar manualmente"',
+};
 
 async function newBot(name: string): Promise<BotDto> {
   const res = await call('POST', '/api/bots', admin, { name });
@@ -185,6 +188,32 @@ describe('admin bot routes', () => {
     // Unmarking the channel makes the same graph a problem again.
     await call('PATCH', `/api/bots/${bot.id}`, admin, { startChannelIds: [] });
     expect((await saveVersion(bot.id, graph, true)).statusCode).toBe(400);
+  });
+
+  it('publishes a channel-only sub-flow with no channel once another flow calls it, and runs it as a child', async () => {
+    const sub = await newBot('Sub');
+    const { graph } = (await call('GET', `/api/bots/${sub.id}/versions/1`, admin)).json();
+    // Nothing calls it yet, so it could never start: the message names the alternative to marking a channel.
+    expect((await saveVersion(sub.id, graph, true)).json().problems).toEqual([NO_CHANNEL]);
+
+    // A draft call is enough: call entry falls back to start_channel.
+    const main = await newBot('Principal');
+    expect((await saveVersion(main.id, callerGraph(sub.id), false)).statusCode).toBe(200);
+    expect((await call('GET', `/api/bots/${sub.id}/versions/1`, admin)).json().problems).toEqual([]);
+    const ok = await saveVersion(sub.id, graph, true);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ valid: true, published: true, problems: [] });
+
+    expect((await call('POST', `/api/bots/${sub.id}/status`, admin, { status: 'active' })).statusCode).toBe(200);
+    expect((await saveVersion(main.id, callerGraph(sub.id), true)).statusCode).toBe(200);
+    await call('PATCH', `/api/bots/${main.id}`, admin, { manualStart: true });
+    await call('POST', `/api/bots/${main.id}/status`, admin, { status: 'active' });
+    const chatId = await insertChat(ctx, { channelId: seed.channelId, sectorId: seed.sectorA });
+    expect((await call('POST', `/api/chats/${chatId}/bot-runs`, agentA, { botId: main.id })).statusCode).toBe(200);
+    const [child] = await ctx.db.select().from(botRuns).where(eq(botRuns.botId, sub.id));
+    expect(child).toMatchObject({ state: 'finished', depth: 1 });
+    // Still no channel: the sub-flow never takes the channel's new conversations.
+    expect((await call('GET', `/api/bots/${sub.id}`, admin)).json().startChannelIds).toEqual([]);
   });
 
   it('activates only a bot with a published version', async () => {

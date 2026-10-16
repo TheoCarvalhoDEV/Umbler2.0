@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, max, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, max, ne, sql } from 'drizzle-orm';
 import { NON_TERMINAL_RUN_STATES } from '@talk/shared';
 import type { BotDto, BotGraph, BotRunDto, BotVersionSummaryDto } from '@talk/shared';
 import type { Db, Tx } from '../db/client.js';
@@ -125,6 +125,21 @@ export async function latestVersion(db: Db | Tx, botId: string): Promise<BotVers
   const [row] = await db.select().from(botVersions).where(eq(botVersions.botId, botId)).orderBy(desc(botVersions.number)).limit(1);
   if (!row) throw notFound('Versão não encontrada');
   return row;
+}
+
+/** Other bots whose latest or published version has a call_flow to botId. */
+// ponytail: two queries per bot, on every delete and every version save/read; fine for tens of bots. A jsonb @> query if this ever gets slow.
+export async function callersOf(db: Db | Tx, botId: string): Promise<Array<{ id: string; name: string }>> {
+  const others = await db.select().from(bots).where(ne(bots.id, botId)).orderBy(asc(bots.name));
+  const usedBy: Array<{ id: string; name: string }> = [];
+  for (const other of others) {
+    const graphs = [(await latestVersion(db, other.id)).graph];
+    const published = other.publishedVersionId ? await getVersionRow(db, other.publishedVersionId) : null;
+    if (published) graphs.push(published.graph);
+    const calls = graphs.some((g) => g.nodes.some((n) => n.type === 'call_flow' && n.config.botId === botId));
+    if (calls) usedBy.push({ id: other.id, name: other.name });
+  }
+  return usedBy;
 }
 
 /** number = coalesce(max(number),0)+1 for the bot; one retry on unique violation 23505. */

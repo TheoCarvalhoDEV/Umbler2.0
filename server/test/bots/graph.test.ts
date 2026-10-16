@@ -8,7 +8,8 @@ import {
   validateNodeConfig,
   type GraphCatalog,
 } from '../../src/bots/graph.js';
-import { bots, customFields, tags, users } from '../../src/db/schema.js';
+import { STARTER_GRAPH, createBot, insertBotVersion } from '../../src/bots/repo.js';
+import { customFields, tags, users } from '../../src/db/schema.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 
 const ID = { sector: 'sec-1', user: 'usr-1', tag: 'tag-1', field: 'fld-1', channel: 'chn-1', bot: 'bot-other', self: 'bot-self' };
@@ -21,7 +22,10 @@ const catalog: GraphCatalog = {
   channelIds: new Set([ID.channel]),
   botIds: new Set([ID.bot, ID.self]),
   startChannelIds: [ID.channel],
+  calledByOtherFlow: false,
 };
+const NO_CHANNEL =
+  'Marque ao menos um canal neste início ou, se este fluxo só é acionado por outro, troque este bloco por "Iniciar manualmente"';
 
 const rule = { left: { kind: 'var', value: 'menu' }, operator: 'eq', right: { kind: 'literal', value: '1' } };
 const ATTACHMENT = { path: 'bots/0b7e3c2a-6f1d-4c55-9a51-2f3c4d5e6f70.pdf', name: 'tabela.pdf', mime: 'application/pdf', size: 1234 };
@@ -120,14 +124,18 @@ describe('validateNodeConfig', () => {
 
   it('flags a start_channel block on a bot with no channel marked', () => {
     const noChannel = { ...catalog, startChannelIds: [] };
-    expect(validateNodeConfig(node('start_channel'), noChannel)).toEqual(['Marque ao menos um canal neste início']);
+    expect(validateNodeConfig(node('start_channel'), noChannel)).toEqual([NO_CHANNEL]);
     expect(validateNodeConfig(node('start_manual'), noChannel)).toEqual([]);
     const g: BotGraph = {
       nodes: [node('start_channel', {}), node('send_message')],
       edges: [{ id: 'e1', source: node('start_channel').id, sourceHandle: 'next', target: node('send_message').id }],
     };
-    expect(validateGraph(g, noChannel)).toEqual([{ nodeId: node('start_channel').id, message: 'Marque ao menos um canal neste início' }]);
+    expect(validateGraph(g, noChannel)).toEqual([{ nodeId: node('start_channel').id, message: NO_CHANNEL }]);
     expect(validateGraph(g, catalog)).toEqual([]);
+  });
+
+  it('accepts a start_channel block with no channel on a bot another flow calls (call entry falls back to it)', () => {
+    expect(validateNodeConfig(node('start_channel'), { ...catalog, startChannelIds: [], calledByOtherFlow: true })).toEqual([]);
   });
 
   it('lets call_flow target any existing bot when there is no self id yet (import)', () => {
@@ -419,8 +427,9 @@ describe('loadGraphCatalog', () => {
       .returning();
     const [tag] = await ctx.db.insert(tags).values({ name: 'VIP', color: 'blue' }).returning();
     const [field] = await ctx.db.insert(customFields).values({ name: 'CPF', kind: 'cpf' }).returning();
-    const [self] = await ctx.db.insert(bots).values({ name: 'Este' }).returning();
-    const [other] = await ctx.db.insert(bots).values({ name: 'Outro' }).returning();
+    const newBot = (name: string) => createBot(ctx.db, { name, graph: STARTER_GRAPH(), valid: false, publish: false, createdBy: null });
+    const self = await newBot('Este');
+    const other = await newBot('Outro');
 
     const cat = await loadGraphCatalog(ctx.db, self.id, [s.channelId]);
 
@@ -433,5 +442,13 @@ describe('loadGraphCatalog', () => {
     expect(cat.channelIds).toEqual(new Set([s.channelId]));
     expect(cat.botIds).toEqual(new Set([self.id, other.id]));
     expect(cat.startChannelIds).toEqual([s.channelId]);
+    expect(cat.calledByOtherFlow).toBe(false);
+
+    // Another bot's latest version calls this one.
+    const call: BotNode = { id: 'f', type: 'call_flow', name: 'f', position: { x: 0, y: 0 }, config: { botId: self.id, continueAfter: false } };
+    await insertBotVersion(ctx.db, { botId: other.id, graph: { nodes: [call], edges: [] }, valid: false, createdBy: null });
+    expect((await loadGraphCatalog(ctx.db, self.id, [])).calledByOtherFlow).toBe(true);
+    expect((await loadGraphCatalog(ctx.db, other.id, [])).calledByOtherFlow).toBe(false);
+    expect((await loadGraphCatalog(ctx.db, null, [])).calledByOtherFlow).toBe(false); // a bot not created yet has no caller
   });
 });
