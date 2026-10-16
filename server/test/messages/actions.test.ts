@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chats, messages } from '../../src/db/schema.js';
-import { loginAs } from '../helpers.js';
+import { handleInbound } from '../../src/messages/ingest.js';
+import { enableSeeAll, loginAs } from '../helpers.js';
 import { eventsOf } from '../inbox/fixtures.js';
 import { PHONE, minutesAgo, seedMsg, setupActions, type ActionsWorld } from './actions-seed.js';
 
@@ -135,5 +136,93 @@ describe('DELETE /api/messages/:id', () => {
     const res = await call('POST', `/api/chats/${w.chatId}/messages`, { text: 'Sobre aquela', replyToId: id });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toEqual({ error: 'Mensagem apagada não pode ser citada' });
+  });
+});
+
+describe('PATCH /api/messages/:id and GET /api/messages/:id/edits', () => {
+  const edit = (id: string, text: string, headers = w.headers) => call('PATCH', `/api/messages/${id}`, { text }, headers);
+  const history = (id: string, headers = w.headers) => call('GET', `/api/messages/${id}/edits`, undefined, headers);
+
+  it('edits the author text on WhatsApp and keeps the previous version', async () => {
+    const id = await seedMsg(w, { body: 'Reunião às 14h', externalId: 'WA-E', sentAt: minutesAgo(5) });
+
+    const res = await edit(id, 'Reunião às 15h');
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ body: 'Reunião às 15h', edited: { source: 'office', newTextUnavailable: false } });
+    expect(sentBy('editText').map((s) => s.payload)).toEqual([
+      { key: { address: PHONE, externalId: 'WA-E', fromMe: true }, text: 'Reunião às 15h' },
+    ]);
+    expect((await history(id)).json()).toMatchObject([
+      { previousBody: 'Reunião às 14h', source: 'office', editedByName: w.s.agentA.name, newTextUnavailable: false },
+    ]);
+    expect(await eventsOfKind('message_edited')).toMatchObject([{ authorId: w.s.agentA.id, data: { messageId: id, source: 'office' } }]);
+    expect(w.ctx.hub.events).toContainEqual({ type: 'chat', chatId: w.chatId });
+  });
+
+  it('edits the caption of an image', async () => {
+    const id = await seedMsg(w, { kind: 'image', body: 'Foto 1', mediaPath: '2026/10/x.jpg', mediaMime: 'image/jpeg' });
+    expect((await edit(id, 'Foto 2')).json()).toMatchObject({ kind: 'image', body: 'Foto 2' });
+  });
+
+  it('refuses after 15 minutes, other authors, bots, documents and empty or long text', async () => {
+    expect((await edit(await seedMsg(w, { sentAt: minutesAgo(16) }), 'tarde demais')).json()).toEqual({
+      error: 'Só até 15 min após o envio',
+    });
+    await enableSeeAll(w.ctx, w.s.admin);
+    const admin = await loginAs(w.app, w.s.admin.email);
+    const recent = await seedMsg(w);
+    expect((await edit(recent, 'outro autor', admin.headers)).json()).toEqual({ error: 'Só dá para editar mensagens enviadas por você' });
+    expect((await edit(await seedMsg(w, { authorId: null }), 'x')).json()).toEqual({
+      error: 'Só dá para editar mensagens enviadas por você',
+    });
+    const doc = await seedMsg(w, { kind: 'document', body: 'Segue', mediaPath: '2026/10/a.pdf' });
+    expect((await edit(doc, 'x')).json()).toEqual({ error: 'Só dá para editar texto ou legenda' });
+    expect((await edit(recent, '   ')).statusCode).toBe(400);
+    expect((await edit(recent, 'x'.repeat(4097))).statusCode).toBe(400);
+    expect(sentBy('editText')).toEqual([]);
+  });
+
+  it('the same text again changes nothing and calls nobody', async () => {
+    const id = await seedMsg(w, { body: 'igual' });
+    expect((await edit(id, 'igual')).statusCode).toBe(200);
+    expect(sentBy('editText')).toEqual([]);
+    expect((await history(id)).json()).toEqual([]);
+  });
+
+  it('rolls back the text and the history when Evolution fails (Review Focus 3)', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const id = await seedMsg(w, { body: 'Valor: R$ 100' });
+    w.ctx.wa.failNext();
+
+    const res = await edit(id, 'Valor: R$ 200');
+
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toEqual({ error: 'Não foi possível editar no WhatsApp. Tente de novo.' });
+    expect(await row(id)).toMatchObject({ body: 'Valor: R$ 100', editedAt: null });
+    expect((await history(id)).json()).toEqual([]);
+    expect(await eventsOfKind('message_edited')).toEqual([]);
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('R$');
+    logged.mockRestore();
+  });
+
+  it('the webhook echo of our own edit adds no second version (Review Focus 1)', async () => {
+    const id = await seedMsg(w, { body: 'antes', externalId: 'WA-ECHO' });
+    await edit(id, 'depois');
+    await handleInbound(w.ctx, [{ type: 'edit', instance: w.s.instance, targetExternalId: 'WA-ECHO', fromMe: true, text: 'depois' }]);
+    expect((await history(id)).json()).toHaveLength(1);
+  });
+
+  it('lists contact edits newest first, the encrypted one as text unavailable; 404 for a hidden chat', async () => {
+    const id = await seedMsg(w, { direction: 'in', authorId: null, body: 'oi', externalId: 'WA-C' });
+    await handleInbound(w.ctx, [{ type: 'edit', instance: w.s.instance, targetExternalId: 'WA-C', fromMe: false, text: 'oi, tudo bem?' }]);
+    await handleInbound(w.ctx, [{ type: 'edit', instance: w.s.instance, targetExternalId: 'WA-C', fromMe: false, text: null }]);
+
+    expect((await history(id)).json()).toMatchObject([
+      { previousBody: 'oi, tudo bem?', source: 'contact', editedByName: null, newTextUnavailable: true },
+      { previousBody: 'oi', source: 'contact', editedByName: null, newTextUnavailable: false },
+    ]);
+    const bruno = await loginAs(w.app, w.s.agentB.email);
+    expect((await history(id, bruno.headers)).statusCode).toBe(404);
   });
 });

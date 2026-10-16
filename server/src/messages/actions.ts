@@ -1,10 +1,12 @@
 // Message actions by an agent (spec 2026-10-16 §3–§7). Rules come from @talk/shared (the bubble menu uses the same).
 // Delete and edit change our DB *before* calling Evolution and roll back on failure: the webhook echo of the call
 // then finds the work done and changes nothing (ingest applyRevoke/applyEdit).
-import { and, eq, isNull } from 'drizzle-orm';
-import { DELETED_REASON, deleteBlock, isSingleEmoji, reactBlock, type ActionBlock, type MessageDto } from '@talk/shared';
+import { and, desc, eq, isNull } from 'drizzle-orm';
+import {
+  DELETED_REASON, deleteBlock, editBlock, isSingleEmoji, reactBlock, type ActionBlock, type MessageDto, type MessageEditDto,
+} from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
-import { messages } from '../db/schema.js';
+import { messageEdits, messages, users } from '../db/schema.js';
 import { getChatForUser, type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import type { AuthUser } from '../inbox/visibility.js';
@@ -93,4 +95,69 @@ export async function deleteMessageForEveryone(ctx: AppCtx, user: AuthUser, mess
   await ctx.hub.publishMessage(chat.id, 'message.updated', msg.id);
   await ctx.hub.publishChat(chat.id); // an open timeline refetches on chat.updated and shows the event
   return toMessageDto(ctx.db, claimed);
+}
+
+/**
+ * Spec §5: the author edits a text or caption within 15 min. The new text and the history row are saved first (so the
+ * MESSAGES_UPDATE echo carries the body we already hold); a failed Evolution call puts both back.
+ */
+export async function editMessage(ctx: AppCtx, user: AuthUser, messageId: string, text: string): Promise<MessageDto> {
+  const { msg, chat } = await loadTarget(ctx, user, messageId);
+  refuse(editBlock(asTarget(msg), user.id, Date.now()));
+  if (text === msg.body) return toMessageDto(ctx.db, msg); // nothing to change: no WhatsApp call, no history row
+
+  const sameBody = msg.body === null ? isNull(messages.body) : eq(messages.body, msg.body);
+  const edit = await ctx.db.transaction(async (tx) => {
+    const [saved] = await tx
+      .insert(messageEdits)
+      .values({ messageId: msg.id, previousBody: msg.body, source: 'office', editedBy: user.id })
+      .returning({ id: messageEdits.id, editedAt: messageEdits.editedAt });
+    const [changed] = await tx
+      .update(messages)
+      .set({ body: text, editedAt: saved!.editedAt })
+      .where(and(eq(messages.id, msg.id), isNull(messages.deletedAt), sameBody))
+      .returning({ id: messages.id });
+    // Someone (another tab, a webhook) changed it since we read it: the throw rolls the history row back too.
+    if (!changed) throw conflict('A mensagem mudou. Recarregue e tente de novo.');
+    return saved!;
+  });
+  try {
+    await viaWhatsApp('edit', msg.id, async () => {
+      const { instance, key } = await keyOf(ctx, msg);
+      await ctx.wa.editText(instance, { ...key, fromMe: true }, text);
+    });
+  } catch (err) {
+    await ctx.db.transaction(async (tx) => {
+      await tx.delete(messageEdits).where(eq(messageEdits.id, edit.id));
+      await tx.update(messages).set({ body: msg.body, editedAt: msg.editedAt }).where(eq(messages.id, msg.id));
+    });
+    throw err;
+  }
+  // ponytail: chats.last_message_preview keeps the old text when the last message is edited; refresh it if anyone notices.
+  await addEvent(ctx.db, chat.id, 'message_edited', { messageId: msg.id, source: 'office' }, user.id);
+  await ctx.hub.publishMessage(chat.id, 'message.updated', msg.id);
+  await ctx.hub.publishChat(chat.id);
+  const [row] = await ctx.db.select().from(messages).where(eq(messages.id, msg.id));
+  return toMessageDto(ctx.db, row!);
+}
+
+/** GET /api/messages/:id/edits: the text before each edit, newest first. Reading is fine in a closed chat too. */
+export async function listMessageEdits(ctx: AppCtx, user: AuthUser, messageId: string): Promise<MessageEditDto[]> {
+  const [msg] = await ctx.db.select({ chatId: messages.chatId }).from(messages).where(eq(messages.id, messageId));
+  if (!msg) throw notFound();
+  await getChatForUser(ctx, user, msg.chatId);
+  const rows = await ctx.db
+    .select({
+      id: messageEdits.id,
+      previousBody: messageEdits.previousBody,
+      source: messageEdits.source,
+      editedByName: users.name,
+      newTextUnavailable: messageEdits.newTextUnavailable,
+      editedAt: messageEdits.editedAt,
+    })
+    .from(messageEdits)
+    .leftJoin(users, eq(users.id, messageEdits.editedBy))
+    .where(eq(messageEdits.messageId, messageId))
+    .orderBy(desc(messageEdits.editedAt));
+  return rows.map((r) => ({ ...r, editedByName: r.editedByName ?? null, editedAt: r.editedAt.toISOString() }));
 }
