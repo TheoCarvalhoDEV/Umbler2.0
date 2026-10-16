@@ -128,8 +128,12 @@ async function quotedRef(db: Db, replyToId: string | null): Promise<QuotedRef | 
   return { externalId: orig.externalId, body: orig.body, fromMe: orig.direction === 'out' };
 }
 
-async function callGateway(ctx: AppCtx, msg: MessageRow): Promise<SendResult> {
-  const [target] = await ctx.db
+/** Evolution instance and WhatsApp address of a chat's contact; throws 'Contato sem telefone' with neither phone nor LID. */
+export async function gatewayTarget(
+  db: Db,
+  chatId: string,
+): Promise<{ instance: string; address: string; channelId: string; contactId: string }> {
+  const [target] = await db
     .select({
       phone: contacts.phone,
       lid: contacts.lid,
@@ -140,19 +144,24 @@ async function callGateway(ctx: AppCtx, msg: MessageRow): Promise<SendResult> {
     .from(chats)
     .innerJoin(contacts, eq(contacts.id, chats.contactId))
     .innerJoin(channels, eq(channels.id, chats.channelId))
-    .where(eq(chats.id, msg.chatId));
-  const to = waAddress(target);
-  if (!target || !to) throw new Error('Contato sem telefone');
-  refreshAvatarInBackground(ctx, target.channelId, target.contactId); // every send (agent, resend, bot, triage) comes here
+    .where(eq(chats.id, chatId));
+  const address = waAddress(target);
+  if (!target || !address) throw new Error('Contato sem telefone');
+  return { instance: target.instance, address, channelId: target.channelId, contactId: target.contactId };
+}
+
+async function callGateway(ctx: AppCtx, msg: MessageRow): Promise<SendResult> {
+  const { instance, address: to, channelId, contactId } = await gatewayTarget(ctx.db, msg.chatId);
+  refreshAvatarInBackground(ctx, channelId, contactId); // every send (agent, resend, bot, triage) comes here
   const quoted = await quotedRef(ctx.db, msg.replyToId);
 
-  if (msg.kind === 'text') return ctx.wa.sendText(target.instance, to, msg.body ?? '', quoted);
+  if (msg.kind === 'text') return ctx.wa.sendText(instance, to, msg.body ?? '', quoted);
 
   if (!msg.mediaPath) throw new Error('Arquivo não encontrado');
   const base64 = (await readFile(join(ctx.config.mediaDir, msg.mediaPath))).toString('base64');
-  if (msg.kind === 'audio') return ctx.wa.sendAudio(target.instance, to, base64, quoted);
+  if (msg.kind === 'audio') return ctx.wa.sendAudio(instance, to, base64, quoted);
   return ctx.wa.sendMedia(
-    target.instance,
+    instance,
     to,
     {
       kind: msg.kind as 'image' | 'video' | 'document',
@@ -279,10 +288,11 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
   let replyToId: string | null = null;
   if (input.replyToId) {
     const [orig] = await ctx.db
-      .select({ id: messages.id })
+      .select({ id: messages.id, deletedAt: messages.deletedAt })
       .from(messages)
       .where(and(eq(messages.id, input.replyToId), eq(messages.chatId, chatId)));
     if (!orig) throw badRequest('Mensagem citada não encontrada');
+    if (orig.deletedAt) throw badRequest('Mensagem apagada não pode ser citada'); // spec §4
     replyToId = orig.id;
   }
 

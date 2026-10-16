@@ -11,6 +11,7 @@ import {
 import { getChatDetail, getTimeline, listChats, toChatDetail } from '../inbox/queries.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest } from '../lib/http-error.js';
+import { deleteMessageForEveryone, reactToMessage } from '../messages/actions.js';
 import { addNote, resendMessage, sendAgentMessage, type SendInput } from '../messages/send.js';
 
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
@@ -60,6 +61,8 @@ const multipartFields = z.object({
   botAction: botActionField,
 });
 const noteBody = z.object({ text: z.string().trim().min(1).max(4096) });
+/** Spec §3: one emoji, or '' to remove (isSingleEmoji checks it in reactToMessage). */
+const reactionBody = z.object({ emoji: z.string().max(32) });
 
 async function readMultipart(req: FastifyRequest): Promise<SendInput> {
   const fields: Record<string, string> = {};
@@ -166,5 +169,11 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
     r.post('/api/messages/:id/resend', async (req) =>
       resendMessage(ctx, req.user, idParams.parse(req.params).id),
     );
+
+    r.post('/api/messages/:id/reaction', async (req) =>
+      reactToMessage(ctx, req.user, idParams.parse(req.params).id, reactionBody.parse(req.body).emoji),
+    );
+
+    r.delete('/api/messages/:id', async (req) => deleteMessageForEveryone(ctx, req.user, idParams.parse(req.params).id));
   });
 }
