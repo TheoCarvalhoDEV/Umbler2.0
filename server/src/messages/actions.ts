@@ -1,15 +1,16 @@
 // Message actions by an agent (spec 2026-10-16 §3–§7). Rules come from @talk/shared (the bubble menu uses the same).
 // Delete and edit change our DB *before* calling Evolution and roll back on failure: the webhook echo of the call
 // then finds the work done and changes nothing (ingest applyRevoke/applyEdit).
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import {
-  DELETED_REASON, deleteBlock, editBlock, isSingleEmoji, reactBlock, type ActionBlock, type MessageDto, type MessageEditDto,
+  DELETED_REASON, RECENT_STICKERS_LIMIT, deleteBlock, editBlock, isSingleEmoji, reactBlock,
+  type ActionBlock, type MessageDto, type MessageEditDto, type RecentStickerDto,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
-import { messageEdits, messages, users } from '../db/schema.js';
+import { chats, messageEdits, messages, users } from '../db/schema.js';
 import { getChatForUser, type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
-import type { AuthUser } from '../inbox/visibility.js';
+import { visibleChatsWhere, type AuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest, conflict, notFound } from '../lib/http-error.js';
 import type { MessageKeyRef } from '../whatsapp/types.js';
 import { toMessageDto } from './dto.js';
@@ -160,4 +161,29 @@ export async function listMessageEdits(ctx: AppCtx, user: AuthUser, messageId: s
     .where(eq(messageEdits.messageId, messageId))
     .orderBy(desc(messageEdits.editedAt));
   return rows.map((r) => ({ ...r, editedByName: r.editedByName ?? null, editedAt: r.editedAt.toISOString() }));
+}
+
+/**
+ * Spec §6: the newest stickers, received or sent, in the chats this user can see, with a saved file, one per file
+ * content. Rows from before media_sha256 existed dedupe by file path only.
+ */
+export async function listRecentStickers(ctx: AppCtx, user: AuthUser): Promise<RecentStickerDto[]> {
+  // ponytail: scans the newest 400 sticker rows and dedupes in memory; enough for one office, use DISTINCT ON if it grows.
+  const rows = await ctx.db
+    .select({ id: messages.id, sha256: messages.mediaSha256, path: messages.mediaPath })
+    .from(messages)
+    .innerJoin(chats, eq(chats.id, messages.chatId))
+    .where(and(eq(messages.kind, 'sticker'), isNotNull(messages.mediaPath), isNull(messages.deletedAt), visibleChatsWhere(user)))
+    .orderBy(desc(messages.sentAt), desc(messages.createdAt))
+    .limit(400);
+  const seen = new Set<string>();
+  const out: RecentStickerDto[] = [];
+  for (const r of rows) {
+    const key = r.sha256 ?? `path:${r.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ messageId: r.id, url: `/api/media/${r.id}` });
+    if (out.length === RECENT_STICKERS_LIMIT) break;
+  }
+  return out;
 }

@@ -11,6 +11,7 @@ describe('saveMedia', () => {
     const dir = await mkdtemp(join(tmpdir(), 'talk-media-'));
     const r = await saveMedia(dir, Buffer.from('abc'), 'audio/ogg; codecs=opus', 'voz.opus');
     expect(r.size).toBe(3);
+    expect(r.sha256).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'); // sha256('abc')
     expect(r.path).toMatch(new RegExp(`^\\d{4}/\\d{2}/${UUID}\\.ogg$`));
     expect(await readFile(join(dir, r.path), 'utf8')).toBe('abc');
   });

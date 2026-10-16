@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
-import type { BotAction, BotAttachment } from '@talk/shared';
+import { STICKER_MAX_BYTES, forwardBlock, type BotAction, type BotAttachment } from '@talk/shared';
 import { applyBotRunningBehavior } from '../bots/hooks.js';
 import { refreshAvatarInBackground } from '../contacts/avatar.js';
 import type { AppCtx } from '../ctx.js';
@@ -19,12 +19,16 @@ import { formatSignature, signatureLabel } from './signature.js';
 
 type MessageRow = typeof messages.$inferSelect;
 type MessageDto = Awaited<ReturnType<typeof toMessageDto>>;
-type OutKind = 'text' | 'image' | 'video' | 'audio' | 'document';
+type OutKind = 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker';
 
 export interface SendInput {
   text?: string;
   file?: { buffer: Buffer; mime: string; name: string };
   asVoice?: boolean;
+  /** Spec §6: the file goes as a WhatsApp sticker (PNG/JPEG/WebP up to 1 MB; Evolution converts it to WebP). */
+  asSticker?: boolean;
+  /** Spec §6: send a recent sticker again; its stored file is reused, nothing is uploaded. */
+  stickerFromMessageId?: string;
   signature: boolean;
   replyToId?: string;
   /** Spec §5.5: the agent's answer to BOT_RUNNING; absent = settings.bot_running_behavior decides. */
@@ -84,6 +88,24 @@ export async function failInterruptedSends(db: Db): Promise<void> {
 /** WhatsApp address: canonical phone digits, or '<lid>@lid' for a contact known only by LID. */
 export function waAddress(c: { phone: string | null; lid: string | null } | undefined): string | null {
   return c?.phone ?? (c?.lid ? `${c.lid}@lid` : null);
+}
+
+const STICKER_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const STICKER_INVALID = 'Envie uma imagem PNG, JPEG ou WebP de até 1 MB';
+export const MEDIA_NOT_FORWARDABLE = 'Esta mídia não está disponível para encaminhar';
+
+/**
+ * A stored message whose content a send reuses (a recent sticker; a forward, Task 8). canSee on its chat (404); notes,
+ * unsupported and deleted messages are refused (409); media must still have its file (never downloaded → 400).
+ */
+export async function reusableMessage(ctx: AppCtx, user: AuthUser, messageId: string): Promise<{ msg: MessageRow; chat: ChatRow }> {
+  const [msg] = await ctx.db.select().from(messages).where(eq(messages.id, messageId));
+  if (!msg) throw notFound();
+  const chat = await getChatForUser(ctx, user, msg.chatId);
+  const blocked = forwardBlock({ ...msg, deleted: msg.deletedAt });
+  if (blocked) throw conflict(blocked.reason);
+  if (msg.kind !== 'text' && !msg.mediaPath) throw badRequest(MEDIA_NOT_FORWARDABLE);
+  return { msg, chat };
 }
 
 function fileKind(mime: string, asVoice: boolean): Exclude<OutKind, 'text'> {
@@ -159,6 +181,7 @@ async function callGateway(ctx: AppCtx, msg: MessageRow): Promise<SendResult> {
 
   if (!msg.mediaPath) throw new Error('Arquivo não encontrado');
   const base64 = (await readFile(join(ctx.config.mediaDir, msg.mediaPath))).toString('base64');
+  if (msg.kind === 'sticker') return ctx.wa.sendSticker(instance, to, base64, quoted);
   if (msg.kind === 'audio') return ctx.wa.sendAudio(instance, to, base64, quoted);
   return ctx.wa.sendMedia(
     instance,
@@ -281,9 +304,17 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
 
   const file = input.file ?? null;
   const asVoice = !!input.asVoice && file !== null;
+  const asSticker = !!input.asSticker && file !== null;
   if (file && asVoice && !baseMime(file.mime).startsWith('audio/')) throw badRequest('Áudio inválido');
-  const text = asVoice ? null : input.text?.trim() || null;
-  if (!text && !file) throw badRequest('Mensagem vazia');
+  if (file && asSticker && (!STICKER_MIMES.has(baseMime(file.mime)) || file.buffer.length > STICKER_MAX_BYTES)) {
+    throw badRequest(STICKER_INVALID);
+  }
+  const sticker = input.stickerFromMessageId ? (await reusableMessage(ctx, user, input.stickerFromMessageId)).msg : null;
+  if (sticker && sticker.kind !== 'sticker') throw badRequest('Figurinha não encontrada');
+  // Reused content (spec §6): the source's stored file and text are sent as they are, unsigned.
+  const source = sticker;
+  const text = asVoice || asSticker || source ? null : input.text?.trim() || null;
+  if (!text && !file && !source) throw badRequest('Mensagem vazia');
 
   let replyToId: string | null = null;
   if (input.replyToId) {
@@ -299,18 +330,22 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
   // Spec §5.5, after input validation and before anything is saved or sent: 'ask' → 409 BOT_RUNNING, 'stop' stops the bots.
   await applyBotRunningBehavior(ctx, user, chatId, input.botAction, 'agent_message');
 
-  let body = text;
+  let body = source ? source.body : text;
   if (text && input.signature) {
     const [sector] = await ctx.db.select({ name: sectors.name }).from(sectors).where(eq(sectors.id, chat.sectorId));
     body = formatSignature(text, signatureLabel(user, sector?.name ?? ''));
   }
 
-  const kind: OutKind = file ? fileKind(file.mime, asVoice) : 'text';
-  const media = file ? await saveMedia(ctx.config.mediaDir, file.buffer, file.mime, file.name) : null;
+  const kind: OutKind = source ? (source.kind as OutKind) : asSticker ? 'sticker' : file ? fileKind(file.mime, asVoice) : 'text';
+  const saved = file ? await saveMedia(ctx.config.mediaDir, file.buffer, file.mime, file.name) : null;
+  // ponytail: a reused file is shared by both rows (nothing deletes media files today); copy it if files ever get pruned.
+  const media = source
+    ? { path: source.mediaPath, mime: source.mediaMime, size: source.mediaSize, name: source.mediaName, sha256: source.mediaSha256 }
+    : { path: saved?.path ?? null, mime: file?.mime ?? null, size: saved?.size ?? null, name: file?.name ?? null, sha256: saved?.sha256 ?? null };
   const now = new Date();
 
   const row = await ctx.db.transaction(async (tx) => {
-    await touchChat(tx, user, chat, { at: now, preview: messagePreview(kind, text) });
+    await touchChat(tx, user, chat, { at: now, preview: messagePreview(kind, source ? source.body : text) });
     const [inserted] = await tx
       .insert(messages)
       .values({
@@ -320,10 +355,11 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
         direction: 'out',
         kind,
         body,
-        mediaPath: media?.path ?? null,
-        mediaMime: file?.mime ?? null,
-        mediaSize: media?.size ?? null,
-        mediaName: file?.name ?? null,
+        mediaPath: media.path,
+        mediaMime: media.mime,
+        mediaSize: media.size,
+        mediaName: media.name,
+        mediaSha256: media.sha256,
         authorId: user.id,
         replyToId,
         status: 'pending',

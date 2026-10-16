@@ -522,4 +522,9 @@ describe('handleInbound: office reactions, deletes and edits', () => {
     expect((await allMessages())[0]!.body).toBe('apagada');
     expect(await edits()).toEqual([]);
   });
+
+  it('stores the content hash of a downloaded file (dedupes recent stickers)', async () => {
+    await ingest(msg({ kind: 'sticker', body: null, hasMedia: true, mediaMime: 'image/webp' }));
+    expect((await allMessages())[0]!.mediaSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
 });

@@ -61,3 +61,21 @@ export async function seedWaitingRun(w: ActionsWorld, chatId = w.chatId, contact
     .insert(botRuns)
     .values({ botId: bot!.id, versionId: version!.id, chatId, contactId, state: 'waiting_reply', currentNodeId: 'n1' });
 }
+
+/** A multipart/form-data body for app.inject: fields first, then the file (as @fastify/multipart expects). */
+export function multipart(fields: Record<string, string>, file?: { name: string; mime: string; data: Buffer }) {
+  const boundary = '----talktestboundary';
+  const chunks: Buffer[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+  }
+  if (file) {
+    chunks.push(
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.name}"\r\nContent-Type: ${file.mime}\r\n\r\n`),
+      file.data,
+      Buffer.from('\r\n'),
+    );
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return { payload: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
+}

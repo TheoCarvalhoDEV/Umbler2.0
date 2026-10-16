@@ -306,7 +306,7 @@ async function fetchMedia(ctx: AppCtx, ev: MessageEvent, chatId: string, message
     const media = await ctx.wa.downloadMedia(ev.instance, ev.raw);
     const name = ev.mediaName ?? media.fileName ?? null;
     const saved = await saveMedia(ctx.config.mediaDir, Buffer.from(media.base64, 'base64'), media.mime, name);
-    patch = { mediaPath: saved.path, mediaSize: saved.size, mediaMime: media.mime, mediaName: name };
+    patch = { mediaPath: saved.path, mediaSize: saved.size, mediaMime: media.mime, mediaName: name, mediaSha256: saved.sha256 };
   } catch (err) {
     // Name and message only: never the body or the base64. A systemic failure (EACCES on mediaDir, disk full,
     // wrong Evolution URL/key) would otherwise look like one flaky download. AppCtx has no logger.
