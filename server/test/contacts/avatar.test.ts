@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { contacts, messages } from '../../src/db/schema.js';
+import { channels, chats, contacts, messages } from '../../src/db/schema.js';
+import { avatarRefreshesIdle, createAvatarSweep } from '../../src/contacts/avatar.js';
 import { findOrOpenChat } from '../../src/inbox/chats.js';
-import { avatarRefreshesIdle, handleInbound } from '../../src/messages/ingest.js';
+import { handleInbound } from '../../src/messages/ingest.js';
+import { sendAgentMessage } from '../../src/messages/send.js';
 import type { InboundEvent } from '../../src/whatsapp/types.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -19,7 +21,8 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 );
-const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 let seq = 0;
 
 function msg(over: Partial<MessageEvent> = {}): MessageEvent {
@@ -114,9 +117,9 @@ describe('avatar refresh on inbound messages', () => {
     expect(ctx.wa.pictureLookups).toHaveLength(1);
   });
 
-  it('outbound messages do not trigger it', async () => {
+  it('outbound (fromMe) messages trigger it too', async () => {
     await ingest(msg({ direction: 'out' }));
-    expect(ctx.wa.pictureLookups).toEqual([]);
+    expect(ctx.wa.pictureLookups).toEqual([{ instance: 'talk-test', address: PHONE }]);
   });
 
   it('runs outside the ingest transaction and does not hold the message back', async () => {
@@ -157,7 +160,8 @@ describe('avatar refresh on inbound messages', () => {
     expect(await ctx.db.$count(messages)).toBe(1);
     const row = await contactRow(c.id);
     expect(row.avatarPath).toBe('avatars/keep.png');
-    expect(row.avatarCheckedAt).toBeInstanceOf(Date);
+    // retried in about an hour, not locked out for 7 days
+    expect(Math.abs(row.avatarCheckedAt!.getTime() - (Date.now() - 7 * DAY + HOUR))).toBeLessThan(5 * 60 * 1000);
     expect(logged).toHaveBeenCalledWith('avatar refresh failed', { contactId: c.id, err: 'Error' });
     expect(JSON.stringify(logged.mock.calls)).not.toContain('secreto');
   });
@@ -237,6 +241,106 @@ describe('avatar refresh on inbound messages', () => {
     await ingest(msg());
     expect(await readFile(join(ctx.config.mediaDir, `avatars/${c.id}.png`))).toEqual(PNG);
     expect(existsSync(join(ctx.config.mediaDir, `avatars/${c.id}.png.tmp`))).toBe(false);
+  });
+});
+
+async function chatFor(contactId: string, channelId = seed.channelId) {
+  const { chat } = await findOrOpenChat(ctx.db, {
+    contactId,
+    channelId,
+    init: { sectorId: seed.sectorB, ownerId: null, waiting: true, triagePending: false, createdBy: null },
+  });
+  return chat;
+}
+
+async function otherChannel(status: 'connected' | 'disconnected') {
+  const [ch] = await ctx.db
+    .insert(channels)
+    .values({ name: `outro ${status}`, evolutionInstance: `talk-${status}`, status })
+    .returning();
+  return ch!;
+}
+
+describe('avatar refresh when sending and opening the conversation', () => {
+  it('an agent send looks the picture up once (stale rule), after commit', async () => {
+    ctx.wa.profilePictures.set(PHONE, PIC_URL);
+    const c = await insertContact();
+    const chat = await chatFor(c.id);
+    await sendAgentMessage(ctx, { ...seed.agentB, signature: null }, chat.id, { text: 'oi', signature: false });
+    await sendAgentMessage(ctx, { ...seed.agentB, signature: null }, chat.id, { text: 'oi de novo', signature: false });
+    await avatarRefreshesIdle();
+    expect(ctx.wa.pictureLookups).toEqual([{ instance: 'talk-test', address: PHONE }]);
+    expect((await contactRow(c.id)).avatarPath).toBe(`avatars/${c.id}.png`);
+  });
+
+  it('GET /api/chats/:id looks the picture up only when never checked or stale', async () => {
+    ({ app } = await makeTestApp(ctx));
+    const auth = await loginAs(app, seed.agentB.email);
+    const c = await insertContact();
+    const chat = await chatFor(c.id);
+    const open = () => app!.inject({ method: 'GET', url: `/api/chats/${chat.id}`, headers: auth.headers });
+
+    expect((await open()).statusCode).toBe(200);
+    await avatarRefreshesIdle();
+    expect(ctx.wa.pictureLookups).toEqual([{ instance: 'talk-test', address: PHONE }]);
+
+    await open();
+    await avatarRefreshesIdle();
+    expect(ctx.wa.pictureLookups).toHaveLength(1);
+  });
+
+  it('opening a conversation on a disconnected channel does not look it up', async () => {
+    ({ app } = await makeTestApp(ctx));
+    const auth = await loginAs(app, seed.agentB.email);
+    const c = await insertContact();
+    const chat = await chatFor(c.id, (await otherChannel('disconnected')).id);
+    expect((await app.inject({ method: 'GET', url: `/api/chats/${chat.id}`, headers: auth.headers })).statusCode).toBe(200);
+    await avatarRefreshesIdle();
+    expect(ctx.wa.pictureLookups).toEqual([]);
+    expect((await contactRow(c.id)).avatarCheckedAt).toBeNull();
+  });
+});
+
+describe('avatar sweep of never-checked contacts', () => {
+  it('looks up never-checked contacts through the channel of their latest chat, skipping disconnected ones', async () => {
+    ctx.wa.profilePictures.set(PHONE, PIC_URL);
+    const viaLatest = await insertContact();
+    const other = await otherChannel('connected');
+    const older = await chatFor(viaLatest.id);
+    await ctx.db.update(chats).set({ lastMessageAt: new Date(Date.now() - DAY) }).where(eq(chats.id, older.id));
+    await chatFor(viaLatest.id, other.id);
+    await ctx.db.update(chats).set({ lastMessageAt: new Date() }).where(eq(chats.channelId, other.id));
+
+    const offline = await insertContact({ phone: '5565999990002' });
+    await chatFor(offline.id, (await otherChannel('disconnected')).id);
+    const checked = await insertContact({ phone: '5565999990003', avatarCheckedAt: new Date(Date.now() - 30 * DAY) });
+    await chatFor(checked.id);
+    await insertContact({ phone: '5565999990004' }); // no chat: no channel to ask
+
+    const sweep = createAvatarSweep(ctx, { gapMs: 0 });
+    expect(await sweep.sweep()).toBe(1);
+    expect(ctx.wa.pictureLookups).toEqual([{ instance: other.evolutionInstance, address: PHONE }]);
+    expect((await contactRow(viaLatest.id)).avatarPath).toBe(`avatars/${viaLatest.id}.png`);
+    expect(ctx.hub.events.filter((e) => e.type === 'chat').length).toBeGreaterThan(0);
+    expect(await sweep.sweep()).toBe(0); // nothing left
+  });
+
+  it('caps a sweep at `limit` contacts and survives a failing lookup', async () => {
+    for (let i = 0; i < 3; i++) await chatFor((await insertContact({ phone: `556599999100${i}` })).id);
+    ctx.wa.profilePictures.set('5565999991000', new Error('Evolution 500'));
+    const sweep = createAvatarSweep(ctx, { gapMs: 0, limit: 2 });
+    expect(await sweep.sweep()).toBe(2);
+    expect(await sweep.sweep()).toBe(1);
+    expect(ctx.wa.pictureLookups).toHaveLength(3);
+  });
+
+  it('start runs a sweep right away, waits between lookups and stop ends it cleanly', async () => {
+    for (let i = 0; i < 2; i++) await chatFor((await insertContact({ phone: `556599999200${i}` })).id);
+    const sweep = createAvatarSweep(ctx, { gapMs: 60_000 });
+    sweep.start();
+    await vi.waitFor(() => expect(ctx.wa.pictureLookups).toHaveLength(1));
+    await sweep.stop(); // resolves without waiting out the 60 s gap
+    expect(ctx.wa.pictureLookups).toHaveLength(1);
   });
 });
 
