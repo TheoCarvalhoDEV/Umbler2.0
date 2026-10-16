@@ -105,6 +105,41 @@ describe('eventText', () => {
   });
 });
 
+describe('eventText for chatbot events', () => {
+  const names = new Map([['s-fin', 'Financeiro'], ['u-ana', 'Ana']]);
+  const bot = { botId: 'b1', botName: 'Triagem', runId: 'r1' };
+
+  it('describes each bot kind in Portuguese', () => {
+    expect(eventText(event({ kind: 'bot_started', data: bot }), names)).toBe('Chatbot Triagem iniciado');
+    expect(eventText(event({ kind: 'bot_finished', data: bot }), names)).toBe('Chatbot Triagem finalizado');
+    expect(eventText(event({ kind: 'bot_stopped', data: { ...bot, reason: 'manual' } }), names)).toBe('Chatbot Triagem parado');
+    expect(eventText(event({ kind: 'bot_stopped', authorName: 'Bia', data: { ...bot, reason: 'manual', by: 'u-bia' } }), names)).toBe(
+      'Chatbot Triagem parado por Bia',
+    );
+    expect(eventText(event({ kind: 'bot_failed', data: { ...bot, reason: 'Limite de 5 fluxos encadeados' } }), names)).toBe(
+      'Chatbot Triagem falhou: Limite de 5 fluxos encadeados',
+    );
+    expect(eventText(event({ kind: 'bot_failed', data: bot }), names)).toBe('Chatbot Triagem falhou');
+    expect(eventText(event({ kind: 'bot_transferred', data: { ...bot, toSectorId: 's-fin', toOwnerId: 'u-ana' } }), names)).toBe(
+      'Chatbot Triagem transferiu para Financeiro · Ana',
+    );
+    expect(eventText(event({ kind: 'bot_transferred', data: { ...bot, toSectorId: 's-x', toOwnerId: null } }), names)).toBe(
+      'Chatbot Triagem transferiu para outro setor',
+    );
+    expect(eventText(event({ kind: 'bot_note', data: { ...bot, text: 'Cliente VIP' } }), names)).toBe('Nota do chatbot Triagem: Cliente VIP');
+    expect(eventText(event({ kind: 'bot_started' }), names)).toBe('Chatbot Chatbot iniciado');
+  });
+
+  it('marks privacy changes and closes done by a bot', () => {
+    expect(eventText(event({ kind: 'privacy_changed', data: { ...bot, private: true } }), names)).toBe(
+      'Conversa tornada privada · Chatbot Triagem',
+    );
+    expect(eventText(event({ kind: 'closed', data: { ...bot, closingMessageSent: true } }), names)).toBe(
+      'Conversa finalizada · Chatbot Triagem',
+    );
+  });
+});
+
 describe('small helpers', () => {
   it('previewText falls back to a label per media kind', () => {
     expect(previewText('  oi  ', 'text')).toBe('oi');

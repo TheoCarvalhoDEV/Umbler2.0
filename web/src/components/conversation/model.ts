@@ -68,6 +68,8 @@ export function previewText(body: string | null, kind: string): string {
 export function eventText(e: ChatEventDto, names: Map<string, string>): string {
   const name = (v: unknown) => (typeof v === 'string' ? names.get(v) : undefined);
   const by = e.authorName ? ` por ${e.authorName}` : '';
+  const bot = String(e.data.botName ?? 'Chatbot');
+  const viaBot = typeof e.data.botName === 'string' ? ` · Chatbot ${e.data.botName}` : ''; // privacy/close done by a bot
   switch (e.kind) {
     case 'created':
       return e.authorName ? `Conversa iniciada por ${e.authorName}` : 'Conversa iniciada pelo contato';
@@ -78,13 +80,27 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
       return `Conversa transferida${by}${to ? ` para ${to}` : ''}`;
     }
     case 'privacy_changed':
-      return `Conversa tornada ${e.data.private === true ? 'privada' : 'pública'}${by}`;
+      return `Conversa tornada ${e.data.private === true ? 'privada' : 'pública'}${by}${viaBot}`;
     case 'closed':
-      return `Conversa finalizada${by}`;
+      return `Conversa finalizada${by}${viaBot}`;
     case 'reopened':
       return `Conversa reaberta${by}`;
     case 'triage_routed':
       return `Triagem: encaminhada para ${name(e.data.sectorId) ?? 'outro setor'}`;
+    case 'bot_started':
+      return `Chatbot ${bot} iniciado`;
+    case 'bot_finished':
+      return `Chatbot ${bot} finalizado`;
+    case 'bot_stopped':
+      return `Chatbot ${bot} parado${by}`;
+    case 'bot_failed':
+      return `Chatbot ${bot} falhou${typeof e.data.reason === 'string' && e.data.reason ? `: ${e.data.reason}` : ''}`;
+    case 'bot_transferred': {
+      const owner = e.data.toOwnerId ? ` · ${name(e.data.toOwnerId) ?? ''}` : '';
+      return `Chatbot ${bot} transferiu para ${name(e.data.toSectorId) ?? 'outro setor'}${owner}`;
+    }
+    case 'bot_note':
+      return `Nota do chatbot ${bot}: ${String(e.data.text ?? '')}`;
   }
 }
 

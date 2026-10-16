@@ -38,15 +38,20 @@ function extensionFor(mime: string, originalName?: string | null): string {
   return /^\.[a-z0-9]{1,8}$/.test(ext) ? ext : '.bin';
 }
 
-/** Writes media to `<mediaDir>/YYYY/MM/<uuid>.<ext>`; the original name never becomes part of the path. */
+/**
+ * Writes media to `<mediaDir>/YYYY/MM/<uuid>.<ext>`, or `<mediaDir>/<subdir>/<uuid>.<ext>` when `subdir` is given
+ * (the bot media library uses 'bots'). `subdir` is a constant from code, never user input; the original name
+ * never becomes part of the path.
+ */
 export async function saveMedia(
   mediaDir: string,
   data: Buffer,
   mime: string,
   originalName?: string | null,
+  subdir?: string,
 ): Promise<{ path: string; size: number }> {
   const now = new Date();
-  const folder = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const folder = subdir ?? `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
   const path = `${folder}/${randomUUID()}${extensionFor(mime, originalName)}`;
   await mkdir(join(mediaDir, folder), { recursive: true });
   await writeFile(join(mediaDir, path), data);

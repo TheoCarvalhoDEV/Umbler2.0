@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { WsEvent } from '@talk/shared';
+import type { NotificationDto } from '@talk/shared';
 import type { AppCtx } from '../../src/ctx.js';
 import { channels, chatPins, chats, contactTags, contacts, messages, tags, userSectors, users } from '../../src/db/schema.js';
 import { transferChat } from '../../src/inbox/chats.js';
@@ -156,7 +157,7 @@ describe('createHub.publishMessage', () => {
 
     const message = {
       id: messageId, chatId: chat.id, direction: 'out', kind: 'text', body: 'Bom dia',
-      media: null, mediaUnavailable: false, authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null,
+      media: null, mediaUnavailable: false, authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
       replyTo: null, reaction: null, status: 'sent', error: null, sentAt: '2026-10-14T12:01:00.000Z',
     };
     expect(a.events).toEqual([{ type: 'message.created', message }]);
@@ -253,5 +254,34 @@ describe('createRecordingHub', () => {
     const t = await makeTestCtx();
     await t.hub.publishChat('x');
     expect(t.hub.events).toEqual([{ type: 'chat', chatId: 'x' }]);
+  });
+});
+
+describe('publishNotification', () => {
+  it('real hub sends the notification once, only to listed users who can see the chat', async () => {
+    const a = fakeSocket(); const b = fakeSocket(); const adm = fakeSocket();
+    hub.register(s.agentA, a); hub.register(s.agentB, b); hub.register(s.admin, adm);
+    await enableSeeAll(ctx, s.admin);
+    const { chat } = await insertChat(ctx, s.channelId, { sectorId: s.sectorA });
+    const notification: NotificationDto = {
+      id: randomUUID(), chatId: chat.id, title: 'Nova conversa', text: 'Nova conversa de Maria Souza',
+      botName: 'Fluxo do escritório', createdAt: '2026-10-14T13:00:00.000Z',
+    };
+
+    await hub.publishNotification(chat.id, [s.agentA.id, s.agentB.id, s.agentA.id], notification);
+
+    expect(a.events).toEqual([{ type: 'notification', notification }]); // listed twice, delivered once
+    expect(b.events).toEqual([]);   // listed, but a sector B agent cannot see a sector A chat
+    expect(adm.events).toEqual([]); // sees every chat, but was not listed
+  });
+
+  it('recording hub records one event per listed user', async () => {
+    const rec = createRecordingHub();
+    const n: NotificationDto = { id: 'n1', chatId: 'c1', title: 't', text: 'x', botName: 'B', createdAt: '2026-10-14T13:00:00.000Z' };
+    await rec.publishNotification('c1', ['u1', 'u2'], n);
+    expect(rec.events).toEqual([
+      { type: 'notification', chatId: 'c1', userId: 'u1' },
+      { type: 'notification', chatId: 'c1', userId: 'u2' },
+    ]);
   });
 });

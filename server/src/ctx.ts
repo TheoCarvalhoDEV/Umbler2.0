@@ -1,3 +1,4 @@
+import type { BotRuntime } from './bots/runtime.js';
 import type { Db } from './db/client.js';
 import type { Config } from './config.js';
 import type { Hub } from './realtime/hub.js';
@@ -8,4 +9,5 @@ export interface AppCtx {
   config: Config;
   wa: WhatsAppGateway;
   hub: Hub;
+  botRuntime: BotRuntime;
 }

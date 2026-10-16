@@ -9,6 +9,7 @@ import { buildApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
 import { createRecordingHub } from '../src/realtime/hub.js';
 import { createFakeGateway } from '../src/whatsapp/fake.js';
+import { createBotRuntime, createFakeClock, type FakeClock } from '../src/bots/runtime.js';
 import { eq } from 'drizzle-orm';
 import { channels, sectors, userSectors, users } from '../src/db/schema.js';
 
@@ -102,8 +103,10 @@ export async function enableSeeAll(ctx: { db: Db | Tx }, user: SeededUser): Prom
   return user;
 }
 
-// Fresh in-memory DB, fake gateway, recording hub and test config per call.
-export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof createFakeGateway>; hub: ReturnType<typeof createRecordingHub> }> {
+// Fresh in-memory DB, fake gateway, recording hub, fake clock and test config per call.
+export async function makeTestCtx(): Promise<
+  AppCtx & { wa: ReturnType<typeof createFakeGateway>; hub: ReturnType<typeof createRecordingHub>; clock: FakeClock }
+> {
   const db = await createTestDb();
   const config: Config = {
     port: 0,
@@ -117,7 +120,8 @@ export async function makeTestCtx(): Promise<AppCtx & { wa: ReturnType<typeof cr
     evolution: { url: 'http://evolution.test', apiKey: 'test-key' },
     sessionDays: 30,
   };
-  return { db, wa: createFakeGateway(), hub: createRecordingHub(), config };
+  const clock = createFakeClock();
+  return { db, wa: createFakeGateway(), hub: createRecordingHub(), config, clock, botRuntime: createBotRuntime({ now: clock.now }) };
 }
 
 export async function makeTestApp(ctx?: AppCtx): Promise<{ app: FastifyInstance; ctx: AppCtx }> {

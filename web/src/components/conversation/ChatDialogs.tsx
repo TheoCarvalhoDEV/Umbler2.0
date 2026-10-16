@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { ChatDetail, SectorDto, UserDto } from '@talk/shared';
+import type { BotAction, BotRunningErrorBody, ChatDetail, SectorDto, UserDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 
 // Native <dialog>: showModal() gives focus trapping, Esc and the backdrop for free.
-function Modal({ title, onCancel, children }: { title: string; onCancel: () => void; children: ReactNode }) {
+export function Modal({ title, onCancel, children }: { title: string; onCancel: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();
@@ -25,7 +25,7 @@ function Modal({ title, onCancel, children }: { title: string; onCancel: () => v
   );
 }
 
-function Actions(props: { busy: boolean; error: string | null; confirmLabel: string; onCancel: () => void; onConfirm: () => void }) {
+export function Actions(props: { busy: boolean; error: string | null; confirmLabel: string; onCancel: () => void; onConfirm: () => void }) {
   return (
     <>
       {props.error && (
@@ -140,6 +140,51 @@ export function CloseDialog(props: {
         onCancel={props.onCancel}
         onConfirm={() => props.onConfirm(send)}
       />
+    </Modal>
+  );
+}
+
+const BOT_RUNNING_LABELS = {
+  send: { stop: 'Parar e enviar', keep: 'Enviar e manter' },
+  transfer: { stop: 'Parar e transferir', keep: 'Transferir e manter' },
+} as const;
+
+/** 409 BOT_RUNNING (spec §5.5 "ask"). The caller retries with the chosen botAction; null = Cancelar. */
+export function BotRunningDialog({
+  runs,
+  onChoose,
+  action = 'send',
+}: {
+  runs: BotRunningErrorBody['runs'];
+  onChoose: (a: BotAction | null) => void;
+  action?: 'send' | 'transfer';
+}) {
+  const labels = BOT_RUNNING_LABELS[action];
+  return (
+    <Modal title="O chatbot está rodando" onCancel={() => onChoose(null)}>
+      <p className="text-sm">
+        Em execução nesta conversa: <strong>{runs.map((r) => r.botName).join(', ')}</strong>.
+      </p>
+      <p className="mt-2 text-sm text-muted">Parar o chatbot evita que ele continue respondendo o contato.</p>
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <button type="button" onClick={() => onChoose(null)} className="rounded px-3 py-2 text-sm hover:bg-surface">
+          Cancelar
+        </button>
+        <button
+          type="button"
+          onClick={() => onChoose('keep')}
+          className="rounded border border-border px-3 py-2 text-sm hover:bg-surface"
+        >
+          {labels.keep}
+        </button>
+        <button
+          type="button"
+          onClick={() => onChoose('stop')}
+          className="rounded bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+        >
+          {labels.stop}
+        </button>
+      </div>
     </Modal>
   );
 }

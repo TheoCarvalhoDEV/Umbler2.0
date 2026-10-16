@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, type RouteObject } from 'react-router';
 import AppLayout from './components/layout/AppLayout';
 import { RequireAuth } from './lib/auth';
@@ -8,12 +9,25 @@ import { Inbox } from './pages/Inbox';
 import Login from './pages/Login';
 import { SettingsPage } from './pages/settings/SettingsPage';
 
+// React Flow, dagre and the block cards load only when an admin opens the editor.
+const BotEditorPage = lazy(() => import('./pages/settings/bots/BotEditorPage').then((m) => ({ default: m.BotEditorPage })));
+
 function NotFound() {
   return <div className="flex h-full items-center justify-center text-muted">Página não encontrada.</div>;
 }
 
 export const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
+  {
+    path: '/configuracoes/chatbots/:id',
+    element: (
+      <RequireAuth>
+        <Suspense fallback={null}>
+          <BotEditorPage />
+        </Suspense>
+      </RequireAuth>
+    ),
+  },
   {
     path: '/',
     element: (

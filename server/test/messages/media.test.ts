@@ -33,6 +33,16 @@ describe('saveMedia', () => {
   });
 });
 
+describe('saveMedia subdir', () => {
+  it('stores under the given subdir instead of YYYY/MM', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'talk-media-'));
+    const r = await saveMedia(dir, Buffer.from('%PDF'), 'application/pdf', 'Contrato.pdf', 'bots');
+    expect(r.path).toMatch(new RegExp(`^bots/${UUID}\\.pdf$`));
+    expect(r.size).toBe(4);
+    expect(await readFile(join(dir, r.path), 'utf8')).toBe('%PDF');
+  });
+});
+
 describe('mediaResponseHeaders', () => {
   const inlineCases: Array<[string, string]> = [
     ['image/jpeg', 'image/jpeg'],

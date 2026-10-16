@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Smiley, Trash, X } from '@phosphor-icons/react';
-import type { MessageDto, QuickAnswerDto } from '@talk/shared';
-import { api, qk } from '../../lib/api';
+import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Robot, Smiley, Trash, X } from '@phosphor-icons/react';
+import type { BotAction, BotRunningErrorBody, MessageDto, QuickAnswerDto } from '@talk/shared';
+import { api, botRunningRuns, qk } from '../../lib/api';
 import { applyWsEvent } from '../../lib/ws';
+import { BotPanel } from './BotPanel';
+import { BotRunningDialog } from './ChatDialogs';
 import { errorMessage, previewText } from './model';
 import { QuickAnswerPicker, filterQuickAnswers } from './QuickAnswerPicker';
 import { useAudioRecorder } from './useAudioRecorder';
@@ -71,10 +73,13 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const [file, setFile] = useState<File | null>(null);
   const [signature, setSignature] = useState(readSignaturePref);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [botOpen, setBotOpen] = useState(false);
   const [pickerDismissed, setPickerDismissed] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 409 BOT_RUNNING (spec §5.5 "ask"): submit() waits on this dialog, then resends with the choice
+  const [botAsk, setBotAsk] = useState<{ runs: BotRunningErrorBody['runs']; resolve: (a: BotAction | null) => void } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorder = useAudioRecorder();
@@ -120,12 +125,22 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
     });
   }
 
-  async function submit(call: () => Promise<MessageDto>): Promise<boolean> {
+  async function submit(call: (botAction?: BotAction) => Promise<MessageDto>): Promise<boolean> {
     setSending(true);
     setError(null);
     try {
+      let message: MessageDto;
+      try {
+        message = await call();
+      } catch (e) {
+        const runs = botRunningRuns(e);
+        if (!runs) throw e;
+        const choice = await new Promise<BotAction | null>((resolve) => setBotAsk({ runs, resolve }));
+        if (!choice) return false; // Cancelar: the caller puts the text back
+        message = await call(choice);
+      }
       // same cache path as the WS echo, so the POST response and the event never duplicate
-      applyWsEvent(qc, { type: 'message.created', message: await call() });
+      applyWsEvent(qc, { type: 'message.created', message });
       return true;
     } catch (e) {
       setError(errorMessage(e));
@@ -143,12 +158,12 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
     // Clear now: the POST waits for Evolution (seconds), and the attendant keeps typing meanwhile.
     setText('');
     setFile(null);
-    const ok = await submit(() =>
+    const ok = await submit((botAction) =>
       isNote
-        ? api.chats.addNote(chatId, value)
+        ? api.chats.addNote(chatId, value) // notes never affect the bot (spec §5.5)
         : sentFile
-          ? api.chats.sendFile(chatId, { file: sentFile, text: value || undefined, signature, replyToId })
-          : api.chats.sendText(chatId, { text: value, signature, replyToId }),
+          ? api.chats.sendFile(chatId, { file: sentFile, text: value || undefined, signature, replyToId, botAction })
+          : api.chats.sendText(chatId, { text: value, signature, replyToId, botAction }),
     );
     if (!ok) {
       // put it back only where the attendant has not started something new
@@ -171,8 +186,8 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
     const audio = await recorder.stop();
     if (!audio) return;
     const sentReply = replyTo;
-    const ok = await submit(() =>
-      api.chats.sendFile(chatId, { file: audio, signature: false, asVoice: true, replyToId: sentReply?.id }),
+    const ok = await submit((botAction) =>
+      api.chats.sendFile(chatId, { file: audio, signature: false, asVoice: true, replyToId: sentReply?.id, botAction }),
     );
     if (ok && replyRef.current === sentReply) onClearReply();
   }
@@ -366,6 +381,12 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                 </div>
               )}
             </div>
+            <div className="relative">
+              <ToolButton label="Chatbot" onClick={() => setBotOpen((o) => !o)}>
+                <Robot size={20} />
+              </ToolButton>
+              {botOpen && <BotPanel chatId={chatId} onClose={() => setBotOpen(false)} />}
+            </div>
             {!isNote && (
               <label className="ml-2 flex items-center gap-1 text-xs text-muted">
                 <input type="checkbox" checked={signature} onChange={(e) => toggleSignature(e.target.checked)} />
@@ -390,6 +411,16 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
             </div>
           </div>
         </>
+      )}
+
+      {botAsk && (
+        <BotRunningDialog
+          runs={botAsk.runs}
+          onChoose={(choice) => {
+            botAsk.resolve(choice);
+            setBotAsk(null);
+          }}
+        />
       )}
     </div>
   );

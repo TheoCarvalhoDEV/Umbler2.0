@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpLeft, Check, Checks, Clock, FileText, ImageBroken, WarningCircle } from '@phosphor-icons/react';
+import { ArrowBendUpLeft, Check, Checks, Clock, FileText, ImageBroken, Robot, WarningCircle } from '@phosphor-icons/react';
 import type { MessageDto } from '@talk/shared';
 import { api } from '../../lib/api';
 import { Avatar } from '../Avatar';
@@ -82,11 +82,15 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
   const showStatus = m.direction === 'out' && !isNote;
   // quoting needs the WhatsApp id, which pending/failed sends do not have yet
   const canReply = !isNote && !(m.direction === 'out' && (m.status === 'pending' || m.status === 'failed'));
+  // a chatbot run sends as the system (authorId null) and the server fills botName
+  const botName = !isNote && m.direction === 'out' ? (m.botName ?? null) : null;
   const label = isNote
     ? `Nota interna · ${m.authorName ?? 'Atendente'}`
-    : m.direction === 'out'
-      ? (m.authorName ?? 'Celular ou sistema') // authorId null = sent from the phone or by the triage bot
-      : null;
+    : botName
+      ? `Chatbot ${botName}`
+      : m.direction === 'out'
+        ? (m.authorName ?? 'Celular ou sistema') // authorId null = sent from the phone or by the triage
+        : null;
   const tone = isNote ? 'bg-yellow-200 text-zinc-900' : m.direction === 'out' ? 'bg-primary/25 text-fg' : 'bg-panel text-fg';
 
   async function resend() {
@@ -117,7 +121,12 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
     <div className={`group flex px-4 py-1 ${right ? 'justify-end' : 'justify-start'}`}>
       {right && replyButton}
       <div className={`relative max-w-[75%] rounded-lg px-3 py-2 shadow-sm ${tone} ${m.reaction ? 'mb-3' : ''}`}>
-        {label && <p className="mb-1 text-xs font-semibold opacity-75">{label}</p>}
+        {label && (
+          <p className="mb-1 flex items-center gap-1 text-xs font-semibold opacity-75">
+            {botName && <Robot size={14} weight="fill" aria-hidden data-bot-icon className="shrink-0" />}
+            {label}
+          </p>
+        )}
         {m.replyTo && (
           <div className="mb-1 line-clamp-3 rounded border-l-4 border-primary bg-black/15 px-2 py-1 text-xs opacity-80">
             {previewText(m.replyTo.body, m.replyTo.kind)}

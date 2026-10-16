@@ -1,5 +1,14 @@
 import type { InfiniteData } from '@tanstack/react-query';
 import type {
+  BotAction,
+  BotDto,
+  BotExport,
+  BotMediaDto,
+  BotPatch,
+  BotRunDto,
+  BotRunningErrorBody,
+  BotVersionDto,
+  BotVersionSummaryDto,
   ChannelDto,
   ChatDetail,
   ChatListFilters,
@@ -7,9 +16,13 @@ import type {
   ContactDto,
   ContactNoteDto,
   CustomFieldDto,
+  GraphProblem,
+  ManualBotDto,
   Me,
   MessageDto,
+  OfficeTemplateInput,
   QuickAnswerDto,
+  SaveVersionInput,
   SectorDto,
   SettingsDto,
   TagDto,
@@ -22,10 +35,26 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public correlationId?: string,
+    /** Parsed error body (null when it was not JSON): carries `code`/`runs`, `problems`, `usedBy`. */
+    public data?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+/** The runs from a 409 `{ code: 'BOT_RUNNING', runs }`; null for any other error. */
+export function botRunningRuns(e: unknown): BotRunningErrorBody['runs'] | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  const d = e.data as Partial<BotRunningErrorBody> | null | undefined;
+  return d?.code === 'BOT_RUNNING' && Array.isArray(d.runs) ? d.runs : null;
+}
+
+/** The problems from a 400 `{ error, problems }` (publish of an invalid graph); null for any other error. */
+export function graphProblems(e: unknown): GraphProblem[] | null {
+  if (!(e instanceof ApiError) || e.status !== 400) return null;
+  const p = (e.data as { problems?: unknown } | null | undefined)?.problems;
+  return Array.isArray(p) ? (p as GraphProblem[]) : null;
 }
 
 export interface Page<T> {
@@ -39,8 +68,10 @@ export type ChatListData = InfiniteData<ChatPage, string | undefined>;
 export type TimelineData = InfiniteData<TimelineItem[], string | undefined>;
 
 export interface StartChatInput { contactId?: string; phone?: string; name?: string; sectorId?: string }
-export interface SendTextInput { text: string; signature: boolean; replyToId?: string }
-export interface SendFileInput { file: Blob; fileName?: string; text?: string; signature: boolean; replyToId?: string; asVoice?: boolean }
+export interface SendTextInput { text: string; signature: boolean; replyToId?: string; botAction?: BotAction }
+export interface SendFileInput {
+  file: Blob; fileName?: string; text?: string; signature: boolean; replyToId?: string; asVoice?: boolean; botAction?: BotAction;
+}
 export type ContactInput = Partial<Pick<ContactDto, 'name' | 'phone' | 'email' | 'landline' | 'address'>>;
 export interface ContactListQuery { q?: string; tagId?: string; cursor?: string; limit?: number }
 export type SectorInput = Partial<Pick<SectorDto, 'name' | 'position' | 'isDefault'>>;
@@ -78,7 +109,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     const obj = (data ?? {}) as { error?: unknown; correlationId?: unknown };
     const msg = typeof obj.error === 'string' ? obj.error : `Erro ${res.status}`;
     const cid = typeof obj.correlationId === 'string' ? obj.correlationId : undefined;
-    throw new ApiError(res.status, cid ? `${msg} (${cid})` : msg, cid);
+    throw new ApiError(res.status, cid ? `${msg} (${cid})` : msg, cid, data);
   }
   return data as T;
 }
@@ -131,7 +162,7 @@ export const api = Object.assign(call, {
     assume: (id: string) => request<ChatDetail>('POST', `/api/chats/${enc(id)}/assume`),
     reopen: (id: string) => request<ChatDetail>('POST', `/api/chats/${enc(id)}/reopen`),
     markRead: (id: string) => request<void>('POST', `/api/chats/${enc(id)}/read`),
-    transfer: (id: string, to: { sectorId?: string; ownerId?: string | null }) =>
+    transfer: (id: string, to: { sectorId?: string; ownerId?: string | null; botAction?: BotAction }) =>
       request<ChatDetail>('POST', `/api/chats/${enc(id)}/transfer`, to),
     setPrivacy: (id: string, isPrivate: boolean) =>
       request<ChatDetail>('POST', `/api/chats/${enc(id)}/privacy`, { private: isPrivate }),
@@ -146,6 +177,7 @@ export const api = Object.assign(call, {
       form.append('signature', String(input.signature));
       if (input.replyToId) form.append('replyToId', input.replyToId);
       if (input.asVoice) form.append('asVoice', 'true');
+      if (input.botAction) form.append('botAction', input.botAction);
       form.append('file', input.file, input.fileName ?? (input.file instanceof File ? input.file.name : 'arquivo'));
       return request<MessageDto>('POST', `/api/chats/${enc(id)}/messages`, form);
     },
@@ -190,6 +222,32 @@ export const api = Object.assign(call, {
     create: (name: string) => request<ChannelDto>('POST', '/api/channels', { name }),
     connect: (id: string) => request<{ qrBase64: string | null }>('POST', `/api/channels/${enc(id)}/connect`),
   },
+  bots: {
+    list: () => request<BotDto[]>('GET', '/api/bots'),
+    create: (input: { name: string; description?: string }) => request<BotDto>('POST', '/api/bots', input),
+    get: (id: string) => request<BotDto>('GET', `/api/bots/${enc(id)}`),
+    update: (id: string, patch: BotPatch) => request<BotDto>('PATCH', `/api/bots/${enc(id)}`, patch),
+    remove: (id: string) => request<void>('DELETE', `/api/bots/${enc(id)}`),
+    duplicate: (id: string) => request<BotDto>('POST', `/api/bots/${enc(id)}/duplicate`),
+    versions: (id: string) => request<BotVersionSummaryDto[]>('GET', `/api/bots/${enc(id)}/versions`),
+    version: (id: string, n: number) => request<BotVersionDto>('GET', `/api/bots/${enc(id)}/versions/${n}`),
+    saveVersion: (id: string, input: SaveVersionInput) => request<BotVersionDto>('POST', `/api/bots/${enc(id)}/versions`, input),
+    setStatus: (id: string, status: 'active' | 'paused') => request<BotDto>('POST', `/api/bots/${enc(id)}/status`, { status }),
+    importBot: (data: BotExport) => request<BotDto>('POST', '/api/bots/import', data),
+    exportUrl: (id: string) => `/api/bots/${enc(id)}/export`,
+    uploadMedia: (file: Blob, name?: string) => {
+      const form = new FormData();
+      form.append('file', file, name ?? (file instanceof File ? file.name : 'arquivo'));
+      return request<BotMediaDto>('POST', '/api/bots/media', form);
+    },
+    fromTemplate: (input: OfficeTemplateInput) => request<BotDto>('POST', '/api/bots/from-template', input),
+    manual: () => request<ManualBotDto[]>('GET', '/api/bots/manual'),
+  },
+  botRuns: {
+    listForChat: (chatId: string) => request<BotRunDto[]>('GET', `/api/chats/${enc(chatId)}/bot-runs`),
+    start: (chatId: string, botId: string) => request<BotRunDto>('POST', `/api/chats/${enc(chatId)}/bot-runs`, { botId }),
+    stop: (runId: string) => request<BotRunDto>('POST', `/api/bot-runs/${enc(runId)}/stop`),
+  },
 });
 
 /** React Query keys. Everything chat-related lives under ['chats'] so one invalidation refreshes it all. */
@@ -212,4 +270,11 @@ export const qk = {
   quickAnswers: ['quick-answers'] as const,
   settings: ['settings'] as const,
   channels: ['channels'] as const,
+  bots: ['bots'] as const,
+  bot: (id: string) => ['bots', 'detail', id] as const,
+  botVersions: (id: string) => ['bots', 'versions', id] as const,
+  botVersion: (id: string, n: number) => ['bots', 'versions', id, n] as const,
+  botManual: ['bots', 'manual'] as const,
+  /** Under ['chats'] so the WS reconnect invalidation refreshes it too. */
+  chatBotRuns: (chatId: string) => ['chats', 'bot-runs', chatId] as const,
 };

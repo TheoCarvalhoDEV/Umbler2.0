@@ -6,6 +6,11 @@ import type { MessageDto, QuickAnswerDto } from '@talk/shared';
 import { qk, type TimelineData } from '../../lib/api';
 import { Composer, SIGNATURE_KEY } from './Composer';
 
+// jsdom has no modal <dialog> API; the browser opens ChatDialogs' Modal with showModal()
+HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+  this.setAttribute('open', '');
+};
+
 type Call = { method: string; path: string; body: unknown };
 const calls: Call[] = [];
 
@@ -174,5 +179,84 @@ describe('Composer', () => {
 
     resolve(new Response(JSON.stringify({ error: 'Falhou' }), { status: 500, headers: { 'content-type': 'application/json' } }));
     await waitFor(() => expect(box().value).toBe('Bom dia'));
+  });
+});
+
+const BOT_RUNNING = {
+  error: 'O chatbot está em execução nesta conversa',
+  code: 'BOT_RUNNING',
+  runs: [{ id: 'r1', botName: 'Fluxo do escritório' }],
+};
+
+/** The first request answers 409 BOT_RUNNING; every later one succeeds with message(). */
+function stubBotRunning() {
+  calls.length = 0;
+  let first = true;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      calls.push({
+        method: init?.method ?? 'GET',
+        path: url.pathname,
+        body: typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body,
+      });
+      const status = first ? 409 : 200;
+      first = false;
+      return new Response(JSON.stringify(status === 409 ? BOT_RUNNING : message()), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    }),
+  );
+}
+
+describe('Composer with a running chatbot', () => {
+  it.each([
+    ['Parar e enviar', 'stop'],
+    ['Enviar e manter', 'keep'],
+  ] as const)('asks on 409 BOT_RUNNING and "%s" resends with botAction "%s"', async (label, botAction) => {
+    stubBotRunning();
+    const { qc } = renderComposer();
+    fireEvent.change(box(), { target: { value: 'Bom dia' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+
+    const dialog = await screen.findByRole('dialog', { name: 'O chatbot está rodando' });
+    expect(dialog.textContent).toContain('Fluxo do escritório');
+    expect(screen.queryByRole('alert')).toBeNull(); // the 409 is a question, not an error
+    fireEvent.click(screen.getByRole('button', { name: label }));
+
+    await waitFor(() => expect(qc.getQueryData<TimelineData>(qk.timeline('c1'))!.pages[0]).toHaveLength(1));
+    expect(posts('/api/chats/c1/messages').map((c) => c.body)).toEqual([
+      { text: 'Bom dia', signature: true },
+      { text: 'Bom dia', signature: true, botAction },
+    ]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('"Cancelar" sends nothing more and puts the text back', async () => {
+    stubBotRunning();
+    renderComposer();
+    fireEvent.change(box(), { target: { value: 'Bom dia' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await screen.findByRole('dialog', { name: 'O chatbot está rodando' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+
+    await waitFor(() => expect(box().value).toBe('Bom dia'));
+    expect(posts('/api/chats/c1/messages')).toHaveLength(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('the robot button toggles the "Executar chatbot" panel', async () => {
+    stubFetch({ 'GET /api/bots/manual': [{ id: 'b1', title: 'Fluxo do escritório' }], 'GET /api/chats/c1/bot-runs': [] });
+    renderComposer();
+    expect(screen.queryByText('Executar chatbot')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Chatbot' }));
+    expect(await screen.findByRole('button', { name: 'Fluxo do escritório' })).toBeTruthy();
+    expect(screen.getByText('Executar chatbot')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Chatbot' }));
+    expect(screen.queryByText('Executar chatbot')).toBeNull();
   });
 });

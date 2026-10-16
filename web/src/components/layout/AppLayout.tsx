@@ -15,6 +15,7 @@ import { useCurrentUser, useLogout } from '../../lib/auth';
 import { Avatar } from '../Avatar';
 import { connectWs } from '../../lib/ws';
 import { NotificationPermissionButton, useMessageNotifications } from '../../lib/notify';
+import { NotificationToasts } from './NotificationToasts';
 
 function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon: Icon }) {
   return (
@@ -110,6 +111,7 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <NotificationToasts />
     </div>
   );
 }

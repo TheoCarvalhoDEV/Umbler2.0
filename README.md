@@ -26,7 +26,31 @@ Sistema próprio de atendimento a clientes pelo WhatsApp, feito para substituir 
 - **Tempo real e notificações:** atualização ao vivo pelo WebSocket, som e notificação do navegador.
 - **Importador do Umbler Talk:** traz contatos, setores, etiquetas, respostas rápidas e campos, com simulação antes de gravar (`--dry-run`).
 
-Fica para os próximos módulos (sub-projetos 2 e 3): editor visual de chatbot, horários, agendamentos, relatórios, logs de atividade, webhooks e permissões finas.
+## Chatbot (entrega 2a)
+
+- **Editor visual de fluxos** em Configurações › Chatbots:
+  - blocos ligados por setas (React Flow) e paleta por categoria com busca (atalho `Tab`);
+  - auto-organizar e desfazer/refazer;
+  - salvar rascunho e **Salvar e publicar** (só publica um fluxo sem problemas);
+  - versões com restauração, e importar ou exportar em JSON.
+- **Blocos:**
+  - início por um canal ou manual;
+  - condições: dia da semana, horário, aguardar intervalo, regras com E/OU, várias condições, comparar valor, distribuir por peso, contato ativo, primeira conversa, campo e etiquetas do contato, setor, canal, atendente e situação da conversa, mensagem contém e outro chatbot rodando;
+  - ações: enviar mensagem e arquivo, nota interna, pedir para escolher, pedir informação (com validação de CPF, CNPJ, e-mail, telefone, mídia ou expressão própria), preencher campo, editar etiquetas, transferir para setor ou atendente, privacidade, notificar atendente, acionar outro fluxo e bloquear contato;
+  - finalizar conversa;
+  - anotação.
+- **Motor gravado no banco:** cada passo fica salvo no Postgres. As esperas (resposta do contato, intervalo de tempo, "sem resposta em X horas") voltam sozinhas por um relógio interno, mesmo depois de reiniciar o servidor.
+- **Modelo "Fluxo do escritório":** recria o fluxo usado hoje no Umbler com **Criar a partir do modelo**. Ele passa por horário, boas-vindas, menu, comunicado e CPF validado e salvo no campo, e termina no setor certo com o atendente notificado.
+- **Na conversa:**
+  - as mensagens do bot aparecem com o ícone de robô e "Chatbot <nome>", e os eventos do bot entram na linha do tempo;
+  - o botão de robô no compositor executa ou para um chatbot;
+  - em Configurações › Conversas você escolhe o que fazer quando o atendente escreve com o bot rodando: Perguntar, Parar o bot ou Manter rodando.
+- Com um chatbot ativo que inicia pelo canal, a triagem simples não roda nesse canal.
+
+Fica para os próximos módulos:
+- chatbot 2b (avaliação, etiquetas da conversa, fluxo de espera, presença do atendente e outros blocos);
+- chatbot 2c (Webhook, Pipedrive, Asaas);
+- horários, agendamentos, relatórios, logs de atividade, webhooks e permissões finas.
 
 ## Arquitetura
 
@@ -43,7 +67,7 @@ navegador ──HTTPS──► caddy ──► app (Node 24 · TypeScript · um 
 | Camada | Tecnologia |
 |---|---|
 | Servidor | Node 24, Fastify 5, Drizzle ORM, postgres.js, Zod 4, argon2id |
-| Telas | React 19, Vite 8, Tailwind 4, TanStack Query 5, React Router 8, Phosphor Icons |
+| Telas | React 19, Vite 8, Tailwind 4, TanStack Query 5, React Router 8, Phosphor Icons, React Flow 12 (`@xyflow/react`), dagre |
 | Testes | Vitest 5, PGlite (Postgres em memória), Testing Library |
 | Implantação | Docker Compose, Caddy (HTTPS automático), Postgres 16, Evolution API |
 
@@ -55,10 +79,11 @@ server/        API, tempo real, regras de atendimento, integração com a Evolut
   src/whatsapp/   único módulo que conhece a Evolution (envio, webhook, telefones BR)
   src/inbox/      regras de conversa e visibilidade (canSee)
   src/messages/   entrada, envio, mídia, respostas rápidas
+  src/bots/       chatbot: motor, blocos, relógio, validação dos fluxos, modelo do escritório
   src/importer/   importação única do Umbler Talk
   drizzle/        migrations SQL
   test/           testes (rodam sem rede e sem Docker)
-web/           telas (caixa de entrada, conversa, contatos, configurações)
+web/           telas (caixa de entrada, conversa, contatos, configurações, editor de chatbot)
 scripts/       init do banco, backup, geração de segredos, ambiente de dev
 docs/
   IMPLANTACAO.md   instalação no VPS, atualização, backup, restauração e checklist da virada
@@ -124,5 +149,6 @@ Mensagens de commit no padrão [Conventional Commits](https://www.conventionalco
 ## Documentação do projeto
 
 - [Especificação do núcleo](docs/superpowers/specs/2026-10-14-nucleo-atendimento-design.md): o que o sistema faz, regras e segurança.
+- [Especificação do chatbot, entrega 2a](docs/superpowers/specs/2026-10-15-chatbot-fluxos-2a-design.md) e [roteiro de aceite manual](docs/superpowers/plans/2026-10-15-chatbot-fluxos-2a-aceite.md).
 - [Plano de implementação](docs/superpowers/plans/2026-10-14-nucleo-atendimento.md) e [decisões tomadas](docs/superpowers/plans/2026-10-14-nucleo-atendimento-decisoes.md).
 - [Mapa do Umbler Talk](docs/umbler/MAPA-UMBLER-TALK.md), [endpoints internos](docs/umbler/ENDPOINTS-INTERNOS.md) e [modelo de dados](docs/umbler/MODELO-DE-DADOS.md): a referência usada para reproduzir o sistema.
