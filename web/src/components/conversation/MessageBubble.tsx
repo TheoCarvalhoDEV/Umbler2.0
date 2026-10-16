@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpLeft, Check, Checks, Clock, FileText, ImageBroken, Robot, WarningCircle } from '@phosphor-icons/react';
+import { ArrowBendUpLeft, Check, Checks, Clock, FileText, ImageBroken, Robot, ShareFat, WarningCircle } from '@phosphor-icons/react';
 import type { MessageDto } from '@talk/shared';
 import { api } from '../../lib/api';
 import { Avatar } from '../Avatar';
 import { applyWsEvent } from '../../lib/ws';
-import { errorMessage, previewText, timeOfDay } from './model';
+import { EditHistoryDialog } from './MessageDialogs';
+import { deletedTag, editedTag, errorMessage, previewText, timeOfDay } from './model';
+
+const chip = 'rounded-full border border-border bg-surface px-1.5 text-sm shadow-sm';
 
 const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 
@@ -77,6 +80,7 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
   const qc = useQueryClient();
   const [resending, setResending] = useState(false);
   const [resendError, setResendError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const isNote = m.kind === 'note';
   const right = isNote || m.direction === 'out';
   const showStatus = m.direction === 'out' && !isNote;
@@ -120,11 +124,16 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
   return (
     <div className={`group flex px-4 py-1 ${right ? 'justify-end' : 'justify-start'}`}>
       {right && replyButton}
-      <div className={`relative max-w-[75%] rounded-lg px-3 py-2 shadow-sm ${tone} ${m.reaction ? 'mb-3' : ''}`}>
+      <div className={`relative max-w-[75%] rounded-lg px-3 py-2 shadow-sm ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''}`}>
         {label && (
           <p className="mb-1 flex items-center gap-1 text-xs font-semibold opacity-75">
             {botName && <Robot size={14} weight="fill" aria-hidden data-bot-icon className="shrink-0" />}
             {label}
+          </p>
+        )}
+        {m.forwarded && (
+          <p data-tag="forwarded" className="mb-1 flex items-center gap-1 text-xs italic opacity-70">
+            <ShareFat size={12} aria-hidden /> Encaminhada
           </p>
         )}
         {m.replyTo && (
@@ -138,7 +147,23 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
         ) : (
           m.body && <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>
         )}
-        <div className="mt-1 flex items-center justify-end gap-1 text-xs opacity-70">
+        <div className="mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5 text-xs opacity-70">
+          {m.deleted && (
+            <span data-tag="deleted" className="font-medium text-danger">
+              {deletedTag(m.deleted)}
+            </span>
+          )}
+          {m.edited && (
+            <button
+              type="button"
+              data-tag="edited"
+              title="Ver versões anteriores"
+              onClick={() => setHistoryOpen(true)}
+              className="hover:underline"
+            >
+              {editedTag(m.edited)}
+            </button>
+          )}
           <time dateTime={m.sentAt}>{timeOfDay(m.sentAt)}</time>
           {showStatus && <StatusTick status={m.status} />}
         </div>
@@ -150,12 +175,18 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
             </button>
           </div>
         )}
-        {m.reaction && (
-          <span
-            aria-label={`Reação ${m.reaction}`}
-            className={`absolute -bottom-3 ${right ? 'left-2' : 'right-2'} rounded-full border border-border bg-surface px-1.5 text-sm shadow-sm`}
-          >
-            {m.reaction}
+        {(m.reaction || m.officeReaction) && (
+          <span className={`absolute -bottom-3 ${right ? 'left-2' : 'right-2'} flex gap-0.5`}>
+            {m.reaction && (
+              <span aria-label={`Reação do contato ${m.reaction}`} className={chip}>
+                {m.reaction}
+              </span>
+            )}
+            {m.officeReaction && (
+              <span aria-label={`Reação do escritório ${m.officeReaction}`} className={chip}>
+                {m.officeReaction}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -166,6 +197,7 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
         </span>
       )}
       {!right && replyButton}
+      {historyOpen && <EditHistoryDialog messageId={m.id} onClose={() => setHistoryOpen(false)} />}
     </div>
   );
 }

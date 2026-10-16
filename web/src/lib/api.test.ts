@@ -181,4 +181,33 @@ describe('bot client', () => {
     expect(((fetchMock.mock.calls[6]![1]?.body as FormData).get('file') as File).name).toBe('logo.png');
     expect(api.bots.exportUrl('b 1')).toBe('/api/bots/b%201/export');
   });
+
+  it('calls the message action routes with the right method, path and body', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.messages.react('m1', '👍');
+    await api.messages.remove('m1');
+    await api.messages.edit('m1', 'novo');
+    await api.messages.edits('m1');
+    await api.messages.forward('m1', { contactId: 'k1' });
+    await api.chats.sendSticker('c1', { stickerFromMessageId: 'm2' });
+    await api.stickers.recent();
+    await api.chats.sendFile('c1', { file: new File(['png'], 'f.png', { type: 'image/png' }), signature: false, asSticker: true });
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)}`)).toEqual([
+      'POST /api/messages/m1/reaction',
+      'DELETE /api/messages/m1',
+      'PATCH /api/messages/m1',
+      'GET /api/messages/m1/edits',
+      'POST /api/messages/m1/forward',
+      'POST /api/chats/c1/messages',
+      'GET /api/stickers/recent',
+      'POST /api/chats/c1/messages',
+    ]);
+    expect(fetchMock.mock.calls[0]![1]?.body).toBe('{"emoji":"👍"}');
+    expect(fetchMock.mock.calls[1]![1]?.body).toBeUndefined();
+    expect(fetchMock.mock.calls[2]![1]?.body).toBe('{"text":"novo"}');
+    expect(fetchMock.mock.calls[4]![1]?.body).toBe('{"contactId":"k1"}');
+    expect(fetchMock.mock.calls[5]![1]?.body).toBe('{"stickerFromMessageId":"m2"}');
+    expect([...(fetchMock.mock.calls[7]![1]?.body as FormData).keys()]).toEqual(['signature', 'asSticker', 'file']);
+  });
 });
