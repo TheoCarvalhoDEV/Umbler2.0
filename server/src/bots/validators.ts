@@ -1,4 +1,4 @@
-import { runInNewContext } from 'node:vm';
+import { Script } from 'node:vm';
 import { z } from 'zod';
 import type { AskInputConfig, MediaType } from '@talk/shared';
 import { baseMime } from '../messages/media.js';
@@ -10,8 +10,10 @@ export type AnswerResult = { ok: true; raw: string; value: string } | { ok: fals
 
 const FAIL: AnswerResult = { ok: false };
 const REGEX_MAX = 200;
-const REGEX_TIMEOUT_MS = 50;
+// Wall clock: generous enough that a GC pause does not fail a valid answer, short enough to bound backtracking.
+const REGEX_TIMEOUT_MS = 250;
 const REGEX_INPUT_MAX = 1000;
+const REGEX_SCRIPT = new Script('new RegExp(p, "u").test(s)'); // compiled once; each test still gets a fresh context
 const MEDIA_KINDS: ReadonlySet<MessageKind> = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 // After normalizePhoneBR: 55 + DDD (two digits 1-9) + mobile 9xxxxxxxx or landline [2-5]xxxxxxx.
 const BR_PHONE = /^55[1-9]{2}(?:9\d{8}|[2-5]\d{7})$/;
@@ -82,8 +84,11 @@ export function compileUserRegex(pattern: string): RegExp | null {
 export function safeRegexTest(pattern: string, input: string): boolean {
   if (!compileUserRegex(pattern) || input.length > REGEX_INPUT_MAX) return false;
   try {
-    return runInNewContext('new RegExp(p, "u").test(s)', { p: pattern, s: input }, { timeout: REGEX_TIMEOUT_MS }) === true;
-  } catch {
+    return REGEX_SCRIPT.runInNewContext({ p: pattern, s: input }, { timeout: REGEX_TIMEOUT_MS }) === true;
+  } catch (e) {
+    // only the code: the pattern and the answer may carry contact data
+    const code = (e as { code?: unknown } | null)?.code;
+    if (code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') console.warn('chatbot: regex excedeu o tempo', { code });
     return false;
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AskInputConfig } from '@talk/shared';
 import {
   compileUserRegex,
@@ -9,6 +9,7 @@ import {
   isValidEmail,
   mediaTypeOf,
   parsePhoneBR,
+  safeRegexTest,
   validateAnswer,
   type AnswerInput,
   type AnswerResult,
@@ -205,5 +206,19 @@ describe('catastrophic regex', () => {
     const r = validateAnswer({ validator: 'regex', regex: '(a+)+$' }, { body: 'a'.repeat(999) + '!', kind: 'text', mediaMime: null, mediaName: null });
     expect(r).toEqual({ ok: false });
     expect(Date.now() - t).toBeLessThan(1000);
+  });
+
+  it('logs only the timeout error code, never the pattern or the answer', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(safeRegexTest('(a+)+$', 'a'.repeat(999) + '!')).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(warn.mock.calls[0]);
+      expect(logged).toContain('ERR_SCRIPT_EXECUTION_TIMEOUT');
+      expect(logged).not.toContain('a+');
+      expect(logged).not.toContain('aaa');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
