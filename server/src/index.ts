@@ -9,6 +9,7 @@ import { failInterruptedSends } from './messages/send.js';
 import { createBotRuntime } from './bots/runtime.js';
 import { failInterruptedRuns } from './bots/engine.js';
 import { createScheduler } from './bots/scheduler.js';
+import { createAvatarSweep } from './contacts/avatar.js';
 import type { AppCtx } from './ctx.js';
 
 const config = loadConfig(process.env);
@@ -47,10 +48,15 @@ await app.listen({ host: '0.0.0.0', port: config.port });
 const scheduler = createScheduler(ctx);
 scheduler.start();
 
+// Contacts never checked for a WhatsApp picture (e.g. only written to): now, then hourly, one every 3 s.
+const avatarSweep = createAvatarSweep(ctx);
+avatarSweep.start();
+
 // Node as PID 1 in Docker ignores SIGTERM unless handled; close cleanly so `docker compose stop` is fast
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     scheduler.stop();
+    void avatarSweep.stop();
     void app.close().then(() => process.exit(0));
   });
 }

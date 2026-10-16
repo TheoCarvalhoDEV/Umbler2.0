@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import type { BotAction, BotAttachment } from '@talk/shared';
 import { applyBotRunningBehavior } from '../bots/hooks.js';
+import { refreshAvatarInBackground } from '../contacts/avatar.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { channels, chats, contacts, messages, sectors } from '../db/schema.js';
@@ -129,13 +130,20 @@ async function quotedRef(db: Db, replyToId: string | null): Promise<QuotedRef | 
 
 async function callGateway(ctx: AppCtx, msg: MessageRow): Promise<SendResult> {
   const [target] = await ctx.db
-    .select({ phone: contacts.phone, lid: contacts.lid, instance: channels.evolutionInstance })
+    .select({
+      phone: contacts.phone,
+      lid: contacts.lid,
+      contactId: chats.contactId,
+      channelId: chats.channelId,
+      instance: channels.evolutionInstance,
+    })
     .from(chats)
     .innerJoin(contacts, eq(contacts.id, chats.contactId))
     .innerJoin(channels, eq(channels.id, chats.channelId))
     .where(eq(chats.id, msg.chatId));
   const to = waAddress(target);
   if (!target || !to) throw new Error('Contato sem telefone');
+  refreshAvatarInBackground(ctx, target.channelId, target.contactId); // every send (agent, resend, bot, triage) comes here
   const quoted = await quotedRef(ctx.db, msg.replyToId);
 
   if (msg.kind === 'text') return ctx.wa.sendText(target.instance, to, msg.body ?? '', quoted);
