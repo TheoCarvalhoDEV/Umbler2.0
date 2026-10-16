@@ -4,7 +4,7 @@ import type { ChatDetail, ChatListFilters, ChatListItem, TimelineItem } from '@t
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { chatEvents, chatPins, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
-import { avatarUrl } from '../contacts/avatar.js';
+import { avatarUrl, refreshAvatarInBackground } from '../contacts/avatar.js';
 import { badRequest } from '../lib/http-error.js';
 import { toMessageDto } from '../messages/dto.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
@@ -158,6 +158,7 @@ export async function listChats(
 
 export async function getChatDetail(ctx: AppCtx, user: AuthUser, chatId: string): Promise<ChatDetail> {
   const chat = await getChatForUser(ctx, user, chatId);
+  refreshAvatarInBackground(ctx, chat.channelId, chat.contactId); // opening the conversation
   return toChatDetail(ctx.db, chat, user.id);
 }
 
