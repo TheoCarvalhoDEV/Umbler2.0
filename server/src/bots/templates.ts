@@ -157,7 +157,7 @@ async function ensureCpfField(db: Db): Promise<string> {
 
 export async function createOfficeTemplate(ctx: AppCtx, input: OfficeTemplateInput, createdBy: string): Promise<BotDto> {
   // Check the references before touching anything, so a bad request leaves no CPF field behind.
-  const catalog = await loadGraphCatalog(ctx.db, null);
+  const catalog = await loadGraphCatalog(ctx.db, null, [input.channelId]);
   if (!catalog.channelIds.has(input.channelId)) throw badRequest('Canal inexistente');
   for (const d of Object.values(input.destinations)) {
     if (!catalog.sectorIds.has(d.sectorId)) throw badRequest('Setor inexistente');

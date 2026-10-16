@@ -49,6 +49,8 @@ describe('buildOfficeGraph', () => {
     customFieldIds: new Set([ids.cpf]),
     channelIds: new Set([ids.channel]),
     botIds: new Set(),
+    startChannelIds: [ids.channel],
+    calledByOtherFlow: false,
   };
   const g = buildOfficeGraph(input, ids.cpf);
   const node = (name: string) => g.nodes.find((n) => n.name === name);

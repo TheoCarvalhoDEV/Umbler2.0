@@ -325,6 +325,24 @@ describe('BlockConfigCard', () => {
     expect(last).toEqual({});
   });
 
+  it('start_channel: explains which conversations start the bot and warns while no channel is marked', () => {
+    renderCard('start_channel');
+    expect(
+      screen.getByText(
+        'Começa quando um contato abre uma conversa nova neste canal. Conversas que já estão abertas não são afetadas; para elas, use o bloco “Iniciar manualmente”. Se dois chatbots ativos usam o mesmo canal, inicia o mais antigo. A triagem simples não roda nesses canais.',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('Nenhum canal marcado: este chatbot não vai iniciar sozinho.');
+    fireEvent.click(screen.getByLabelText('WhatsApp escritório'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('CheckList: a row is only as wide as its checkbox and text, so a click beside it does not toggle', () => {
+    renderCard('start_channel');
+    const row = screen.getByLabelText('WhatsApp escritório').closest('label') as HTMLLabelElement;
+    expect(row.className).toContain('w-fit');
+  });
+
   it('start_manual: reports the cumulative bot patch', () => {
     renderCard('start_manual');
     fireEvent.click(screen.getByLabelText('Permitir que atendentes iniciem pela conversa'));

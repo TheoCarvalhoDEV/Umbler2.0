@@ -12,6 +12,7 @@ import {
 } from '@talk/shared';
 import type { Db, Tx } from '../db/client.js';
 import { bots, channels, customFields, sectors, tags, users } from '../db/schema.js';
+import { callersOf } from './repo.js';
 import { compileUserRegex } from './validators.js';
 
 export interface GraphCatalog {
@@ -22,9 +23,17 @@ export interface GraphCatalog {
   customFieldIds: Set<string>;
   channelIds: Set<string>;
   botIds: Set<string>; // all bots, self included (self-call is reported separately)
+  /** The bot's start_channel_ids: a start_channel block with none marked can never start... */
+  startChannelIds: string[];
+  /** ...unless another bot's latest or published version calls this one: call entry falls back to start_channel. */
+  calledByOtherFlow: boolean;
 }
 
-export async function loadGraphCatalog(db: Db | Tx, selfBotId: string | null): Promise<GraphCatalog> {
+export async function loadGraphCatalog(
+  db: Db | Tx,
+  selfBotId: string | null,
+  startChannelIds: string[],
+): Promise<GraphCatalog> {
   const ids = (rows: Array<{ id: string }>) => new Set(rows.map((r) => r.id));
   // Sequential on purpose: one connection inside a tx (PGlite serializes anyway).
   return {
@@ -35,6 +44,8 @@ export async function loadGraphCatalog(db: Db | Tx, selfBotId: string | null): P
     customFieldIds: ids(await db.select({ id: customFields.id }).from(customFields)),
     channelIds: ids(await db.select({ id: channels.id }).from(channels)),
     botIds: ids(await db.select({ id: bots.id }).from(bots)),
+    startChannelIds,
+    calledByOtherFlow: selfBotId !== null && (await callersOf(db, selfBotId)).length > 0, // no id yet = nobody can call it
   };
 }
 
@@ -313,6 +324,12 @@ export function validateNodeConfig(node: BotNode, catalog: GraphCatalog): string
       need(c.closingText === undefined || c.closingText === null || typeof c.closingText === 'string', BAD);
       break;
     case 'start_channel':
+      // ponytail: a called bot that also has start_manual is not flagged, though calls then enter there; harmless.
+      need(
+        catalog.startChannelIds.length > 0 || catalog.calledByOtherFlow,
+        `Marque ao menos um canal neste início ou, se este fluxo só é acionado por outro, troque este bloco por "${catalogEntry('start_manual').label}"`,
+      );
+      break;
     case 'start_manual':
     case 'contact_active':
     case 'first_chat':

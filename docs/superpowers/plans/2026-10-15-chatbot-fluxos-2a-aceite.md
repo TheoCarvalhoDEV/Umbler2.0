@@ -21,6 +21,7 @@ npm test -w server -- test/bots/template.test.ts
 - [ ] O admin enxerga todas as conversas, porque entrou nos três setores ou ligou **Ver todos os setores** na caixa de entrada.
 - [ ] Configurações › Conversas: "Quando o atendente enviar mensagem com chatbot em execução" está em **Perguntar**.
 - [ ] O celular do "cliente" (outro número) tem um nome no perfil do WhatsApp e **não** tem conversa aberta no sistema. Se tiver, finalize a conversa.
+- [ ] O chatbot só inicia em conversas **novas**: finalize qualquer conversa já aberta com os celulares de teste antes de testar e confira que o canal está marcado no bloco de início por canal (**"Iniciar por um canal"**).
 - [ ] Duas janelas do navegador estão abertas:
   - uma normal, com o admin;
   - uma anônima (`Ctrl+Shift+N`), com o Atendente Teste, para ver o aviso.

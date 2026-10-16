@@ -25,13 +25,20 @@ function useBotDraft(bot: BotDto, onBotChange: (patch: BotPatch) => void) {
 export function StartChannelForm({ bot, catalog, onBotChange }: BotFormProps) {
   const { current, change } = useBotDraft(bot, onBotChange);
   return (
-    <CheckList
-      label="Canais"
-      hint="Se dois chatbots ativos usam o mesmo canal, inicia o mais antigo. A triagem simples não roda nesses canais."
-      items={channelItems(catalog)}
-      selected={current.startChannelIds}
-      onChange={(startChannelIds) => change({ startChannelIds })}
-    />
+    <div className="space-y-1">
+      <CheckList
+        label="Canais"
+        hint="Começa quando um contato abre uma conversa nova neste canal. Conversas que já estão abertas não são afetadas; para elas, use o bloco “Iniciar manualmente”. Se dois chatbots ativos usam o mesmo canal, inicia o mais antigo. A triagem simples não roda nesses canais."
+        items={channelItems(catalog)}
+        selected={current.startChannelIds}
+        onChange={(startChannelIds) => change({ startChannelIds })}
+      />
+      {current.startChannelIds.length === 0 && (
+        <p role="alert" className="text-xs text-danger">
+          Nenhum canal marcado: este chatbot não vai iniciar sozinho.
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -145,7 +145,8 @@ it('deletes a block from its card and refuses a second channel start', async () 
   fireEvent.click(await screen.findByLabelText('Excluir bloco Enviar mensagem'));
   await waitFor(() => expect(blockCount()).toBe(2));
   fireEvent.click(screen.getByRole('button', { name: 'Iniciar por um canal' }));
-  expect(screen.getByRole('alert').textContent).toBe('O fluxo já tem o bloco "Iniciar por um canal".');
+  // the start card also warns while the bot has no channel marked
+  expect(screen.getAllByRole('alert').map((el) => el.textContent)).toContain('O fluxo já tem o bloco "Iniciar por um canal".');
   expect(blockCount()).toBe(2);
 });
 
