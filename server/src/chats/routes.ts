@@ -11,7 +11,9 @@ import {
 import { getChatDetail, getTimeline, listChats, toChatDetail } from '../inbox/queries.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest } from '../lib/http-error.js';
-import { deleteMessageForEveryone, editMessage, listMessageEdits, listRecentStickers, reactToMessage } from '../messages/actions.js';
+import {
+  deleteMessageForEveryone, editMessage, forwardMessage, listMessageEdits, listRecentStickers, reactToMessage,
+} from '../messages/actions.js';
 import { addNote, resendMessage, sendAgentMessage, type SendInput } from '../messages/send.js';
 
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
@@ -68,6 +70,11 @@ const noteBody = z.object({ text: z.string().trim().min(1).max(4096) });
 const reactionBody = z.object({ emoji: z.string().max(32) });
 /** Spec §5: same limits as a text send. */
 const editBody = z.object({ text: z.string().trim().min(1).max(4096) });
+/** Spec §7: one destination: an open chat, or a contact (+ optional channel; default = the source message's channel). */
+const forwardBody = z.union([
+  z.object({ chatId: z.uuid(), botAction: botActionField }),
+  z.object({ contactId: z.uuid(), channelId: z.uuid().optional(), botAction: botActionField }),
+]);
 
 async function readMultipart(req: FastifyRequest): Promise<SendInput> {
   const fields: Record<string, string> = {};
@@ -195,5 +202,9 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
     r.get('/api/messages/:id/edits', async (req) => listMessageEdits(ctx, req.user, idParams.parse(req.params).id));
 
     r.get('/api/stickers/recent', async (req) => listRecentStickers(ctx, req.user));
+
+    r.post('/api/messages/:id/forward', async (req) =>
+      forwardMessage(ctx, req.user, idParams.parse(req.params).id, forwardBody.parse(req.body)),
+    );
   });
 }

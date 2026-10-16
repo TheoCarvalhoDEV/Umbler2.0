@@ -29,6 +29,8 @@ export interface SendInput {
   asSticker?: boolean;
   /** Spec §6: send a recent sticker again; its stored file is reused, nothing is uploaded. */
   stickerFromMessageId?: string;
+  /** Spec §7: forward — the content of this stored message (text or saved file) goes as a new message. */
+  forwardFromId?: string;
   signature: boolean;
   replyToId?: string;
   /** Spec §5.5: the agent's answer to BOT_RUNNING; absent = settings.bot_running_behavior decides. */
@@ -311,8 +313,9 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
   }
   const sticker = input.stickerFromMessageId ? (await reusableMessage(ctx, user, input.stickerFromMessageId)).msg : null;
   if (sticker && sticker.kind !== 'sticker') throw badRequest('Figurinha não encontrada');
-  // Reused content (spec §6): the source's stored file and text are sent as they are, unsigned.
-  const source = sticker;
+  const forwarded = input.forwardFromId ? (await reusableMessage(ctx, user, input.forwardFromId)).msg : null;
+  // Reused content (spec §6, §7): the source's stored file and text are sent as they are, unsigned.
+  const source = sticker ?? forwarded;
   const text = asVoice || asSticker || source ? null : input.text?.trim() || null;
   if (!text && !file && !source) throw badRequest('Mensagem vazia');
 
@@ -360,6 +363,7 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
         mediaSize: media.size,
         mediaName: media.name,
         mediaSha256: media.sha256,
+        forwardedFromId: forwarded?.id ?? null,
         authorId: user.id,
         replyToId,
         status: 'pending',

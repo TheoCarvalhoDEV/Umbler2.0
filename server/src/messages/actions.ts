@@ -4,17 +4,17 @@
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import {
   DELETED_REASON, RECENT_STICKERS_LIMIT, deleteBlock, editBlock, isSingleEmoji, reactBlock,
-  type ActionBlock, type MessageDto, type MessageEditDto, type RecentStickerDto,
+  type ActionBlock, type BotAction, type MessageDto, type MessageEditDto, type RecentStickerDto,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import { chats, messageEdits, messages, users } from '../db/schema.js';
-import { getChatForUser, type ChatRow } from '../inbox/chats.js';
+import { getChatForUser, startChat, type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import { visibleChatsWhere, type AuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest, conflict, notFound } from '../lib/http-error.js';
 import type { MessageKeyRef } from '../whatsapp/types.js';
 import { toMessageDto } from './dto.js';
-import { gatewayTarget } from './send.js';
+import { gatewayTarget, reusableMessage, sendAgentMessage } from './send.js';
 
 type MessageRow = typeof messages.$inferSelect;
 
@@ -186,4 +186,24 @@ export async function listRecentStickers(ctx: AppCtx, user: AuthUser): Promise<R
     if (out.length === RECENT_STICKERS_LIMIT) break;
   }
   return out;
+}
+
+export type ForwardTarget =
+  | { chatId: string; botAction?: BotAction }
+  | { contactId: string; channelId?: string; botAction?: BotAction };
+
+/**
+ * Spec §7: the content of a stored message goes to one destination through its normal send path (canSee, open chat,
+ * BOT_RUNNING), unsigned, with forwarded_from_id set. A contact without an open chat gets one, like "Nova conversa".
+ * The source is checked first, so a refused forward never opens a chat. The contact's phone shows no "Encaminhada"
+ * mark: Evolution 2.3.7 has no forward endpoint.
+ */
+export async function forwardMessage(ctx: AppCtx, user: AuthUser, messageId: string, to: ForwardTarget): Promise<MessageDto> {
+  const { msg, chat } = await reusableMessage(ctx, user, messageId);
+  if (chat.state !== 'open') throw conflict('Conversa finalizada'); // spec §2: no action from a closed chat
+  const chatId =
+    'chatId' in to
+      ? to.chatId
+      : (await startChat(ctx, user, { contactId: to.contactId, channelId: to.channelId ?? msg.channelId })).id;
+  return sendAgentMessage(ctx, user, chatId, { forwardFromId: msg.id, signature: false, botAction: to.botAction });
 }
