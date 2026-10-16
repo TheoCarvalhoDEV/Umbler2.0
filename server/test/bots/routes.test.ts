@@ -62,6 +62,8 @@ const noStartGraph = (): BotGraph => ({
   edges: [],
 });
 
+const NO_CHANNEL = { nodeId: 'inicio', message: 'Marque ao menos um canal neste início' };
+
 async function newBot(name: string): Promise<BotDto> {
   const res = await call('POST', '/api/bots', admin, { name });
   expect(res.statusCode).toBe(200);
@@ -123,8 +125,10 @@ describe('admin bot routes', () => {
     expect((await call('GET', '/api/bots', admin)).json().map((b: BotDto) => b.name)).toEqual(['Abertura', 'Boas-vindas']);
 
     const v1 = (await call('GET', `/api/bots/${bot.id}/versions/1`, admin)).json();
-    expect(v1).toMatchObject({ botId: bot.id, number: 1, published: false, createdByName: 'Admin Teste' });
+    expect(v1).toMatchObject({ botId: bot.id, number: 1, valid: false, published: false, createdByName: 'Admin Teste' });
     expect(v1.graph.nodes.map((n: { type: string }) => n.type)).toEqual(['start_channel', 'send_message']);
+    // No channel is marked yet, so the start_channel block can never start.
+    expect(v1.problems).toEqual([NO_CHANNEL]);
 
     expect((await call('GET', `/api/bots/${bot.id}`, admin)).json().id).toBe(bot.id);
     expect((await call('GET', `/api/bots/${randomUUID()}`, admin)).statusCode).toBe(404);
@@ -161,6 +165,26 @@ describe('admin bot routes', () => {
 
     const malformed = { nodes: [{ id: 'n1', type: 'nao_existe', position: { x: 0, y: 0 }, config: {} }], edges: [] };
     expect((await call('POST', `/api/bots/${bot.id}/versions`, admin, { graph: malformed, publish: false })).statusCode).toBe(400);
+  });
+
+  it('refuses to publish a start_channel graph until a channel is marked', async () => {
+    const bot = await newBot('Canal');
+    const { graph } = (await call('GET', `/api/bots/${bot.id}/versions/1`, admin)).json();
+
+    const refused = await saveVersion(bot.id, graph, true);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().problems).toEqual([NO_CHANNEL]);
+
+    expect((await call('PATCH', `/api/bots/${bot.id}`, admin, { startChannelIds: [seed.channelId] })).statusCode).toBe(200);
+    // Problems are recomputed on read with the bot's current channels.
+    expect((await call('GET', `/api/bots/${bot.id}/versions/1`, admin)).json().problems).toEqual([]);
+    const ok = await saveVersion(bot.id, graph, true);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json()).toMatchObject({ valid: true, published: true, problems: [] });
+
+    // Unmarking the channel makes the same graph a problem again.
+    await call('PATCH', `/api/bots/${bot.id}`, admin, { startChannelIds: [] });
+    expect((await saveVersion(bot.id, graph, true)).statusCode).toBe(400);
   });
 
   it('activates only a bot with a published version', async () => {
@@ -258,6 +282,17 @@ describe('admin bot routes', () => {
     expect((await call('POST', `/api/bots/${src.id}/duplicate`, admin)).json().name).toBe('Origem (cópia) (2)');
   });
 
+  it('validates a duplicated start_channel graph with the channels the copy gets', async () => {
+    const src = await newBot('Canal origem');
+    await call('PATCH', `/api/bots/${src.id}`, admin, { startChannelIds: [seed.channelId] });
+    const copy: BotDto = (await call('POST', `/api/bots/${src.id}/duplicate`, admin)).json();
+    expect((await call('GET', `/api/bots/${copy.id}/versions`, admin)).json()[0]).toMatchObject({ number: 1, valid: true });
+
+    const bare = await newBot('Sem canal');
+    const bareCopy: BotDto = (await call('POST', `/api/bots/${bare.id}/duplicate`, admin)).json();
+    expect((await call('GET', `/api/bots/${bareCopy.id}/versions`, admin)).json()[0]).toMatchObject({ number: 1, valid: false });
+  });
+
   it('exports the latest version as a file and imports it under a unique name', async () => {
     const bot = await newBot('Atendimento Inicial');
     await saveVersion(bot.id, manualGraph(), false);
@@ -275,6 +310,12 @@ describe('admin bot routes', () => {
     const v1 = (await call('GET', `/api/bots/${imported.id}/versions/1`, admin)).json();
     expect(v1).toMatchObject({ valid: true });
     expect(v1.graph).toEqual(manualGraph());
+
+    // An imported start_channel graph has no channel marked yet.
+    const channelFile = { name: 'Por canal', graph: (await call('GET', `/api/bots/${bot.id}/versions/1`, admin)).json().graph };
+    const byChannel: BotDto = (await call('POST', '/api/bots/import', admin, channelFile)).json();
+    const cv1 = (await call('GET', `/api/bots/${byChannel.id}/versions/1`, admin)).json();
+    expect(cv1).toMatchObject({ valid: false, problems: [NO_CHANNEL] });
 
     expect((await call('POST', '/api/bots/import', admin, { name: 'Quebrado', graph: { nodes: 'x' } })).statusCode).toBe(400);
     expect((await call('POST', '/api/bots/import', agentA, file)).statusCode).toBe(403);

@@ -20,6 +20,7 @@ const catalog: GraphCatalog = {
   customFieldIds: new Set([ID.field]),
   channelIds: new Set([ID.channel]),
   botIds: new Set([ID.bot, ID.self]),
+  startChannelIds: [ID.channel],
 };
 
 const rule = { left: { kind: 'var', value: 'menu' }, operator: 'eq', right: { kind: 'literal', value: '1' } };
@@ -115,6 +116,18 @@ describe('validateNodeConfig', () => {
   ];
   it.each(variants)('accepts %s', (_label, type, patch) => {
     expect(configProblems(type, patch)).toEqual([]);
+  });
+
+  it('flags a start_channel block on a bot with no channel marked', () => {
+    const noChannel = { ...catalog, startChannelIds: [] };
+    expect(validateNodeConfig(node('start_channel'), noChannel)).toEqual(['Marque ao menos um canal neste início']);
+    expect(validateNodeConfig(node('start_manual'), noChannel)).toEqual([]);
+    const g: BotGraph = {
+      nodes: [node('start_channel', {}), node('send_message')],
+      edges: [{ id: 'e1', source: node('start_channel').id, sourceHandle: 'next', target: node('send_message').id }],
+    };
+    expect(validateGraph(g, noChannel)).toEqual([{ nodeId: node('start_channel').id, message: 'Marque ao menos um canal neste início' }]);
+    expect(validateGraph(g, catalog)).toEqual([]);
   });
 
   it('lets call_flow target any existing bot when there is no self id yet (import)', () => {
@@ -409,7 +422,7 @@ describe('loadGraphCatalog', () => {
     const [self] = await ctx.db.insert(bots).values({ name: 'Este' }).returning();
     const [other] = await ctx.db.insert(bots).values({ name: 'Outro' }).returning();
 
-    const cat = await loadGraphCatalog(ctx.db, self.id);
+    const cat = await loadGraphCatalog(ctx.db, self.id, [s.channelId]);
 
     expect(cat.selfBotId).toBe(self.id);
     expect(cat.sectorIds).toEqual(new Set([s.defaultSector, s.sectorA, s.sectorB]));
@@ -419,5 +432,6 @@ describe('loadGraphCatalog', () => {
     expect(cat.customFieldIds).toEqual(new Set([field.id]));
     expect(cat.channelIds).toEqual(new Set([s.channelId]));
     expect(cat.botIds).toEqual(new Set([self.id, other.id]));
+    expect(cat.startChannelIds).toEqual([s.channelId]);
   });
 });

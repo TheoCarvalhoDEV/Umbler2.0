@@ -22,9 +22,15 @@ export interface GraphCatalog {
   customFieldIds: Set<string>;
   channelIds: Set<string>;
   botIds: Set<string>; // all bots, self included (self-call is reported separately)
+  /** The bot's start_channel_ids: a start_channel block with none marked can never start. */
+  startChannelIds: string[];
 }
 
-export async function loadGraphCatalog(db: Db | Tx, selfBotId: string | null): Promise<GraphCatalog> {
+export async function loadGraphCatalog(
+  db: Db | Tx,
+  selfBotId: string | null,
+  startChannelIds: string[],
+): Promise<GraphCatalog> {
   const ids = (rows: Array<{ id: string }>) => new Set(rows.map((r) => r.id));
   // Sequential on purpose: one connection inside a tx (PGlite serializes anyway).
   return {
@@ -35,6 +41,7 @@ export async function loadGraphCatalog(db: Db | Tx, selfBotId: string | null): P
     customFieldIds: ids(await db.select({ id: customFields.id }).from(customFields)),
     channelIds: ids(await db.select({ id: channels.id }).from(channels)),
     botIds: ids(await db.select({ id: bots.id }).from(bots)),
+    startChannelIds,
   };
 }
 
@@ -313,6 +320,8 @@ export function validateNodeConfig(node: BotNode, catalog: GraphCatalog): string
       need(c.closingText === undefined || c.closingText === null || typeof c.closingText === 'string', BAD);
       break;
     case 'start_channel':
+      need(catalog.startChannelIds.length > 0, 'Marque ao menos um canal neste início');
+      break;
     case 'start_manual':
     case 'contact_active':
     case 'first_chat':

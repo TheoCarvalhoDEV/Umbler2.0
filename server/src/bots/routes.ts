@@ -52,15 +52,17 @@ const admin = { preHandler: requireAdmin };
 const NAME_TAKEN = 'Já existe um chatbot com esse nome';
 const BAD_MEDIA = 'Envie um único arquivo de até 64 MB no campo "file"';
 
-async function problemsFor(db: Db, selfBotId: string | null, graph: BotGraph): Promise<GraphProblem[]> {
-  return validateGraph(graph, await loadGraphCatalog(db, selfBotId));
+async function problemsFor(
+  db: Db, selfBotId: string | null, startChannelIds: string[], graph: BotGraph,
+): Promise<GraphProblem[]> {
+  return validateGraph(graph, await loadGraphCatalog(db, selfBotId, startChannelIds));
 }
 
 // ponytail: builds every summary to pick one (one query per call); fine for tens of versions.
 async function toVersionDto(db: Db, bot: BotRow, row: BotVersionRow): Promise<BotVersionDto> {
   const summary = (await toBotVersionSummaries(db, bot)).find((s) => s.id === row.id);
   if (!summary) throw notFound('Versão não encontrada');
-  return { ...summary, graph: row.graph, problems: await problemsFor(db, bot.id, row.graph) };
+  return { ...summary, graph: row.graph, problems: await problemsFor(db, bot.id, bot.startChannelIds, row.graph) };
 }
 
 // ponytail: check-then-insert; two admins racing on one name get a 500 from the unique index, retrying shows the 409.
@@ -123,7 +125,7 @@ export function registerBotRoutes(app: FastifyInstance, ctx: AppCtx): void {
     const graph = STARTER_GRAPH();
     const row = await createBot(ctx.db, {
       name: b.name, description: b.description, graph, publish: false, createdBy: req.user.id,
-      valid: (await problemsFor(ctx.db, null, graph)).length === 0,
+      valid: (await problemsFor(ctx.db, null, [], graph)).length === 0, // no channel yet: v1 has that problem
     });
     return toBotDto(ctx.db, row);
   });
@@ -164,7 +166,7 @@ export function registerBotRoutes(app: FastifyInstance, ctx: AppCtx): void {
     const row = await createBot(ctx.db, {
       name: await uniqueBotName(ctx.db, `${bot.name} (cópia)`),
       description: bot.description, graph, publish: false, createdBy: req.user.id,
-      valid: (await problemsFor(ctx.db, null, graph)).length === 0,
+      valid: (await problemsFor(ctx.db, null, bot.startChannelIds, graph)).length === 0,
       startChannelIds: bot.startChannelIds, manualStart: bot.manualStart, manualTitle: bot.manualTitle,
     });
     if (!bot.manualUnlisted) return toBotDto(ctx.db, row);
@@ -187,8 +189,9 @@ export function registerBotRoutes(app: FastifyInstance, ctx: AppCtx): void {
   app.post('/api/bots/:id/versions', admin, async (req) => {
     const { id } = IdParams.parse(req.params);
     const b = SaveVersionBody.parse(req.body);
-    await getBot(ctx.db, id);
-    const problems = await problemsFor(ctx.db, id, b.graph);
+    // The editor PATCHes the bot's channels before saving, so this reads the channels being saved with.
+    const bot = await getBot(ctx.db, id);
+    const problems = await problemsFor(ctx.db, id, bot.startChannelIds, b.graph);
     const valid = problems.length === 0;
     const version = await insertBotVersion(ctx.db, {
       botId: id, graph: b.graph, valid, createdBy: req.user.id, label: b.label || null,
@@ -214,7 +217,7 @@ export function registerBotRoutes(app: FastifyInstance, ctx: AppCtx): void {
     const b = ImportBody.parse(req.body);
     const row = await createBot(ctx.db, {
       name: await uniqueBotName(ctx.db, b.name), graph: b.graph, publish: false, createdBy: req.user.id,
-      valid: (await problemsFor(ctx.db, null, b.graph)).length === 0,
+      valid: (await problemsFor(ctx.db, null, [], b.graph)).length === 0, // imported bots start with no channel
     });
     return toBotDto(ctx.db, row);
   });
