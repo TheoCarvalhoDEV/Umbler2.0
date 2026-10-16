@@ -240,3 +240,29 @@ it('asks before leaving with unsaved changes', async () => {
   fireEvent.click(screen.getByRole('link', { name: 'Voltar para a lista de chatbots' }));
   expect(await screen.findByText('Lista de chatbots')).toBeTruthy();
 });
+
+/** Types `ch` at the caret like a keyboard would: native value setter (past React's tracker), caret after it, then input. */
+function typeAt(el: HTMLInputElement | HTMLTextAreaElement, at: number, ch: string) {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  el.focus();
+  el.setSelectionRange(at, at);
+  Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, el.value.slice(0, at) + ch + el.value.slice(at));
+  el.setSelectionRange(at + 1, at + 1);
+  fireEvent.input(el);
+}
+
+it('keeps the caret where the user types in a block field', async () => {
+  renderEditor();
+  await screen.findByText('1 · Atendimento');
+  const name = block('n2')!.querySelector('input')!;
+  typeAt(name, 2, 'X');
+  expect(name.value).toBe('meXnu');
+  expect(name.selectionStart).toBe(3);
+  const text = block('n3')!.querySelector('textarea')!;
+  typeAt(text, 1, 'X');
+  expect(text.value).toBe('OXlá');
+  expect(text.selectionStart).toBe(2);
+  await waitFor(() => expect(screen.getByText('Alterações não salvas')).toBeTruthy());
+  expect(name.value).toBe('meXnu');
+  expect(text.value).toBe('OXlá');
+});

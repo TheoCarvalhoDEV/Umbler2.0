@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { TrashIcon } from '@phosphor-icons/react';
 import { catalogEntry, outputsOf, type BlockCategory, type BotDto, type BotPatch } from '@talk/shared';
@@ -32,7 +32,15 @@ export const CATEGORY_BORDER: Record<BlockCategory, string> = {
 export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
   const actions = useContext(NodeActionsContext);
   const updateNodeInternals = useUpdateNodeInternals();
-  const { node, problems } = data;
+  const { problems } = data;
+  // Local copy updated in the same event as the edit: data.node only catches up after BotEditor's setNodes reaches
+  // React Flow, and a controlled field that briefly gets its old value back jumps the caret to the end.
+  const [seen, setSeen] = useState(data.node);
+  const [node, setNode] = useState(data.node);
+  if (seen !== data.node) {
+    setSeen(data.node);
+    setNode(data.node);
+  }
   const entry = catalogEntry(node.type);
   const outputs = outputsOf(node.type, node.config);
   const handleKey = outputs.map((o) => o.id).join('|');
@@ -71,7 +79,10 @@ export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
             <input
               value={node.name ?? ''}
               maxLength={40}
-              onChange={(e) => actions.rename(id, e.target.value)}
+              onChange={(e) => {
+                setNode({ ...node, name: e.target.value });
+                actions.rename(id, e.target.value);
+              }}
               className={`${field} bg-surface text-fg`}
             />
           </label>
@@ -82,7 +93,10 @@ export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
             catalog={actions.catalog}
             bot={actions.bot}
             problems={problems}
-            onChange={(config) => actions.changeConfig(id, config)}
+            onChange={(config) => {
+              setNode({ ...node, config });
+              actions.changeConfig(id, config);
+            }}
             onBotChange={actions.changeBot}
           />
         ) : (
