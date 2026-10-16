@@ -4,7 +4,7 @@ import type {
   BotNode, BotRunState, CallFlowConfig, NotificationDto, NotifyAgentConfig, PrivacyConfig, TransferAgentConfig, TransferSectorConfig,
 } from '@talk/shared';
 import { setContactBlocked } from '../../contacts/service.js';
-import { chats, userSectors, users } from '../../db/schema.js';
+import { chats, contacts, userSectors, users } from '../../db/schema.js';
 import { closeChatAsBot, setChatPrivacyAsBot, transferChatAsBot } from '../../inbox/chats.js';
 import { HttpError } from '../../lib/http-error.js';
 import { BlockError } from '../block-error.js';
@@ -123,6 +123,13 @@ export const actionBlocks2: BlockRegistry = {
         throw e;
       });
       if (!c.continueAfter) return { end: 'finished' };
+      // The child ran inside this step and may have closed the chat or blocked the contact: ctx.chat is stale.
+      // Same outcome as the engine's step precheck, so the next block never talks to a closed chat.
+      const [chat] = await ctx.app.db.select().from(chats).where(eq(chats.id, ctx.chat.id));
+      if (chat.state !== 'open') return { end: 'stopped', reason: 'chat_closed' };
+      const [contact] = await ctx.app.db.select({ blocked: contacts.blocked }).from(contacts).where(eq(contacts.id, chat.contactId));
+      if (contact.blocked) return { end: 'stopped', reason: 'contact_blocked' };
+      ctx.chat = chat;
       return flowResult(child.state);
     },
     async resume(_ctx, _run, _node, ev) {

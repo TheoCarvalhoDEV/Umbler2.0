@@ -36,7 +36,8 @@ export type BlockResult =
   | { wait: 'timer'; wakeAt: Date }
   | { wait: 'flow' }
   | { end: 'finished' }
-  | { end: 'failed'; error: string };
+  | { end: 'failed'; error: string }
+  | { end: 'stopped'; reason: BotStopReason };
 
 export interface BotCtx {
   app: AppCtx;

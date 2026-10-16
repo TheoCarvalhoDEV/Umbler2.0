@@ -345,6 +345,25 @@ describe('call_flow', () => {
     expect(await notes(chatId)).toEqual(['no pai']);
   });
 
+  it.each([
+    ['close_chat', { sendClosingMessage: false }, 'chat_closed'],
+    ['block_contact', {}, 'chat_closed'], // block_contact also closes the chat; the step precheck looks at the chat first
+  ] as const)('continueAfter=true stops the caller instead of sending when the child ran %s', async (type, config, reason) => {
+    const child = await makeBot([node('fim', type, config)]);
+    const parent = await makeBot(
+      [node('chamar', 'call_flow', { botId: child, continueAfter: true }), node('depois', 'send_message', { text: 'no pai', attachment: null, signature: false })],
+      [edge('chamar', 'next', 'depois')],
+    );
+    const { chatId } = await openChat();
+
+    const run = await runBot(parent, chatId);
+
+    expect(run.state).toBe('stopped');
+    expect(sentTexts()).toEqual([]);
+    const stopped = (await eventsOf(ctx, chatId)).filter((e) => e.kind === 'bot_stopped');
+    expect(stopped).toEqual([expect.objectContaining({ data: expect.objectContaining({ runId: run.id, reason }) })]);
+  });
+
   it('fails with the start error when the called bot is paused', async () => {
     const child = await makeBot([node('filho', 'note', { text: 'no filho' })]);
     await ctx.db.update(bots).set({ status: 'paused' }).where(eq(bots.id, child));

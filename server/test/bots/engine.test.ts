@@ -389,6 +389,29 @@ describe('bot engine', () => {
     expect(await statusOf(stopRun(ctx, randomUUID(), { userId: null, reason: 'manual' }))).toBe(404);
   });
 
+  it('does not start a called flow when the caller was stopped before the child insert', async () => {
+    // an agent stops the caller mid-step, right before call_flow inserts the child
+    ctx.botRuntime = createBotRuntime({
+      now: ctx.clock.now,
+      registry: {
+        ...stubs,
+        call_flow: {
+          type: 'call_flow',
+          run: async (c, r, n) => {
+            await stopRun(c.app, r.id, { userId: s.admin.id, reason: 'manual' });
+            return stubs.call_flow!.run(c, r, n);
+          },
+        },
+      },
+    });
+    const { parent } = await startParentAndChild();
+    expect(parent.state).toBe('stopped');
+    const all = await ctx.db.select().from(botRuns).where(eq(botRuns.chatId, chatId));
+    expect(all.map((r) => r.id)).toEqual([parent.id]);
+    expect(calls).toEqual([]);
+    expect((await eventsOf(ctx, chatId)).filter((e) => e.kind === 'bot_started')).toHaveLength(1);
+  });
+
   it('stopRunsForChat stops every running bot of the chat except the excepted runs', async () => {
     const a = await start(await activeBot('A', askGraph()));
     const b = await start(await activeBot('B', askGraph()));

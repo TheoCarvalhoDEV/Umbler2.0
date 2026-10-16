@@ -62,6 +62,11 @@ async function startRunLocked(ctx: AppCtx, input: StartRunInput): Promise<BotRun
     if (busy) throw conflict('Este chatbot já está em execução nesta conversa');
   }
   const run = await ctx.db.transaction(async (tx) => {
+    // An agent may have stopped the caller since its step began (stopRun takes no lock): no child for a stopped caller.
+    // The BlockError reaches the caller's step, whose conditional save then ends it silently.
+    if (input.entry === 'call' && (!input.parentRunId || (await lockRun(tx, input.parentRunId))?.state !== 'running')) {
+      throw new BlockError('O fluxo que chamou foi interrompido');
+    }
     const row = await insertRun(tx, {
       botId: bot.id,
       versionId: version.id,
@@ -155,7 +160,8 @@ export async function step(ctx: AppCtx, runId: string, resume?: ResumeEvent): Pr
             : { state: 'waiting_flow', waitNodeId: node.id, wakeAt: null, timeoutAt: null, waitingSince: null };
       return (await saveStep(ctx.db, run, { node: node.id, at, outcome: `wait:${result.wait}` }, set)) ?? loadRun(ctx.db, run.id);
     }
-    return finishRun(ctx, run, bot, result.end, result.end === 'failed' ? { error: result.error } : {}, { node: node.id, at, outcome: result.end });
+    const o = result.end === 'failed' ? { error: result.error } : result.end === 'stopped' ? { reason: result.reason } : {};
+    return finishRun(ctx, run, bot, result.end, o, { node: node.id, at, outcome: result.end });
   }
   return finishRun(ctx, run, bot, 'failed', { error: `Limite de ${MAX_STEPS_PER_CALL} passos sem espera (possível laço)` });
 }
