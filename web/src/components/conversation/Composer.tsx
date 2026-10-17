@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Robot, Smiley, Trash, X } from '@phosphor-icons/react';
+import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Robot, Smiley, Sticker, Trash, X } from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, MessageDto, QuickAnswerDto } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { applyWsEvent } from '../../lib/ws';
@@ -8,6 +8,7 @@ import { BotPanel } from './BotPanel';
 import { BotRunningDialog } from './ChatDialogs';
 import { errorMessage, previewText } from './model';
 import { QuickAnswerPicker, filterQuickAnswers } from './QuickAnswerPicker';
+import { StickerPanel } from './StickerPanel';
 import { useAudioRecorder } from './useAudioRecorder';
 
 export const SIGNATURE_KEY = 'talk.composer.signature';
@@ -74,6 +75,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const [signature, setSignature] = useState(readSignaturePref);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [botOpen, setBotOpen] = useState(false);
+  const [stickerOpen, setStickerOpen] = useState(false);
   const [pickerDismissed, setPickerDismissed] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [sending, setSending] = useState(false);
@@ -188,6 +190,17 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
     const sentReply = replyTo;
     const ok = await submit((botAction) =>
       api.chats.sendFile(chatId, { file: audio, signature: false, asVoice: true, replyToId: sentReply?.id, botAction }),
+    );
+    if (ok && replyRef.current === sentReply) onClearReply();
+  }
+
+  /** Spec §6: a recent sticker (by message id) or a picked image sent as a sticker; same BOT_RUNNING flow as any send. */
+  async function sendSticker(pick: { messageId: string } | { file: File }) {
+    const sentReply = replyTo;
+    const ok = await submit((botAction) =>
+      'messageId' in pick
+        ? api.chats.sendSticker(chatId, { stickerFromMessageId: pick.messageId, replyToId: sentReply?.id, botAction })
+        : api.chats.sendFile(chatId, { file: pick.file, signature: false, asSticker: true, replyToId: sentReply?.id, botAction }),
     );
     if (ok && replyRef.current === sentReply) onClearReply();
   }
@@ -381,6 +394,20 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                 </div>
               )}
             </div>
+            {!isNote && (
+              <div className="relative">
+                <ToolButton label="Figurinhas" onClick={() => setStickerOpen((o) => !o)}>
+                  <Sticker size={20} />
+                </ToolButton>
+                {stickerOpen && (
+                  <StickerPanel
+                    onPick={(messageId) => void sendSticker({ messageId })}
+                    onPickFile={(file) => void sendSticker({ file })}
+                    onClose={() => setStickerOpen(false)}
+                  />
+                )}
+              </div>
+            )}
             <div className="relative">
               <ToolButton label="Chatbot" onClick={() => setBotOpen((o) => !o)}>
                 <Robot size={20} />

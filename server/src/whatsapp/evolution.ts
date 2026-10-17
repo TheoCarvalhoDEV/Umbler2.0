@@ -6,7 +6,14 @@
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/abstract/abstract.router.ts
 // - Routes: POST /instance/create, GET /instance/connect/:i, GET /instance/connectionState/:i
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/instance.router.ts
-// - Routes: POST /message/sendText|sendMedia|sendWhatsAppAudio/:i (201)
+// - Routes: POST /message/sendText|sendMedia|sendWhatsAppAudio|sendSticker|sendReaction/:i (201)
+//   sendSticker: JSON { number, sticker: raw base64 } (multipart is buggy in 2.3.7); PNG/JPEG converted to WebP by sharp.
+//   sendReaction: { key: { remoteJid, fromMe, id }, reaction } with '' removing it (sendMessage.controller.ts isEmoji).
+// - Routes: DELETE /chat/deleteMessageForEveryone/:i { id, remoteJid, fromMe }; POST /chat/updateMessage/:i
+//   { number, key, text } (rejects when the stored key.remoteJid differs from createJid(number) or the original is not
+//   in Evolution's DB); POST /webhook/set/:i { webhook: { enabled, url, byEvents, base64, events } } (webhook.router.ts)
+//   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/chat.router.ts
+//   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/integrations/event/webhook/webhook.schema.ts
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/sendMessage.router.ts
 // - Route: POST /chat/getBase64FromMediaMessage/:i (201); POST /chat/fetchProfilePictureUrl/:i (200, NumberDto)
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/chat.router.ts
@@ -40,7 +47,25 @@
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/integrations/channel/whatsapp/whatsapp.baileys.service.ts
 import type { ChannelStatus, DownloadedMedia, QuotedRef, SendResult, WhatsAppGateway } from './types.js';
 
-const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+// MESSAGES_DELETE carries revokes (contact, office phone, our own deleteMessageForEveryone). Never MESSAGES_EDITED:
+// Evolution 2.3.7 awaits that delivery inside the instance's event queue (whatsapp.baileys.service.ts:1133), so while
+// the app is down every later event of the instance waits ~20 min per protocol message. Edits still arrive as
+// MESSAGES_UPDATE with message.editedMessage.
+const WEBHOOK_EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+const webhookConfig = (url: string) => ({ enabled: true, url, byEvents: false, base64: false, events: WEBHOOK_EVENTS });
+
+/**
+ * The chat JID Evolution's createJid (src/utils/createJid.ts, formatBRNumber) builds from a number: a Brazilian
+ * 13-digit mobile loses its 9th digit when the DDD is 31 or more and the subscriber number starts at 7 or more.
+ * Needed where Evolution takes the JID as-is (deleteMessageForEveryone, reaction and edit keys); a '<lid>@lid' or any
+ * full JID passes through.
+ */
+export function jidOf(address: string): string {
+  if (address.includes('@')) return address;
+  const m = /^55(\d{2})\d(\d{8})$/.exec(address);
+  const digits = m && Number(m[1]) >= 31 && Number(m[2]![0]) >= 7 ? `55${m[1]}${m[2]}` : address;
+  return `${digits}@s.whatsapp.net`;
+}
 
 export function createEvolutionGateway(
   cfg: { url: string; apiKey: string },
@@ -48,7 +73,7 @@ export function createEvolutionGateway(
 ): WhatsAppGateway {
   const base = cfg.url.replace(/\/+$/, '');
 
-  async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T | null> {
+  async function call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T | null> {
     const res = await fetchImpl(base + path, {
       method,
       headers: { apikey: cfg.apiKey, 'content-type': 'application/json' },
@@ -88,7 +113,7 @@ export function createEvolutionGateway(
         integration: 'WHATSAPP-BAILEYS',
         qrcode: true,
         groupsIgnore: true,
-        webhook: { enabled: true, url: webhookUrl, byEvents: false, base64: false, events: WEBHOOK_EVENTS },
+        webhook: webhookConfig(webhookUrl),
       });
     },
 
@@ -140,6 +165,38 @@ export function createEvolutionGateway(
         number: address,
       });
       return res?.profilePictureUrl || null;
+    },
+
+    async sendReaction(instance, key, emoji) {
+      await call('POST', `/message/sendReaction/${seg(instance)}`, {
+        key: { remoteJid: jidOf(key.address), fromMe: key.fromMe, id: key.externalId },
+        reaction: emoji,
+      });
+    },
+
+    async deleteForEveryone(instance, key) {
+      await call('DELETE', `/chat/deleteMessageForEveryone/${seg(instance)}`, {
+        id: key.externalId,
+        remoteJid: jidOf(key.address),
+        fromMe: key.fromMe,
+      });
+    },
+
+    async editText(instance, key, text) {
+      // `number` goes through Evolution's own createJid; the key's remoteJid must already be that JID.
+      await call('POST', `/chat/updateMessage/${seg(instance)}`, {
+        number: key.address,
+        key: { remoteJid: jidOf(key.address), fromMe: key.fromMe, id: key.externalId },
+        text,
+      });
+    },
+
+    sendSticker(instance, phone, base64, quoted) {
+      return send(`/message/sendSticker/${seg(instance)}`, { number: phone, sticker: base64, quoted: quotedPayload(phone, quoted) });
+    },
+
+    async setWebhook(instance, webhookUrl) {
+      await call('POST', `/webhook/set/${seg(instance)}`, { webhook: webhookConfig(webhookUrl) });
     },
   };
 }

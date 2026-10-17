@@ -20,8 +20,10 @@ import type {
   ManualBotDto,
   Me,
   MessageDto,
+  MessageEditDto,
   OfficeTemplateInput,
   QuickAnswerDto,
+  RecentStickerDto,
   SaveVersionInput,
   SectorDto,
   SettingsDto,
@@ -71,7 +73,13 @@ export interface StartChatInput { contactId?: string; phone?: string; name?: str
 export interface SendTextInput { text: string; signature: boolean; replyToId?: string; botAction?: BotAction }
 export interface SendFileInput {
   file: Blob; fileName?: string; text?: string; signature: boolean; replyToId?: string; asVoice?: boolean; botAction?: BotAction;
+  /** Spec §6: send the image as a WhatsApp sticker. */
+  asSticker?: boolean;
 }
+/** Spec §6: a recent sticker, sent again by the id of the message that carries it. */
+export interface SendStickerInput { stickerFromMessageId: string; replyToId?: string; botAction?: BotAction }
+/** Spec §7: one destination per forward. */
+export type ForwardInput = ({ chatId: string } | { contactId: string; channelId?: string }) & { botAction?: BotAction };
 export type ContactInput = Partial<Pick<ContactDto, 'name' | 'phone' | 'email' | 'landline' | 'address'>>;
 export interface ContactListQuery { q?: string; tagId?: string; cursor?: string; limit?: number }
 export type SectorInput = Partial<Pick<SectorDto, 'name' | 'position' | 'isDefault'>>;
@@ -177,15 +185,29 @@ export const api = Object.assign(call, {
       form.append('signature', String(input.signature));
       if (input.replyToId) form.append('replyToId', input.replyToId);
       if (input.asVoice) form.append('asVoice', 'true');
+      if (input.asSticker) form.append('asSticker', 'true');
       if (input.botAction) form.append('botAction', input.botAction);
       form.append('file', input.file, input.fileName ?? (input.file instanceof File ? input.file.name : 'arquivo'));
       return request<MessageDto>('POST', `/api/chats/${enc(id)}/messages`, form);
     },
     addNote: (id: string, text: string) => request<MessageDto>('POST', `/api/chats/${enc(id)}/notes`, { text }),
+    sendSticker: (id: string, input: SendStickerInput) => request<MessageDto>('POST', `/api/chats/${enc(id)}/messages`, input),
   },
   messages: {
     resend: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/resend`),
     mediaUrl: (messageId: string) => `/api/media/${enc(messageId)}`,
+    /** '' or the current emoji removes the office's reaction. */
+    react: (messageId: string, emoji: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/reaction`, { emoji }),
+    /** Delete for everyone. */
+    remove: (messageId: string) => request<MessageDto>('DELETE', `/api/messages/${enc(messageId)}`),
+    edit: (messageId: string, text: string) => request<MessageDto>('PATCH', `/api/messages/${enc(messageId)}`, { text }),
+    edits: (messageId: string) => request<MessageEditDto[]>('GET', `/api/messages/${enc(messageId)}/edits`),
+    /** Returns the new message, in the destination chat. */
+    forward: (messageId: string, input: ForwardInput) =>
+      request<MessageDto>('POST', `/api/messages/${enc(messageId)}/forward`, input),
+  },
+  stickers: {
+    recent: () => request<RecentStickerDto[]>('GET', '/api/stickers/recent'),
   },
   contacts: {
     list: (q: ContactListQuery = {}) => request<Page<ContactDto>>('GET', `/api/contacts${qs(q)}`),
@@ -258,6 +280,9 @@ export const qk = {
   chatList: (f: ChatListFilters) => ['chats', 'list', f] as const,
   chat: (id: string) => ['chats', 'detail', id] as const,
   timeline: (id: string) => ['chats', 'timeline', id] as const,
+  /** Under ['chats'] so the WS reconnect invalidation refreshes it too. */
+  messageEdits: (messageId: string) => ['chats', 'edits', messageId] as const,
+  recentStickers: ['chats', 'stickers'] as const,
   contacts: ['contacts'] as const,
   contactList: (q: ContactListQuery) => ['contacts', 'list', q] as const,
   contact: (id: string) => ['contacts', 'detail', id] as const,

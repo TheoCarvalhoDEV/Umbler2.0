@@ -43,6 +43,11 @@ export async function getChannelByInstance(db: Db | Tx, instance: string): Promi
   return row ?? null;
 }
 
+/** Where Evolution posts this app's events (the secret is part of the path). */
+function webhookUrl(ctx: AppCtx): string {
+  return `${ctx.config.webhookBaseUrl}/webhooks/evolution/${ctx.config.webhookSecret}`;
+}
+
 export async function createChannel(ctx: AppCtx, name: string): Promise<ChannelDto> {
   const id = randomUUID();
   const instance = `talk-${id.slice(0, 8)}`;
@@ -51,7 +56,7 @@ export async function createChannel(ctx: AppCtx, name: string): Promise<ChannelD
     .values({ id, name, kind: 'whatsapp_qr', evolutionInstance: instance, status: 'disconnected' })
     .returning();
   try {
-    await ctx.wa.createInstance(instance, `${ctx.config.webhookBaseUrl}/webhooks/evolution/${ctx.config.webhookSecret}`);
+    await ctx.wa.createInstance(instance, webhookUrl(ctx));
   } catch (err) {
     // no orphan channel the admin can never connect
     await ctx.db.delete(channels).where(eq(channels.id, id));
@@ -103,5 +108,21 @@ export async function syncChannelStatuses(ctx: AppCtx): Promise<void> {
   const rows = await ctx.db.select({ instance: channels.evolutionInstance }).from(channels);
   for (const { instance } of rows) {
     await setChannelStatus(ctx, instance, await ctx.wa.connectionState(instance));
+  }
+}
+
+/**
+ * Boot (spec §5): instances only got their webhook events at creation, so push today's list (it adds MESSAGES_DELETE)
+ * to every existing one. Idempotent: Evolution upserts the instance's webhook row. Each channel has its own try/catch,
+ * so one unreachable instance does not stop the rest; the next boot tries again. Logs the instance and the error name.
+ */
+export async function syncWebhooks(ctx: AppCtx): Promise<void> {
+  const rows = await ctx.db.select({ instance: channels.evolutionInstance }).from(channels);
+  for (const { instance } of rows) {
+    try {
+      await ctx.wa.setWebhook(instance, webhookUrl(ctx));
+    } catch (err) {
+      console.error('webhook sync failed', { instance, err: err instanceof Error ? err.name : typeof err });
+    }
   }
 }

@@ -1,4 +1,4 @@
-import type { ChatEventDto, TimelineItem } from '@talk/shared';
+import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
 import { ApiError } from '../../lib/api';
 
 export const TIMELINE_PAGE_SIZE = 50;
@@ -101,7 +101,31 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
     }
     case 'bot_note':
       return `Nota do chatbot ${bot}: ${String(e.data.text ?? '')}`;
+    case 'message_deleted':
+      return `Mensagem apagada${changedBy(e)}`;
+    case 'message_edited':
+      return `Mensagem editada${changedBy(e)}`;
   }
+}
+
+/** Spec §2: changes made on WhatsApp read "pelo contato" / "pelo celular"; the office reads "por <nome>". */
+function changedBy(e: ChatEventDto): string {
+  if (e.data.source === 'contact') return ' pelo contato';
+  if (e.data.source === 'phone') return ' pelo celular';
+  return e.authorName ? ` por ${e.authorName}` : '';
+}
+
+/** Bubble tag of a message deleted for everyone (spec §4). The text stays visible to the team. */
+export function deletedTag(d: NonNullable<MessageDto['deleted']>): string {
+  if (d.source === 'contact') return 'Apagada pelo contato';
+  if (d.source === 'phone') return 'Apagada pelo celular';
+  return `Apagada por ${d.byName ?? 'atendente'}`;
+}
+
+/** Bubble tag of an edited message (spec §5). Clicking it shows the previous versions. */
+export function editedTag(e: NonNullable<MessageDto['edited']>): string {
+  const who = e.source === 'contact' ? ' pelo contato' : e.source === 'phone' ? ' pelo celular' : '';
+  return `editada${who}${e.newTextUnavailable ? ' (novo texto indisponível)' : ''}`;
 }
 
 export function errorMessage(e: unknown): string {

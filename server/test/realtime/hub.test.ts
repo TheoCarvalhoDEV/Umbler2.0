@@ -158,6 +158,7 @@ describe('createHub.publishMessage', () => {
     const message = {
       id: messageId, chatId: chat.id, direction: 'out', kind: 'text', body: 'Bom dia',
       media: null, mediaUnavailable: false, authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
+      officeReaction: null, deleted: null, edited: null, forwarded: false,
       replyTo: null, reaction: null, status: 'sent', error: null, sentAt: '2026-10-14T12:01:00.000Z',
     };
     expect(a.events).toEqual([{ type: 'message.created', message }]);

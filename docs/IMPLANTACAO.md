@@ -303,6 +303,7 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Receber e enviar: texto, imagem, áudio (ouvir e gravar), documento e vídeo.
 - [ ] Responder citando uma mensagem, nos dois sentidos.
 - [ ] Reação do contato aparece na mensagem. Um 👍 numa conversa **finalizada** não reabre a conversa.
+- [ ] Ações de mensagem (reagir, apagar, editar, figurinhas, encaminhar): o [roteiro de aceite](superpowers/plans/2026-10-16-acoes-mensagem-aceite.md) passa inteiro, com as partes A a F marcadas.
 - [ ] Mensagem digitada no celular do escritório aparece como enviada, sem ligar "Esperando", sem menu de triagem e sem iniciar o chatbot.
 - [ ] Transferir para outro setor: o atendente do setor antigo deixa de ver a conversa.
 - [ ] Finalizar com e sem a mensagem de encerramento; reabrir.

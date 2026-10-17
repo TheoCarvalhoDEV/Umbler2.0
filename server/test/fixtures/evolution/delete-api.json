@@ -1,0 +1,20 @@
+{
+  "event": "messages.delete",
+  "instance": "talk-test",
+  "data": {
+    "id": "cmgq0000000000000000000001",
+    "instanceId": "00000000-0000-4000-8000-000000000001",
+    "key": { "remoteJid": "556599999999@s.whatsapp.net", "fromMe": true, "id": "MSG-OUT-0001" },
+    "messageType": "conversation",
+    "status": "DELETED",
+    "source": "web",
+    "messageTimestamp": 1760440000,
+    "pushName": "Escritório",
+    "participant": null,
+    "message": { "conversation": "Olá" }
+  },
+  "date_time": "2025-10-14T11:10:00.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}

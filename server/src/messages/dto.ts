@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { MessageDto } from '@talk/shared';
 import type { Db, Tx } from '../db/client.js';
-import { botRuns, bots, messages, users } from '../db/schema.js';
+import { botRuns, bots, messageEdits, messages, users } from '../db/schema.js';
 import { userAvatarUrl } from '../media/avatar-files.js';
 
 type MessageRow = typeof messages.$inferSelect;
@@ -38,6 +38,16 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
   const [bot] = row.botRunId
     ? await db.select({ name: bots.name }).from(botRuns).innerJoin(bots, eq(bots.id, botRuns.botId)).where(eq(botRuns.id, row.botRunId))
     : [];
+  // Only deleted/edited rows pay for these lookups.
+  const [deleter] = row.deletedBy ? await db.select({ name: users.name }).from(users).where(eq(users.id, row.deletedBy)) : [];
+  const [lastEdit] = row.editedAt
+    ? await db
+        .select({ source: messageEdits.source, newTextUnavailable: messageEdits.newTextUnavailable })
+        .from(messageEdits)
+        .where(eq(messageEdits.messageId, row.id))
+        .orderBy(desc(messageEdits.editedAt))
+        .limit(1)
+    : [];
 
   return {
     id: row.id,
@@ -62,5 +72,17 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
     sentAt: row.sentAt.toISOString(),
     botRunId: row.botRunId,
     botName: bot?.name ?? null,
+    officeReaction: row.officeReaction,
+    deleted: row.deletedAt
+      ? { at: row.deletedAt.toISOString(), source: row.deletedSource ?? 'office', byName: deleter?.name ?? null }
+      : null,
+    edited: row.editedAt
+      ? {
+          at: row.editedAt.toISOString(),
+          source: lastEdit?.source ?? 'office',
+          newTextUnavailable: lastEdit?.newTextUnavailable ?? false,
+        }
+      : null,
+    forwarded: row.forwardedFromId !== null,
   };
 }

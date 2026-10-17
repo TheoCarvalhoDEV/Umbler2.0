@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createEvolutionGateway } from '../../src/whatsapp/evolution.js';
+import { createEvolutionGateway, jidOf } from '../../src/whatsapp/evolution.js';
 
 const PHONE = '5565999999999';
 const JSON_HEADERS = { apikey: 'k-123', 'content-type': 'application/json' };
@@ -51,7 +51,7 @@ describe('createEvolutionGateway', () => {
           url: 'http://app:3000/webhooks/evolution/s3cr3t',
           byEvents: false,
           base64: false,
-          events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+          events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
         },
       },
     });
@@ -226,5 +226,97 @@ describe('createEvolutionGateway', () => {
     const { wa, req } = setup(200, { instance: { state: 'open' } });
     await wa.connectionState('a b');
     expect(req().url).toBe('http://evolution:8080/instance/connectionState/a%20b');
+  });
+});
+
+const EVENTS = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'MESSAGES_DELETE', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'];
+
+describe('createEvolutionGateway: message actions', () => {
+  const key = { address: PHONE, externalId: '3EB0ABCDEF', fromMe: true };
+  const JID = '556599999999@s.whatsapp.net';
+
+  it('sendReaction posts the key with the JID Evolution would build; an empty reaction removes it', async () => {
+    const { wa, req } = setup(201, SENT_MESSAGE);
+    await wa.sendReaction('talk-abc', { ...key, fromMe: false }, '👍');
+    await wa.sendReaction('talk-abc', key, '');
+    expect(req(0)).toEqual({
+      url: 'http://evolution:8080/message/sendReaction/talk-abc',
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: { key: { remoteJid: JID, fromMe: false, id: '3EB0ABCDEF' }, reaction: '👍' },
+    });
+    expect(req(1).body).toEqual({ key: { remoteJid: JID, fromMe: true, id: '3EB0ABCDEF' }, reaction: '' });
+  });
+
+  it('deleteForEveryone sends DELETE with id, remoteJid and fromMe', async () => {
+    const { wa, req } = setup(201, SENT_MESSAGE);
+    await expect(wa.deleteForEveryone('talk-abc', key)).resolves.toBeUndefined();
+    expect(req()).toEqual({
+      url: 'http://evolution:8080/chat/deleteMessageForEveryone/talk-abc',
+      method: 'DELETE',
+      headers: JSON_HEADERS,
+      body: { id: '3EB0ABCDEF', remoteJid: JID, fromMe: true },
+    });
+  });
+
+  it('editText posts our number, the key and the new text', async () => {
+    const { wa, req } = setup(201, SENT_MESSAGE);
+    await wa.editText('talk-abc', key, 'Novo texto');
+    expect(req()).toEqual({
+      url: 'http://evolution:8080/chat/updateMessage/talk-abc',
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: { number: PHONE, key: { remoteJid: JID, fromMe: true, id: '3EB0ABCDEF' }, text: 'Novo texto' },
+    });
+  });
+
+  it('sendSticker posts raw base64 as JSON (never multipart) and returns the key id', async () => {
+    const { wa, req } = setup(201, SENT_MESSAGE);
+    const quoted = { externalId: 'Q1', body: 'oi', fromMe: false };
+    await expect(wa.sendSticker('talk-abc', PHONE, 'UklGRg==', quoted)).resolves.toEqual({ externalId: '3EB0ABCDEF' });
+    expect(req()).toEqual({
+      url: 'http://evolution:8080/message/sendSticker/talk-abc',
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: {
+        number: PHONE,
+        sticker: 'UklGRg==',
+        quoted: { key: { id: 'Q1', fromMe: false, remoteJid: `${PHONE}@s.whatsapp.net` }, message: { conversation: 'oi' } },
+      },
+    });
+  });
+
+  it('setWebhook replaces the webhook with the same events as createInstance, never MESSAGES_EDITED', async () => {
+    const { wa, req } = setup(201, { webhook: {} });
+    await wa.setWebhook('talk-abc', 'http://app:3000/webhooks/evolution/s3cr3t');
+    expect(req()).toEqual({
+      url: 'http://evolution:8080/webhook/set/talk-abc',
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: { webhook: { enabled: true, url: 'http://app:3000/webhooks/evolution/s3cr3t', byEvents: false, base64: false, events: EVENTS } },
+    });
+    expect(req().body.webhook.events).not.toContain('MESSAGES_EDITED');
+  });
+
+  it('uses a LID address as-is', async () => {
+    const { wa, req } = setup(201, SENT_MESSAGE);
+    await wa.deleteForEveryone('talk-abc', { ...key, address: '201234567890123@lid' });
+    expect(req().body).toEqual({ id: '3EB0ABCDEF', remoteJid: '201234567890123@lid', fromMe: true });
+  });
+
+  it('throws on a non-2xx answer, like every call', async () => {
+    const { wa } = setup(400, { message: 'Message not found' });
+    await expect(wa.editText('talk-abc', key, 'x')).rejects.toThrow(/Evolution POST \/chat\/updateMessage\/talk-abc failed: 400/);
+  });
+});
+
+describe('jidOf', () => {
+  it('drops the 9th digit like Evolution createJid (Review Focus 2)', () => {
+    expect(jidOf('5565999999999')).toBe('556599999999@s.whatsapp.net');
+    expect(jidOf('5531987654321')).toBe('553187654321@s.whatsapp.net');
+    expect(jidOf('5511987654321')).toBe('5511987654321@s.whatsapp.net'); // DDD below 31 keeps it
+    expect(jidOf('5565961234567')).toBe('5565961234567@s.whatsapp.net'); // subscriber starting below 7 keeps it
+    expect(jidOf('556532221111')).toBe('556532221111@s.whatsapp.net'); // 12 digits: untouched
+    expect(jidOf('201234567890123@lid')).toBe('201234567890123@lid');
   });
 });

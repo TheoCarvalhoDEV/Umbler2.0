@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 
@@ -49,13 +49,13 @@ export async function saveMedia(
   mime: string,
   originalName?: string | null,
   subdir?: string,
-): Promise<{ path: string; size: number }> {
+): Promise<{ path: string; size: number; sha256: string }> {
   const now = new Date();
   const folder = subdir ?? `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
   const path = `${folder}/${randomUUID()}${extensionFor(mime, originalName)}`;
   await mkdir(join(mediaDir, folder), { recursive: true });
   await writeFile(join(mediaDir, path), data);
-  return { path, size: data.length };
+  return { path, size: data.length, sha256: createHash('sha256').update(data).digest('hex') };
 }
 
 export function mediaResponseHeaders(mime: string, fileName: string): Record<string, string> {
