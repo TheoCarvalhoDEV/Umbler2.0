@@ -55,6 +55,15 @@ async function viaWhatsApp(action: keyof typeof WA_FAILED, messageId: string, ru
   }
 }
 
+/** A rollback that fails must not replace the 502 the agent should see: log id and error name only. */
+async function rollbackQuietly(messageId: string, run: () => PromiseLike<unknown>): Promise<void> {
+  try {
+    await run();
+  } catch (err) {
+    console.error('message rollback failed', { messageId, err: err instanceof Error ? err.name : typeof err });
+  }
+}
+
 /** Spec §3: the office's own reaction (one per message, next to the contact's). '' or the same emoji again removes it. */
 export async function reactToMessage(ctx: AppCtx, user: AuthUser, messageId: string, emoji: string): Promise<MessageDto> {
   if (emoji !== '' && !isSingleEmoji(emoji)) throw badRequest('Escolha um emoji');
@@ -89,7 +98,9 @@ export async function deleteMessageForEveryone(ctx: AppCtx, user: AuthUser, mess
       await ctx.wa.deleteForEveryone(instance, key);
     });
   } catch (err) {
-    await ctx.db.update(messages).set({ deletedAt: null, deletedBy: null, deletedSource: null }).where(eq(messages.id, msg.id));
+    await rollbackQuietly(msg.id, () =>
+      ctx.db.update(messages).set({ deletedAt: null, deletedBy: null, deletedSource: null }).where(eq(messages.id, msg.id)),
+    );
     throw err;
   }
   await addEvent(ctx.db, chat.id, 'message_deleted', { messageId: msg.id, source: 'office' }, user.id);
@@ -128,10 +139,12 @@ export async function editMessage(ctx: AppCtx, user: AuthUser, messageId: string
       await ctx.wa.editText(instance, { ...key, fromMe: true }, text);
     });
   } catch (err) {
-    await ctx.db.transaction(async (tx) => {
-      await tx.delete(messageEdits).where(eq(messageEdits.id, edit.id));
-      await tx.update(messages).set({ body: msg.body, editedAt: msg.editedAt }).where(eq(messages.id, msg.id));
-    });
+    await rollbackQuietly(msg.id, () =>
+      ctx.db.transaction(async (tx) => {
+        await tx.delete(messageEdits).where(eq(messageEdits.id, edit.id));
+        await tx.update(messages).set({ body: msg.body, editedAt: msg.editedAt }).where(eq(messages.id, msg.id));
+      }),
+    );
     throw err;
   }
   // ponytail: chats.last_message_preview keeps the old text when the last message is edited; refresh it if anyone notices.

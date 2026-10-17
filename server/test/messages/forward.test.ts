@@ -79,7 +79,9 @@ describe('POST /api/messages/:id/forward', () => {
   it('never forwards notes or deleted messages', async () => {
     const dest = await otherOpenChat();
     const note = await seedMsg(w, { kind: 'note', externalId: null });
-    expect((await forward(note, { chatId: dest.chatId })).json()).toEqual({ error: 'Esta mensagem não pode ser encaminhada' });
+    const refused = await forward(note, { chatId: dest.chatId });
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json()).toEqual({ error: 'Esta mensagem não pode ser encaminhada' });
     const gone = await seedMsg(w, { deletedAt: new Date(), deletedSource: 'contact', direction: 'in', authorId: null });
     expect((await forward(gone, { chatId: dest.chatId })).json()).toEqual({ error: 'Mensagem apagada' });
   });

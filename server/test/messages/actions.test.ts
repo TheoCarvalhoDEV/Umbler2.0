@@ -94,6 +94,10 @@ describe('DELETE /api/messages/:id', () => {
   it('deletes bot and phone sends too, never inbound messages', async () => {
     const bot = await seedMsg(w, { authorId: null });
     expect((await del(bot)).statusCode).toBe(200);
+    // a send from the office phone: outgoing, no author, no bot run (ingest stores fromMe messages this way)
+    const phone = await seedMsg(w, { authorId: null, botRunId: null });
+    expect((await del(phone)).statusCode).toBe(200);
+    expect(await row(phone)).toMatchObject({ deletedSource: 'office' });
     const inbound = await seedMsg(w, { direction: 'in', authorId: null });
     const res = await del(inbound);
     expect(res.statusCode).toBe(409);
@@ -126,6 +130,23 @@ describe('DELETE /api/messages/:id', () => {
     expect(res.json()).toEqual({ error: 'Não foi possível apagar no WhatsApp. Tente de novo.' });
     expect(await row(id)).toMatchObject({ deletedAt: null, deletedBy: null, deletedSource: null });
     expect(await eventsOfKind('message_deleted')).toEqual([]);
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('segredo');
+    logged.mockRestore();
+  });
+
+  it('keeps the 502 when the rollback itself fails', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const id = await seedMsg(w, { body: 'segredo do cliente' });
+    vi.spyOn(w.ctx.wa, 'deleteForEveryone').mockImplementation(async () => {
+      vi.spyOn(w.ctx.db, 'update').mockImplementation(() => { throw new Error('db down: segredo do cliente'); });
+      throw new Error('evolution down');
+    });
+
+    const res = await del(id);
+
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toEqual({ error: 'Não foi possível apagar no WhatsApp. Tente de novo.' });
+    expect(logged).toHaveBeenCalledWith('message rollback failed', { messageId: id, err: 'Error' });
     expect(JSON.stringify(logged.mock.calls)).not.toContain('segredo');
     logged.mockRestore();
   });
@@ -202,6 +223,23 @@ describe('PATCH /api/messages/:id and GET /api/messages/:id/edits', () => {
     expect(await row(id)).toMatchObject({ body: 'Valor: R$ 100', editedAt: null });
     expect((await history(id)).json()).toEqual([]);
     expect(await eventsOfKind('message_edited')).toEqual([]);
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('R$');
+    logged.mockRestore();
+  });
+
+  it('keeps the 502 when the rollback itself fails', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const id = await seedMsg(w, { body: 'Valor: R$ 100' });
+    vi.spyOn(w.ctx.wa, 'editText').mockImplementation(async () => {
+      vi.spyOn(w.ctx.db, 'transaction').mockImplementation(() => { throw new Error('db down: R$ 100'); });
+      throw new Error('evolution down');
+    });
+
+    const res = await edit(id, 'Valor: R$ 200');
+
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toEqual({ error: 'Não foi possível editar no WhatsApp. Tente de novo.' });
+    expect(logged).toHaveBeenCalledWith('message rollback failed', { messageId: id, err: 'Error' });
     expect(JSON.stringify(logged.mock.calls)).not.toContain('R$');
     logged.mockRestore();
   });
