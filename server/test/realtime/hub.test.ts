@@ -93,6 +93,7 @@ describe('createHub.publishChat', () => {
       lastMessagePreview: 'Olá',
       pinned: true,
       tagIds: [tagId],
+      history: false,
     };
     expect(a.events).toEqual([{ type: 'chat.updated', chat: expected }]);
     expect(adm.events).toEqual([{ type: 'chat.updated', chat: { ...expected, pinned: false } }]);

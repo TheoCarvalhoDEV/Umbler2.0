@@ -14,6 +14,9 @@ import { canSee, visibleChatsWhere, type AuthUser } from './visibility.js';
 export type ChatRow = typeof chats.$inferSelect;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** History spec §8: imported history chats are read-only. */
+export const HISTORY_READ_ONLY = 'Conversa de histórico do WhatsApp: só leitura.';
+
 const STALE = 'A conversa foi alterada por outra pessoa. Recarregue e tente de novo.';
 /** 409 for an open chat the user cannot see. An admin only lacks "ver todos" (with it he sees every chat). */
 const busyElsewhere = (user: AuthUser) =>
@@ -174,6 +177,7 @@ export async function transferChat(
 
 export async function setChatPrivacy(ctx: AppCtx, user: AuthUser, chatId: string, isPrivate: boolean): Promise<ChatRow> {
   const chat = await getChatForUser(ctx, user, chatId);
+  if (chat.history) throw conflict(HISTORY_READ_ONLY);
   if (user.role !== 'admin' && chat.ownerId !== user.id) {
     throw forbidden('Só o dono da conversa ou um administrador pode alterar a privacidade.');
   }
@@ -222,6 +226,7 @@ export async function closeChat(
 
 export async function reopenChat(ctx: AppCtx, user: AuthUser, chatId: string): Promise<ChatRow> {
   const chat = await getChatForUser(ctx, user, chatId);
+  if (chat.history) throw conflict(HISTORY_READ_ONLY);
   if (chat.state !== 'closed') throw conflict('A conversa já está aberta.');
   const [other] = await ctx.db
     .select()

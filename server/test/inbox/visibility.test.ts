@@ -25,6 +25,8 @@ const cases: Array<[string, AuthUser, ChatVisibilityFields, boolean]> = [
   ['agent does not see an unowned chat of another sector', agent, { sectorId: 'B', ownerId: null, private: false }, false],
   ['agent does not see a chat of another sector owned by someone else', agent, { sectorId: 'B', ownerId: 'u2', private: false }, false],
   ['sector member does not see a colleague private chat', agent, { sectorId: 'A', ownerId: 'u2', private: true }, false],
+  ['agent sees an imported history chat of another sector (§8)', agent, { sectorId: 'B', ownerId: null, private: false, history: true }, true],
+  ['agent without sectors sees history chats', { ...agent, sectorIds: [] }, { sectorId: 'B', ownerId: null, private: false, history: true }, true],
 ];
 
 describe('canSee', () => {
@@ -73,6 +75,17 @@ describe('visibleChatsWhere / loadAuthUser (PGlite)', () => {
     expect(all.filter((c) => canSee(adminInA, c))).toHaveLength(3);
     expect(all.filter((c) => canSee(s.agentA, c))).toHaveLength(8);
     expect(all.filter((c) => canSee(noSectors, c))).toHaveLength(6);
+  });
+
+  it('history chats are visible to every logged-in user, in SQL as in canSee (§8)', async () => {
+    const hist = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorB, state: 'closed', history: true });
+    await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorB, state: 'closed' }); // a regular closed chat of sector B
+    const all = await ctx.db.select().from(chats);
+    for (const user of [s.agentA, { ...s.agentA, sectorIds: [] }, s.admin]) {
+      const viaSql = (await ctx.db.select({ id: chats.id }).from(chats).where(visibleChatsWhere(user))).map((r) => r.id);
+      expect(viaSql).toEqual([hist]);
+      expect(all.filter((c) => canSee(user, c)).map((c) => c.id)).toEqual([hist]);
+    }
   });
 
   it('loadAuthUser returns sectors, and null for inactive or unknown users', async () => {

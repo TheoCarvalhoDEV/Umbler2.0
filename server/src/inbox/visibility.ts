@@ -18,30 +18,32 @@ export interface ChatVisibilityFields {
   sectorId: string;
   ownerId: string | null;
   private: boolean;
+  history?: boolean; // imported from the phone (history spec §8)
 }
 
 const seesAll = (user: AuthUser) => user.role === 'admin' && user.seeAllSectors;
 
 /**
  * Sector barrier: an admin with "ver todos" sees everything; anyone else (admins included) sees own chats
- * plus the non-private chats of their sectors.
+ * plus the non-private chats of their sectors. Imported history chats predate the system: every user sees them.
  */
 export function canSee(user: AuthUser, chat: ChatVisibilityFields): boolean {
   if (seesAll(user)) return true;
+  if (chat.history) return true;
   if (chat.ownerId === user.id) return true;
   return !chat.private && user.sectorIds.includes(chat.sectorId);
 }
 
 /**
  * Same rule as canSee, as a WHERE over `chats`. undefined only for an admin with "ver todos" (no filter).
- * (private=false AND (sector IN mine OR owner=me)) OR (private=true AND owner=me)
- * simplifies to owner=me OR (private=false AND sector IN mine).
+ * history OR owner=me OR (private=false AND sector IN mine).
  */
 export function visibleChatsWhere(user: AuthUser): SQL | undefined {
   if (seesAll(user)) return undefined;
+  const history = eq(chats.history, true);
   const mine = eq(chats.ownerId, user.id);
-  if (user.sectorIds.length === 0) return mine;
-  return or(mine, and(eq(chats.private, false), inArray(chats.sectorId, user.sectorIds)));
+  if (user.sectorIds.length === 0) return or(history, mine);
+  return or(history, mine, and(eq(chats.private, false), inArray(chats.sectorId, user.sectorIds)));
 }
 
 export async function loadAuthUser(db: Db | Tx, userId: string): Promise<AuthUser | null> {

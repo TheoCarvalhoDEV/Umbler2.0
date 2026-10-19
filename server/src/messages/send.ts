@@ -8,7 +8,7 @@ import { refreshAvatarInBackground } from '../contacts/avatar.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { channels, chats, contacts, messages, sectors } from '../db/schema.js';
-import { getChatForUser, type ChatRow } from '../inbox/chats.js';
+import { HISTORY_READ_ONLY, getChatForUser, type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, notFound } from '../lib/http-error.js';
@@ -405,6 +405,7 @@ export async function resendMessage(ctx: AppCtx, user: AuthUser, messageId: stri
 
 export async function addNote(ctx: AppCtx, user: AuthUser, chatId: string, text: string): Promise<MessageDto> {
   const chat = await getChatForUser(ctx, user, chatId);
+  if (chat.history) throw conflict(HISTORY_READ_ONLY);
   const body = text.trim();
   if (!body) throw badRequest('Nota vazia');
   const [row] = await ctx.db

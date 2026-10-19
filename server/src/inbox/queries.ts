@@ -72,6 +72,7 @@ export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string)
     lastMessagePreview: chat.lastMessagePreview,
     pinned: pin.length > 0,
     tagIds: tagRows.map((r) => r.id),
+    history: chat.history,
   };
 }
 
@@ -95,6 +96,8 @@ export async function listChats(
   const conds: Array<SQL | undefined> = [visibleChatsWhere(user)];
 
   conds.push(eq(chats.state, f.tab === 'closed' ? 'closed' : 'open'));
+  // History spec §8: history chats stay out of Finalizados; a search still finds them.
+  if (f.tab === 'closed' && !f.q?.trim()) conds.push(eq(chats.history, false));
   if (f.tab === 'waiting') conds.push(eq(chats.waiting, true));
   if (f.sectorId) conds.push(eq(chats.sectorId, f.sectorId));
   if (f.ownerId === 'none') conds.push(isNull(chats.ownerId));
