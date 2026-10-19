@@ -62,7 +62,8 @@ export async function copyRange(
   try {
     for (const w of monthlyWindows(from, to)) {
       // ponytail: OFFSET pages over "messageTimestamp DESC" with no tiebreaker may swap a row at a page edge inside a
-      // same-second group (measured: never at offset 500); a later import pass over the same window picks a missed row up.
+      // same-second group (measured: never at offset 500); only a later import pass over the same window (an automatic import's 2-min repeats, or a new import) picks a missed row up;
+      // the back-fill covers just backfill_until - 10 min .. now - 30 min, so it recovers one only inside that window.
       for (let page = 1, pages = 1; page <= pages; page += 1) {
         const res = await ctx.wa.findMessages(channel.evolutionInstance, { gte: w.gte, lte: w.lte, page, offset: PAGE_SIZE });
         pages = res.pages;

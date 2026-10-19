@@ -1,9 +1,10 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import type { HistoryPeriod } from '@talk/shared';
 import { errorTag } from '../bots/scheduler.js';
 import type { AppCtx } from '../ctx.js';
 import { channels, historyImports } from '../db/schema.js';
 import { copyRange } from './copy.js';
+import { drainMediaQueue } from './media.js';
 import type { HistoryImportRow } from './imports.js';
 
 const MIN = 60_000;
@@ -68,4 +69,105 @@ export async function runImportPass(ctx: AppCtx, importId: string): Promise<Hist
   const [row] = await ctx.db.update(historyImports).set(patch).where(eq(historyImports.id, imp.id)).returning();
   await ctx.hub.publishChannel(channel.id);
   return row ?? null;
+}
+
+/** §6: back-fill cadence (also once at boot). */
+export const BACKFILL_EVERY_MS = 5 * MIN;
+/** The last 30 min still belong to the webhook (Evolution retries ~20 min): there a message keeps its queue and bots. */
+const BACKFILL_LAG_MS = 30 * MIN;
+const BACKFILL_OVERLAP_MS = 10 * MIN;
+
+/**
+ * §6: copies, as history, Evolution's messages in [backfill_until - 10 min, now - 30 min] the app does not have, and
+ * advances backfill_until. The first run of a channel only sets the watermark. Throws on an Evolution failure
+ * (backfill_until stays). Returns how many messages it copied.
+ */
+export async function runBackfill(ctx: AppCtx, channelId: string): Promise<number> {
+  const [channel] = await ctx.db.select().from(channels).where(eq(channels.id, channelId));
+  if (!channel) return 0;
+  const lteAt = new Date(ctx.botRuntime.now().getTime() - BACKFILL_LAG_MS);
+  if (!channel.backfillUntil) {
+    await ctx.db.update(channels).set({ backfillUntil: lteAt }).where(eq(channels.id, channelId));
+    return 0;
+  }
+  const totals = await copyRange(ctx, channel, new Date(channel.backfillUntil.getTime() - BACKFILL_OVERLAP_MS), lteAt);
+  await ctx.db.update(channels).set({ backfillUntil: lteAt }).where(eq(channels.id, channelId));
+  return totals.inserted;
+}
+
+/**
+ * The history worker (§5-6), one per app process: import passes that are due and, every 5 min, the back-fill of every
+ * channel; plus the media queue in its own loop, so a long download run never delays an import pass. All state lives
+ * in the DB, so a restart resumes where the previous process stopped.
+ * ponytail: one process only; claim rows with FOR UPDATE SKIP LOCKED if the app ever runs more than one.
+ */
+export function createHistoryWorker(ctx: AppCtx, opts: { intervalMs?: number; mediaIntervalMs?: number } = {}) {
+  const { intervalMs = 15_000, mediaIntervalMs = 10_000 } = opts;
+  let lastBackfill = Number.NEGATIVE_INFINITY;
+  const timers: Array<ReturnType<typeof setInterval>> = [];
+  let abort = new AbortController();
+  let jobs: Promise<unknown> | null = null;
+  let media: Promise<unknown> | null = null;
+
+  async function tick(): Promise<void> {
+    const now = ctx.botRuntime.now();
+    const due = await ctx.db
+      .select({ id: historyImports.id })
+      .from(historyImports)
+      .where(and(eq(historyImports.state, 'running'), lte(historyImports.nextRunAt, now)))
+      .orderBy(asc(historyImports.nextRunAt));
+    for (const { id } of due) {
+      try {
+        await runImportPass(ctx, id);
+      } catch (err) {
+        console.error('history: import pass failed', id, errorTag(err)); // a DB error; the next beat retries
+      }
+    }
+    if (now.getTime() - lastBackfill < BACKFILL_EVERY_MS) return;
+    lastBackfill = now.getTime();
+    for (const { id } of await ctx.db.select({ id: channels.id }).from(channels)) {
+      try {
+        await runBackfill(ctx, id);
+      } catch (err) {
+        console.error('history: backfill failed', id, errorTag(err));
+      }
+    }
+  }
+
+  function runJobs(): void {
+    if (jobs) return; // the previous beat is still running
+    jobs = tick()
+      .catch((err: unknown) => console.error('history: tick failed', errorTag(err)))
+      .finally(() => {
+        jobs = null;
+      });
+  }
+
+  function runMedia(): void {
+    if (media) return;
+    media = drainMediaQueue(ctx, abort.signal)
+      .catch((err: unknown) => console.error('history: media queue failed', errorTag(err)))
+      .finally(() => {
+        media = null;
+      });
+  }
+
+  return {
+    tick,
+    start(): void {
+      if (timers.length) return;
+      abort = new AbortController();
+      runJobs();
+      runMedia();
+      timers.push(setInterval(runJobs, intervalMs), setInterval(runMedia, mediaIntervalMs));
+      for (const t of timers) t.unref();
+    },
+    /** Clears the timers, ends the media loop after its current download, and waits for both. */
+    async stop(): Promise<void> {
+      for (const t of timers) clearInterval(t);
+      timers.length = 0;
+      abort.abort();
+      await Promise.all([jobs, media]);
+    },
+  };
 }
