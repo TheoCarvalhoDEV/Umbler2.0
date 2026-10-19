@@ -1,64 +1,89 @@
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
-/* Dark theme modelled on Umbler Talk: near-black icon sidebar, blue primary. */
+/* "Tinta e latão": ink-navy interface, the JV logo's brass as the only accent, blue for actions.
+   Dark theme here; the light theme below redefines the same tokens. Every text pairing is >= 4.5:1,
+   field borders >= 3:1. sidebar-hover / sidebar-active are the generic hover and selected fills. */
 @theme {
-  --color-sidebar: #14161b;
-  --color-sidebar-hover: #22252d;
-  --color-sidebar-active: #2b3040;
-  --color-surface: #1b1e25;
-  --color-panel: #23262f;
-  --color-border: #313543;
-  /* Form control borders: --color-border is too faint (1.4:1) to outline an input; this one is 3:1. */
-  --color-field: #666e85;
+  --color-ground: #0b0d12; /* app background, behind columns */
+  --color-sunken: #0f1218; /* conversation timeline */
+  --color-surface: #13161d;
+  --color-panel: #1c2029; /* menus, chips, quiet fills */
+  --color-sidebar-hover: #1a1e27;
+  --color-sidebar-active: #1a2244;
+  --color-border: #252a35;
+  /* Form control borders: --color-border is too faint to outline an input; this one is 3:1. */
+  --color-field: #6b7385;
   --color-fg: #e7e9ef;
-  --color-muted: #9aa1b1;
+  --color-muted: #9ba2b2;
   /* White text on primary needs 4.5:1. Primary is too dark to read as text, so blue text uses --color-link. */
-  --color-primary: #4062f0;
-  --color-primary-hover: #3352d9;
-  --color-link: #7b93ff;
+  --color-primary: #4a67ee;
+  --color-primary-hover: #3d59de;
+  --color-primary-soft: #1a2244;
+  --color-link: #a3b4ff;
+  --color-brass: #d9ae5a;
+  --color-brass-soft: #2a2314;
   /* Light enough to read as text on dark surfaces; solid red fills with white text use --color-danger-strong. */
-  --color-danger: #f47174;
+  --color-danger: #f2777d;
   --color-danger-strong: #c9363b;
-  --color-success: #30a46c;
-  --color-nav-on: #ffffff; /* active icon in the left menu */
-  --color-bubble-in: #23262f; /* inbound message bubble */
-  --color-private: #fbbf24; /* "Privada" badge */
-  --color-read: #38bdf8; /* read ticks */
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --color-danger-soft: #33181a;
+  --color-success: #4cbf85;
+  --color-success-soft: #14291f;
+  --color-bubble-in: #1a1e27;
+  --color-bubble-out: #1e2848;
+  --color-note: #2a2412; /* internal note fill */
+  --color-note-line: #6e5821;
+  --color-note-fg: #f1de9e;
+  --color-private: #d9ae5a; /* "Privada" badge */
+  --color-read: #5db8f2; /* read ticks */
+  /* The left menu stays ink-navy in both themes: the gold logo is drawn for a dark background. */
+  --color-rail: #07090d;
+  --color-rail-fg: #8f97aa;
+  --color-rail-active: #171c2b;
+  --color-nav-on: #ffffff;
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Mono", monospace;
 }
 
 :root {
   color-scheme: dark;
 }
 
-/* Light theme: same tokens, new values. lib/theme.ts sets data-theme (system preference by default).
-   Cool greys biased toward the brand blue; every text pairing is >= 4.5:1, field borders >= 3:1. */
+/* Light theme: same tokens, new values. lib/theme.ts sets data-theme (system preference by default). */
 :root[data-theme='light'] {
   color-scheme: light;
-  --color-sidebar: #e6eaf1;
-  --color-sidebar-hover: #dce2eb;
-  --color-sidebar-active: #d9e1f6;
+  --color-ground: #f3f4f7;
+  --color-sunken: #f6f7f9;
   --color-surface: #ffffff;
-  --color-panel: #f2f4f8;
-  --color-border: #dde2ea;
-  --color-field: #80889b;
-  --color-fg: #1b1f27;
-  --color-muted: #596174;
-  --color-primary: #3554e0;
-  --color-primary-hover: #2b49d1;
-  --color-link: #2b49d1;
-  --color-danger: #b42a30;
-  --color-danger-strong: #b42a30;
-  --color-success: #1f7a4f;
-  --color-nav-on: #3554e0;
-  --color-bubble-in: #ffffff; /* panel is too close to the timeline background (1.1:1) */
-  --color-private: #b45309;
-  --color-read: #0369a1;
-}
-
-/* The gold logo is drawn for dark backgrounds; on the light theme it needs more weight to hold up. */
-:root[data-theme='light'] .brand-logo {
-  filter: brightness(0.8) saturate(1.2);
+  --color-panel: #eef0f4;
+  --color-sidebar-hover: #f1f3f7;
+  --color-sidebar-active: #e9edfb;
+  --color-border: #e2e5eb;
+  --color-field: #8a91a1;
+  --color-fg: #151922;
+  --color-muted: #5a6172;
+  --color-primary: #2b47c6;
+  --color-primary-hover: #2239a8;
+  --color-primary-soft: #e9edfb;
+  --color-link: #2239a8;
+  --color-brass: #9a6b1f;
+  --color-brass-soft: #f7eedc;
+  --color-danger: #b3261e;
+  --color-danger-strong: #b3261e;
+  --color-danger-soft: #fbe9e7;
+  --color-success: #1d7a4e;
+  --color-success-soft: #e3f3ea;
+  --color-bubble-in: #ffffff;
+  --color-bubble-out: #e4eafd;
+  --color-note: #fff6d6;
+  --color-note-line: #e6c766;
+  --color-note-fg: #5c4505;
+  --color-private: #9a6b1f;
+  --color-read: #0b6ba8;
+  --color-rail: #0f1729;
+  --color-rail-fg: #a9b1c4;
+  --color-rail-active: #1f2a47;
 }
 
 html,
@@ -69,8 +94,16 @@ body,
 
 body {
   margin: 0;
-  background-color: var(--color-surface);
+  background-color: var(--color-ground);
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* In the base layer so a utility (outline-none + ring) still overrides it. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
 }

@@ -18,8 +18,8 @@ function HeaderButton(props: { label: string; onClick: () => void; disabled?: bo
       aria-pressed={props.pressed}
       disabled={props.disabled}
       onClick={props.onClick}
-      className={`rounded p-2 hover:bg-panel disabled:cursor-not-allowed disabled:opacity-40 ${
-        props.pressed ? 'bg-panel text-fg' : 'text-muted'
+      className={`flex size-10 items-center justify-center rounded-lg hover:bg-sidebar-hover disabled:cursor-not-allowed disabled:opacity-40 ${
+        props.pressed ? 'bg-primary-soft text-link' : 'text-muted'
       }`}
     >
       {props.children}
@@ -109,16 +109,17 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
     setError(null);
   }
 
-  const pill = 'flex items-center gap-1 rounded px-3 py-1.5 text-sm font-medium disabled:opacity-50';
+  const pill = 'flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-semibold disabled:opacity-50';
+  const secondary = `${pill} border border-border bg-surface text-fg hover:bg-sidebar-hover`;
 
   return (
     <>
-      <header className="flex items-center gap-1 border-b border-border bg-surface px-4 py-2">
-        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="mr-2 size-10 text-sm bg-sidebar-active" />
+      <header className="flex items-center gap-1 border-b border-border bg-surface py-3 pr-4 pl-6">
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="mr-2 size-11 shrink-0 text-sm bg-panel" />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold text-fg">{contactLabel(chat.contact)}</h2>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-            <span className="rounded bg-panel px-1.5 text-fg">{sectorName}</span>
+          <h2 className="truncate text-base font-semibold text-fg">{contactLabel(chat.contact)}</h2>
+          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-fg">{sectorName}</span>
             <span>{ownerName}</span>
             {chat.private && (
               <span className="flex items-center gap-0.5 text-private">
@@ -135,7 +136,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
           </button>
         )}
         {!open && !chat.history && (
-          <button type="button" disabled={busy} onClick={() => void act({ kind: 'reopen' })} className={`${pill} bg-panel text-fg hover:bg-sidebar-hover`}>
+          <button type="button" disabled={busy} onClick={() => void act({ kind: 'reopen' })} className={secondary}>
             <ArrowCounterClockwise size={16} /> Reabrir
           </button>
         )}
@@ -157,7 +158,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
               type="button"
               disabled={busy || lockedByPrivacy}
               onClick={() => setDialog('transfer')}
-              className={`${pill} ml-1 bg-panel text-fg hover:bg-sidebar-hover disabled:cursor-not-allowed`}
+              className={`${secondary} ml-2 disabled:cursor-not-allowed`}
             >
               <ArrowBendUpRight size={16} /> Transferir
             </button>
@@ -165,7 +166,8 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
               type="button"
               disabled={busy || lockedByPrivacy}
               onClick={() => setDialog('close')}
-              className={`${pill} bg-panel text-fg hover:bg-sidebar-hover disabled:cursor-not-allowed`}
+              // one primary action at a time: Assumir while nobody owns the chat, then Finalizar
+              className={`${chat.ownerId ? `${pill} bg-primary text-white hover:bg-primary-hover` : secondary} ml-1 disabled:cursor-not-allowed`}
             >
               <CheckCircle size={16} /> Finalizar
             </button>
@@ -174,7 +176,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
       </header>
 
       {error && !dialog && (
-        <p role="alert" className="border-b border-border bg-danger/15 px-4 py-1.5 text-sm text-danger">
+        <p role="alert" className="border-b border-border bg-danger-soft px-6 py-2 text-sm text-danger">
           {error}
         </p>
       )}

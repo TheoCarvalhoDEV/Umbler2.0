@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, like, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, like, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { ChatListItem, ContactDto, ContactNoteDto } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -17,7 +17,7 @@ export interface ContactInput {
   landline?: string | null;
   address?: Record<string, string> | null;
 }
-export interface ContactListQuery { q?: string; tagId?: string; cursor?: string; limit?: number }
+export interface ContactListQuery { q?: string; tagId?: string; blocked?: boolean; cursor?: string; limit?: number }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -61,8 +61,8 @@ const CURSOR_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 // compare on the truncated value so pages never skip or repeat rows.
 const updatedMs = sql`date_trunc('milliseconds', ${contacts.updatedAt})`;
 
-export async function listContacts(db: Db, f: ContactListQuery): Promise<{ items: ContactDto[]; nextCursor: string | null }> {
-  const limit = f.limit ?? 50;
+// Search and filter conditions shared by the list and the CSV export.
+function contactFilters(db: Db, f: ContactListQuery): Array<SQL | undefined> {
   const where: Array<SQL | undefined> = [];
   const q = f.q?.trim();
   if (q) {
@@ -70,13 +70,34 @@ export async function listContacts(db: Db, f: ContactListQuery): Promise<{ items
     const digits = q.replace(/\D/g, '');
     // ponytail: "contains" on the normalized number covers prefix search and partial typing like "99999-0002".
     const phone = digits.length >= 10 ? normalizePhoneBR(digits) : digits;
-    where.push(digits.length >= 3 ? or(byName, like(contacts.phone, `%${phone}%`)) : byName);
+    // CPF/CNPJ fields are typed with or without the mask: compare digits only.
+    const byDocument = inArray(
+      contacts.id,
+      db
+        .select({ id: contactFieldValues.contactId })
+        .from(contactFieldValues)
+        .innerJoin(customFields, eq(customFields.id, contactFieldValues.fieldId))
+        .where(
+          and(
+            inArray(customFields.kind, ['cpf', 'cnpj']),
+            sql`regexp_replace(${contactFieldValues.value}, '[^0-9]', '', 'g') like ${`%${digits}%`}`,
+          ),
+        ),
+    );
+    where.push(digits.length >= 3 ? or(byName, like(contacts.phone, `%${phone}%`), byDocument) : byName);
   }
   if (f.tagId) {
     where.push(
       inArray(contacts.id, db.select({ id: contactTags.contactId }).from(contactTags).where(eq(contactTags.tagId, f.tagId))),
     );
   }
+  if (f.blocked !== undefined) where.push(eq(contacts.blocked, f.blocked));
+  return where;
+}
+
+export async function listContacts(db: Db, f: ContactListQuery): Promise<{ items: ContactDto[]; nextCursor: string | null }> {
+  const limit = f.limit ?? 50;
+  const where = contactFilters(db, f);
   if (f.cursor) {
     const [iso, id] = Buffer.from(f.cursor, 'base64url').toString().split('|');
     // Only the toISOString() shape this function emits: Date.parse also takes "1", which Postgres rejects (500).
@@ -96,6 +117,40 @@ export async function listContacts(db: Db, f: ContactListQuery): Promise<{ items
     nextCursor:
       rows.length > limit && last ? Buffer.from(`${last.updatedAt.toISOString()}|${last.id}`).toString('base64url') : null,
   };
+}
+
+// Excel runs a cell starting with = + - @ as a formula: prefix it so the export stays plain text.
+function csvCell(value: string): string {
+  const safe = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[";\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/** Every contact matching the list filters, as CSV for Excel in pt-BR (";" separator, UTF-8 BOM). */
+export async function exportContactsCsv(db: Db, f: ContactListQuery): Promise<string> {
+  // ponytail: one query for the whole base; fine for an office's few thousand contacts, stream by pages past ~50k.
+  const rows = await db
+    .select()
+    .from(contacts)
+    .where(and(...contactFilters(db, f)))
+    .orderBy(asc(contacts.name), asc(contacts.id));
+  const [dtos, tagRows, fieldRows] = await Promise.all([
+    toContactDtos(db, rows),
+    db.select().from(tags),
+    db.select().from(customFields).orderBy(asc(customFields.position), asc(customFields.name)),
+  ]);
+  const tagName = new Map(tagRows.map((t) => [t.id, t.name]));
+  const header = ['Nome', 'Telefone', 'E-mail', 'Telefone fixo', 'Etiquetas', ...fieldRows.map((x) => x.name), 'Bloqueado', 'Criado em'];
+  const lines = dtos.map((c) => [
+    c.name ?? '',
+    c.phone ?? '',
+    c.email ?? '',
+    c.landline ?? '',
+    c.tagIds.flatMap((id) => tagName.get(id) ?? []).join(', '),
+    ...fieldRows.map((x) => c.fields[x.id] ?? ''),
+    c.blocked ? 'Sim' : 'Não',
+    c.createdAt.slice(0, 10),
+  ]);
+  return `﻿${[header, ...lines].map((r) => r.map(csvCell).join(';')).join('\r\n')}\r\n`;
 }
 
 // Bumps updated_at (list order) and applies `extra`; 404 when the contact does not exist.
