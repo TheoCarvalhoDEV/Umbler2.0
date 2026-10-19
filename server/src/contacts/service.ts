@@ -55,6 +55,8 @@ export async function getContact(db: Db | Tx, id: string): Promise<ContactDto> {
   return dto;
 }
 
+const CURSOR_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 // Postgres keeps microseconds but the cursor carries a JS Date (milliseconds): order and
 // compare on the truncated value so pages never skip or repeat rows.
 const updatedMs = sql`date_trunc('milliseconds', ${contacts.updatedAt})`;
@@ -77,7 +79,8 @@ export async function listContacts(db: Db, f: ContactListQuery): Promise<{ items
   }
   if (f.cursor) {
     const [iso, id] = Buffer.from(f.cursor, 'base64url').toString().split('|');
-    if (!iso || !id || !UUID.test(id) || Number.isNaN(Date.parse(iso))) throw badRequest('Cursor inválido');
+    // Only the toISOString() shape this function emits: Date.parse also takes "1", which Postgres rejects (500).
+    if (!iso || !id || !UUID.test(id) || !CURSOR_ISO.test(iso)) throw badRequest('Cursor inválido');
     where.push(sql`(${updatedMs}, ${contacts.id}) < (${iso}::timestamptz, ${id}::uuid)`);
   }
   const rows = await db

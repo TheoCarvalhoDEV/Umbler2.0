@@ -1,3 +1,5 @@
+import { request } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -76,14 +78,29 @@ describe('POST /api/auth/login', () => {
     expect(res.json()).toEqual({ error: 'Usuário desativado' });
   });
 
-  it('rate-limits to 5 attempts per minute per IP+email', async () => {
-    for (let i = 0; i < 5; i++) {
-      expect((await login(seed.agentA.email, 'errada')).statusCode).toBe(401);
+  it('rate-limits to 10 attempts per minute per IP, whatever the email', async () => {
+    for (let i = 0; i < 10; i++) {
+      expect((await login(`x${i}@example.com`, 'errada')).statusCode).toBe(401);
     }
-    const blocked = await login(seed.agentA.email, TEST_PASSWORD);
+    const blocked = await login(seed.agentB.email, TEST_PASSWORD);
     expect(blocked.statusCode).toBe(429);
     expect(blocked.json()).toEqual({ error: 'Muitas tentativas. Aguarde um minuto e tente de novo.' });
-    // another email from the same IP is a different key
+  });
+
+  it('locks an account for 15 min after 10 wrong passwords, even from different IPs', async () => {
+    const from = (ip: string, password: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        remoteAddress: ip,
+        headers: { origin: TEST_ORIGIN },
+        payload: { email: seed.agentA.email, password },
+      });
+    for (let i = 0; i < 10; i++) expect((await from(`10.0.0.${i}`, 'errada')).statusCode).toBe(401);
+    const locked = await from('10.0.1.1', TEST_PASSWORD);
+    expect(locked.statusCode).toBe(429);
+    expect(locked.json()).toEqual({ error: 'Muitas tentativas para este usuário. Aguarde 15 minutos.' });
+    // other accounts are not affected
     expect((await login(seed.agentB.email, TEST_PASSWORD)).statusCode).toBe(200);
   });
 });
@@ -195,10 +212,25 @@ describe('session required on /api/*', () => {
       expect(ran).toBe(false);
       // Percent-encoded path (Fastify routes on the decoded one) must not dodge auth or CSRF.
       expect((await a.inject({ method: 'GET', url: '/%61pi/test-user' })).statusCode).toBe(401);
-      expect((await a.inject({ method: 'POST', url: '/%61pi/test-user' })).statusCode).toBe(403);
+      expect((await a.inject({ method: 'POST', url: '/%61pi/auth/logout' })).statusCode).toBe(403);
       expect((await a.inject({ method: 'GET', url: '/api/%' })).statusCode).toBe(400);
       expect(ran).toBe(false);
       expect((await a.inject({ method: 'GET', url: '/api/health' })).statusCode).toBe(200);
+      // Absolute-form request-line ("GET http://x/api/..."): the router accepts it, auth must not skip it.
+      // inject() normalizes the URL, so this needs a real socket.
+      await a.listen({ host: '127.0.0.1', port: 0 });
+      const { port } = a.server.address() as AddressInfo;
+      const raw = (method: string) =>
+        new Promise<number>((resolve, reject) => {
+          const r = request({ host: '127.0.0.1', port, method, path: 'http://x/api/test-user' }, (res) => {
+            res.resume();
+            resolve(res.statusCode!);
+          });
+          r.on('error', reject).end();
+        });
+      expect(await raw('GET')).toBe(400);
+      expect(await raw('POST')).toBe(400);
+      expect(ran).toBe(false);
       const agent = await loginAs(a, s.agentA.email);
       const ok = await a.inject({ method: 'GET', url: '/api/test-user', headers: agent.headers });
       expect(ok.statusCode).toBe(200);

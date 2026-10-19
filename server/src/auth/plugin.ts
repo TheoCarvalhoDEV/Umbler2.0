@@ -19,13 +19,11 @@ const authPluginImpl: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx })
   app.decorateRequest('user', null as unknown as AuthUser);
 
   app.addHook('onRequest', async (req) => {
-    // Fastify routes on the DECODED path (/%61pi/x reaches /api/x), so classify on the decoded one.
-    let path: string;
-    try {
-      path = decodeURI(req.url.split('?')[0]);
-    } catch {
-      throw new HttpError(400, 'URL inválida');
-    }
+    // Only origin-form ("/path"): the router also accepts "GET http://host/api/x" and routes it to /api/x.
+    if (!req.raw.url?.startsWith('/')) throw new HttpError(400, 'URL inválida');
+    // Classify on the route the router matched, not on the raw string (covers /%61pi/x and any other
+    // normalization). Unknown paths have no route and fall through to the 404 handler.
+    const path = req.routeOptions.url ?? '';
     const isApi = path.startsWith('/api/');
     const isWs = path === '/ws';
     if (!isApi && !isWs) return;
