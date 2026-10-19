@@ -322,6 +322,8 @@ describe('ask_choice', () => {
     ['2', '2', 'Financeiro'],
     [' juridico. ', '3', 'Jurídico'],
     ['ATENDIMENTO', '1', 'Atendimento'],
+    ['1\nquero saber do meu processo', '1', 'Atendimento'], // a line of the reply
+    ['3: Jurídico', '3', 'Jurídico'], // the menu line itself
   ])('matches the reply %j to option %s by key or label, ignoring case and accents', async (body, key, label) => {
     const run = await runFlow([node('menu', 'ask_choice', MENU)]);
 
@@ -343,6 +345,20 @@ describe('ask_choice', () => {
 
     expect(outcome(await reloadRun(run.id), 'financeiro')).toBe('next');
     expect((await eventsOf(ctx, chatId)).some((e) => e.kind === 'bot_note' && e.data.text === 'Foi para o financeiro')).toBe(true);
+  });
+
+  it('an invalid edge back into the menu sends the menu again with fresh retries', async () => {
+    const run = await runFlow([node('menu', 'ask_choice', { ...MENU, invalidRetries: 0 })], [edge('menu', 'invalid', 'menu')]);
+
+    await reply('x');
+
+    const after = await reloadRun(run.id);
+    expect(after).toMatchObject({ state: 'waiting_reply', waitNodeId: 'menu', retries: 0 });
+    expect(after.steps.map((s) => s.outcome)).toEqual(['next', 'wait:reply', 'invalid', 'wait:reply']);
+    expect(texts()).toEqual([MENU_TEXT, MENU_TEXT]);
+
+    await reply('2');
+    expect(outcome(await reloadRun(run.id), 'menu')).toBe('opt:2');
   });
 
   it('sends the invalid text and the menu again, then takes invalid when retries run out', async () => {
@@ -401,6 +417,16 @@ describe('ask_choice', () => {
 });
 
 describe('ask_input', () => {
+  it('useLastMessage reads the stored message without the agent signature in front of it', async () => {
+    await storeInbound('*Atendimento - Ana:*\nMaria Silva');
+
+    const run = await runFlow([node('nome', 'ask_input', askInput({ useLastMessage: true }))]);
+
+    expect(run.state).toBe('finished');
+    expect(run.vars.nome).toEqual({ raw: 'Maria Silva', value: 'Maria Silva' });
+    expect(texts()).toEqual([]); // nothing was asked
+  });
+
   it('treats a sticker reply to ask_choice as invalid and an audio reply to ask_input(any) as valid', async () => {
     const choice = await runFlow([node('menu', 'ask_choice', { ...MENU, invalidRetries: 0 })]);
     await reply(null, { kind: 'sticker', mediaMime: 'image/webp' });

@@ -82,7 +82,7 @@ export interface SendStickerInput { stickerFromMessageId: string; replyToId?: st
 /** Spec §7: one destination per forward. */
 export type ForwardInput = ({ chatId: string } | { contactId: string; channelId?: string }) & { botAction?: BotAction };
 export type ContactInput = Partial<Pick<ContactDto, 'name' | 'phone' | 'email' | 'landline' | 'address'>>;
-export interface ContactListQuery { q?: string; tagId?: string; cursor?: string; limit?: number }
+export interface ContactListQuery { q?: string; tagId?: string; blocked?: '' | 'true' | 'false'; cursor?: string; limit?: number }
 export type SectorInput = Partial<Pick<SectorDto, 'name' | 'position' | 'isDefault'>>;
 export type TagInput = Partial<Pick<TagDto, 'name' | 'emoji' | 'color' | 'position'>>;
 export type CustomFieldInput = Partial<Pick<CustomFieldDto, 'name' | 'kind' | 'position'>>;
@@ -214,6 +214,8 @@ export const api = Object.assign(call, {
   },
   contacts: {
     list: (q: ContactListQuery = {}) => request<Page<ContactDto>>('GET', `/api/contacts${qs(q)}`),
+    /** A plain link target: the browser downloads the CSV with the session cookie (admins only). */
+    exportUrl: (q: Omit<ContactListQuery, 'cursor' | 'limit'> = {}) => `/api/contacts/export.csv${qs(q)}`,
     create: (input: ContactInput) => request<ContactDto>('POST', '/api/contacts', input),
     get: (id: string) => request<ContactDto>('GET', `/api/contacts/${enc(id)}`),
     update: (id: string, input: ContactInput) => request<ContactDto>('PATCH', `/api/contacts/${enc(id)}`, input),

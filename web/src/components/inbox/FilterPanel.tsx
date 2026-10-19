@@ -21,10 +21,10 @@ interface Props {
 export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
   const ids = { sector: useId(), owner: useId(), tag: useId(), from: useId(), to: useId() };
   const set = (patch: Partial<InboxFilters>) => onChange({ ...value, ...patch });
-  const field = 'mt-1 w-full rounded bg-panel px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary';
+  const field = 'mt-1 h-9 w-full rounded-lg border border-field bg-surface px-2 text-sm outline-none focus:ring-2 focus:ring-primary';
 
   return (
-    <div className="space-y-2 border-b border-border p-3 text-sm">
+    <div className="mx-4 mb-2 space-y-2 rounded-xl border border-border bg-sunken p-3 text-sm">
       <div>
         <label htmlFor={ids.sector} className="text-muted">Setor</label>
         <select id={ids.sector} value={value.sectorId} onChange={(e) => set({ sectorId: e.target.value })} className={field}>
@@ -62,7 +62,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
               type="button"
               aria-pressed={value.period === p}
               onClick={() => set({ period: p })}
-              className={`rounded px-2 py-1 ${value.period === p ? 'bg-primary text-white' : 'bg-panel hover:bg-sidebar-hover'}`}
+              className={`h-8 rounded-lg px-2.5 ${value.period === p ? 'bg-primary font-semibold text-white' : 'bg-panel hover:bg-sidebar-hover'}`}
             >
               {label}
             </button>

@@ -17,8 +17,8 @@ const dateTime = (iso: string | null) =>
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{title}</h3>
+    <section className="space-y-2.5">
+      <h3 className="text-[11px] font-semibold tracking-wider text-muted uppercase">{title}</h3>
       {children}
     </section>
   );
@@ -44,7 +44,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`border-b-2 px-3 py-3 text-sm font-medium ${active ? 'border-primary text-link' : 'border-transparent text-muted hover:text-fg'}`}
+      className={`h-10 border-b-2 px-2.5 text-sm ${active ? 'border-primary font-semibold text-fg' : 'border-transparent font-medium text-muted hover:text-fg'}`}
     >
       {children}
     </button>
@@ -55,42 +55,63 @@ interface Props {
   contactId: string;
   chatId?: string;
   onClose: () => void;
+  /** A column beside the conversation instead of a modal drawer (wide screens). */
+  docked?: boolean;
 }
 
-export function ContactPanel({ contactId, chatId, onClose }: Props) {
+export function ContactPanel({ contactId, chatId, onClose, docked = false }: Props) {
   const [tab, setTab] = useState<'contact' | 'chat'>('contact');
   const contact = useQuery({ queryKey: qk.contact(contactId), queryFn: () => api.contacts.get(contactId) });
 
   useEffect(() => {
+    if (docked) return; // a column is not a dialog: Escape belongs to the conversation
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, docked]);
 
+  const body = (
+    <>
+      <header role="tablist" className="flex items-center gap-1 border-b border-border px-3 pt-2">
+        <TabButton active={tab === 'contact'} onClick={() => setTab('contact')}>Contato</TabButton>
+        {chatId && (
+          <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>Detalhes da conversa</TabButton>
+        )}
+        <button
+          type="button"
+          aria-label="Fechar"
+          onClick={onClose}
+          className="ml-auto flex size-9 items-center justify-center rounded-lg text-muted hover:bg-sidebar-hover hover:text-fg"
+        >
+          <X size={16} />
+        </button>
+      </header>
+      <div className="flex-1 overflow-y-auto p-5">
+        {tab === 'chat' && chatId ? (
+          <ChatDetailsTab chatId={chatId} />
+        ) : contact.data ? (
+          <ContactTab contact={contact.data} onClose={onClose} />
+        ) : (
+          <p className="text-sm text-muted">{contact.isError ? 'Contato não encontrado.' : 'Carregando…'}</p>
+        )}
+      </div>
+    </>
+  );
+
+  if (docked) {
+    return (
+      <aside aria-label="Contato" className="flex h-full w-[340px] shrink-0 flex-col border-l border-border bg-surface">
+        {body}
+      </aside>
+    );
+  }
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
       <div className="absolute inset-0 bg-black/30" aria-hidden onClick={onClose} />
-      <aside role="dialog" aria-modal="true" aria-label="Contato" className="relative flex h-full w-full max-w-md flex-col bg-panel shadow-xl">
-        <header role="tablist" className="flex items-center border-b border-border px-2">
-          <TabButton active={tab === 'contact'} onClick={() => setTab('contact')}>Contato</TabButton>
-          {chatId && (
-            <TabButton active={tab === 'chat'} onClick={() => setTab('chat')}>Detalhes da conversa</TabButton>
-          )}
-          <button type="button" aria-label="Fechar" onClick={onClose} className="ml-auto rounded p-2 hover:bg-sidebar-hover">
-            <X size={18} />
-          </button>
-        </header>
-        <div className="flex-1 overflow-y-auto p-4">
-          {tab === 'chat' && chatId ? (
-            <ChatDetailsTab chatId={chatId} />
-          ) : contact.data ? (
-            <ContactTab contact={contact.data} onClose={onClose} />
-          ) : (
-            <p className="text-sm text-muted">{contact.isError ? 'Contato não encontrado.' : 'Carregando…'}</p>
-          )}
-        </div>
+      <aside role="dialog" aria-modal="true" aria-label="Contato" className="relative flex h-full w-full max-w-md flex-col bg-surface shadow-xl">
+        {body}
       </aside>
     </div>
   );

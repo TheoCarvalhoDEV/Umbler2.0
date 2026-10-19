@@ -18,20 +18,20 @@ export function ChatListItem({ chat, sectorName, channelName = null, owner, acti
   const title = contactLabel(chat.contact);
   const unread = chat.unread > 0;
   return (
-    <li className={`flex items-stretch border-b border-border ${active ? 'bg-sidebar-active' : 'hover:bg-panel'}`}>
+    <li className={`flex items-stretch rounded-xl ${active ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
       <button
         type="button"
         onClick={onOpen}
         aria-current={active ? 'true' : undefined}
-        className="flex min-w-0 flex-1 gap-3 px-3 py-2 text-left"
+        className="flex min-w-0 flex-1 gap-3 rounded-xl py-3 pl-3 text-left"
       >
-        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 text-sm bg-sidebar-active" />
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 shrink-0 text-sm bg-panel" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1">
-            <span className={`truncate ${unread ? 'font-bold' : 'font-medium'}`}>{title}</span>
-            {chat.private && <LockSimple aria-label="Conversa privada" className="shrink-0 text-muted" />}
+            <span className={`truncate ${unread || active ? 'font-semibold' : 'font-medium'}`}>{title}</span>
+            {chat.private && <LockSimple aria-label="Conversa privada" className="shrink-0 text-private" />}
             {chat.pinned && <PushPin aria-label="Fixada" weight="fill" className="shrink-0 text-muted" />}
-            <span className={`ml-auto shrink-0 text-xs ${unread ? 'font-semibold text-link' : 'text-muted'}`}>
+            <span className={`ml-auto shrink-0 font-mono text-[11px] ${unread ? 'font-semibold text-link' : 'text-muted'}`}>
               {chat.lastMessageAt ? listTime(chat.lastMessageAt) : ''}
             </span>
           </span>
@@ -40,28 +40,36 @@ export function ChatListItem({ chat, sectorName, channelName = null, owner, acti
             {unread && (
               <span
                 aria-label={`Não lidas: ${chat.unread}`}
-                className="ml-auto shrink-0 rounded-full bg-primary px-1.5 text-xs font-semibold text-white"
+                className="ml-auto min-w-5 shrink-0 rounded-full bg-primary px-1.5 text-center text-[11px] font-bold text-white"
               >
                 {chat.unread}
               </span>
             )}
           </span>
-          <span className="mt-1 flex items-center gap-1">
-            {channelName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{channelName}</span>}
-            {sectorName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{sectorName}</span>}
-            {owner && (
-              <span title={owner.name} role="img" aria-label={`Responsável: ${owner.name}`}>
-                <Avatar name={owner.name} src={owner.avatarUrl} className="size-5 text-[10px] bg-primary text-white" />
+          <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px]">
+            {channelName && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">{channelName}</span>}
+            {sectorName && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">{sectorName}</span>}
+            {owner ? (
+              <span
+                title={owner.name}
+                role="img"
+                aria-label={`Responsável: ${owner.name}`}
+                className="flex min-w-0 items-center gap-1 rounded-full border border-border py-px pr-2 pl-px text-muted"
+              >
+                <Avatar name={owner.name} src={owner.avatarUrl} className="size-4 shrink-0 text-[8px] bg-primary text-white" />
+                <span aria-hidden className="truncate">{owner.name.split(' ')[0]}</span>
               </span>
+            ) : (
+              chat.state === 'open' && <span className="rounded-full bg-brass-soft px-2 py-0.5 font-semibold text-brass">Sem atendente</span>
             )}
           </span>
         </span>
       </button>
       <details className="relative">
-        <summary aria-label="Opções da conversa" className="cursor-pointer list-none px-1 py-3 text-muted hover:text-fg">
+        <summary aria-label="Opções da conversa" className="cursor-pointer list-none rounded-lg px-1.5 py-3 text-muted hover:text-fg">
           <DotsThreeVertical size={18} />
         </summary>
-        <div className="absolute right-1 z-10 mt-1 rounded border border-border bg-panel py-1 shadow-lg">
+        <div className="absolute right-1 z-10 mt-1 rounded-lg border border-border bg-surface py-1 shadow-lg">
           <button
             type="button"
             onClick={(e) => {

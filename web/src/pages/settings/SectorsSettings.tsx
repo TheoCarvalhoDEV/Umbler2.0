@@ -6,6 +6,8 @@ import { api, qk } from '../../lib/api';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
 import { confirmDialog, promptDialog } from '../../lib/confirm';
 
+const openChatsLabel = (n: number) => (n === 0 ? 'Nenhuma conversa aberta' : n === 1 ? '1 conversa aberta' : `${n} conversas abertas`);
+
 export function SectorsSettings() {
   const list = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
   const save = useSend(qk.sectors);
@@ -47,7 +49,7 @@ export function SectorsSettings() {
           value={name}
           maxLength={60}
           onChange={(e) => setName(e.target.value)}
-          className="flex-1 rounded border border-border px-2 py-1.5 text-sm"
+          className="flex-1 rounded-lg border border-field bg-surface px-3 py-2 text-sm"
         />
         <button type="submit" disabled={!name.trim() || save.isPending} className={btnPrimary}>
           Adicionar setor
@@ -57,12 +59,16 @@ export function SectorsSettings() {
       <p className="mb-2 text-xs text-muted">
         O setor padrão recebe as conversas novas. A ordem é a usada nas listas e filtros.
       </p>
-      <ul className="divide-y divide-border rounded border border-border">
+      <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface">
         {sorted.map((s, i) => (
-          <li key={s.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-            <span className="flex-1">
-              {s.name}
-              {s.isDefault && <span className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 text-xs text-link">Padrão</span>}
+          <li key={s.id} className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm">
+            <span className="w-6 text-center font-mono text-xs text-muted">{i + 1}</span>
+            <span className="min-w-40 flex-1">
+              <span className="flex items-center gap-2 font-semibold">
+                {s.name}
+                {s.isDefault && <span className="rounded-md bg-brass-soft px-2 py-0.5 text-[11px] font-semibold text-brass">Padrão</span>}
+              </span>
+              <span className="text-xs text-muted">{openChatsLabel(s.openChats ?? 0)}</span>
             </span>
             <button type="button" aria-label={`Subir ${s.name}`} disabled={i === 0 || save.isPending} onClick={() => move(i, -1)} className={btn}>
               <ArrowUpIcon size={14} />

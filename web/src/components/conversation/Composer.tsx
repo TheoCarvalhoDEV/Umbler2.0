@@ -54,7 +54,7 @@ function ToolButton({ label, onClick, children }: { label: string; onClick: () =
       aria-label={label}
       title={label}
       onClick={onClick}
-      className="rounded p-1.5 text-muted hover:bg-panel hover:text-fg"
+      className="flex size-10 items-center justify-center rounded-lg text-muted hover:bg-sidebar-hover hover:text-fg"
     >
       {children}
     </button>
@@ -257,198 +257,202 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const canSend = text.trim() !== '' || file !== null;
 
   return (
-    <div
-      className="border-t border-border bg-surface px-3 py-2"
-      onDragOver={(e) => {
-        if (!isNote) e.preventDefault(); // allows the drop
-      }}
-      onDrop={onDrop}
-    >
-      <div className="mb-2 flex gap-1 text-sm">
-        {(['message', 'note'] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            aria-pressed={mode === m}
-            onClick={() => switchMode(m)}
-            className={`rounded px-3 py-1 ${
-              mode === m ? (m === 'note' ? 'bg-yellow-200 text-zinc-900' : 'bg-primary text-white') : 'text-muted hover:bg-panel'
-            }`}
-          >
-            {m === 'message' ? 'Mensagem' : 'Nota interna'}
-          </button>
-        ))}
-      </div>
-
-      {replyTo && !isNote && (
-        <div className="mb-2 flex items-center gap-2 rounded border-l-4 border-primary bg-panel px-2 py-1 text-sm text-fg">
-          <ArrowBendUpLeft size={16} className="shrink-0 text-muted" />
-          <span className="min-w-0 flex-1 truncate">Respondendo: {previewText(replyTo.body, replyTo.kind)}</span>
-          <button type="button" aria-label="Cancelar resposta" onClick={onClearReply} className="text-muted hover:text-fg">
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {file && (
-        <div className="mb-2 flex items-center gap-2 rounded bg-panel px-2 py-1 text-sm text-fg">
-          <Paperclip size={16} className="shrink-0 text-muted" />
-          <span className="min-w-0 flex-1 truncate">{file.name}</span>
-          <button type="button" aria-label="Remover arquivo" onClick={() => setFile(null)} className="text-muted hover:text-fg">
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {error && (
-        <p role="alert" className="mb-1 text-sm text-danger">
-          {error}
-        </p>
-      )}
-
-      {recorder.recording ? (
-        <div className="flex items-center gap-3 py-2 text-fg">
-          <span className="size-2 animate-pulse rounded-full bg-danger" />
-          <span className="flex-1 text-sm tabular-nums">Gravando {duration(recorder.seconds)}</span>
-          <ToolButton label="Descartar áudio" onClick={recorder.discard}>
-            <Trash size={20} />
-          </ToolButton>
-          <button
-            type="button"
-            disabled={sending}
-            onClick={() => void toggleRecording()}
-            className="flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-          >
-            Enviar áudio <PaperPlaneRight size={16} />
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="relative">
-            {pickerQuery !== null && <QuickAnswerPicker answers={matches} highlight={highlight} onPick={(a) => void pickAnswer(a)} />}
-            <textarea
-              ref={textareaRef}
-              aria-label={isNote ? 'Nota interna' : 'Mensagem'}
-              value={text}
-              onChange={(e) => changeText(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder={
-                isNote
-                  ? 'Digite sua nota interna, visível só para a equipe…'
-                  : 'Digite sua mensagem ou arraste um arquivo… ("/" para respostas rápidas)'
-              }
-              className={`field-sizing-content block max-h-48 min-h-10 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 ${
-                isNote
-                  ? 'border-yellow-300 bg-yellow-100 text-zinc-900 placeholder:text-zinc-500 focus:ring-yellow-300'
-                  : 'border-field bg-panel text-fg placeholder:text-muted focus:ring-primary'
+    <div className="bg-sunken px-6 pt-2 pb-5">
+      <div
+        className={`rounded-2xl border p-2 shadow-sm ${isNote ? 'border-note-line bg-note text-note-fg' : 'border-border bg-surface'}`}
+        onDragOver={(e) => {
+          if (!isNote) e.preventDefault(); // allows the drop
+        }}
+        onDrop={onDrop}
+      >
+        <div className="mb-1 flex gap-1 text-xs font-semibold">
+          {(['message', 'note'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              onClick={() => switchMode(m)}
+              className={`h-8 rounded-lg px-3 ${
+                mode === m
+                  ? m === 'note'
+                    ? 'bg-note-line/60 text-note-fg'
+                    : 'bg-primary-soft text-link'
+                  : 'text-muted hover:bg-sidebar-hover'
               }`}
-            />
-          </div>
-
-          <div className="mt-1 flex items-center gap-1">
-            {!isNote && (
-              <>
-                <ToolButton label="Arquivo" onClick={() => fileInputRef.current?.click()}>
-                  <Paperclip size={20} />
-                </ToolButton>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  hidden
-                  onChange={(e) => {
-                    setFile(e.target.files?.[0] ?? null);
-                    e.target.value = ''; // picking the same file again still fires onChange
-                  }}
-                />
-              </>
-            )}
-            <ToolButton
-              label="Respostas rápidas"
-              onClick={() => {
-                changeText('/');
-                textareaRef.current?.focus();
-              }}
             >
-              <Lightning size={20} />
+              {m === 'message' ? 'Mensagem' : 'Nota interna'}
+            </button>
+          ))}
+        </div>
+
+        {replyTo && !isNote && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-primary-soft px-3 py-2 text-sm text-fg">
+            <ArrowBendUpLeft size={16} className="shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate">Respondendo: {previewText(replyTo.body, replyTo.kind)}</span>
+            <button type="button" aria-label="Cancelar resposta" onClick={onClearReply} className="text-muted hover:text-fg">
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {file && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg bg-panel px-3 py-2 text-sm text-fg">
+            <Paperclip size={16} className="shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate">{file.name}</span>
+            <button type="button" aria-label="Remover arquivo" onClick={() => setFile(null)} className="text-muted hover:text-fg">
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <p role="alert" className="mb-1 text-sm text-danger">
+            {error}
+          </p>
+        )}
+
+        {recorder.recording ? (
+          <div className="flex items-center gap-3 py-2 text-fg">
+            <span className="size-2 animate-pulse rounded-full bg-danger" />
+            <span className="flex-1 text-sm tabular-nums">Gravando {duration(recorder.seconds)}</span>
+            <ToolButton label="Descartar áudio" onClick={recorder.discard}>
+              <Trash size={20} />
             </ToolButton>
+            <button
+              type="button"
+              disabled={sending}
+              onClick={() => void toggleRecording()}
+              className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
+            >
+              Enviar áudio <PaperPlaneRight size={16} />
+            </button>
+          </div>
+        ) : (
+          <>
             <div className="relative">
-              <ToolButton label="Emoji" onClick={() => setEmojiOpen((o) => !o)}>
-                <Smiley size={20} />
-              </ToolButton>
-              {emojiOpen && (
-                <div className="absolute bottom-full left-0 z-10 mb-1 grid w-72 grid-cols-8 gap-1 rounded-md border border-border bg-panel p-2 shadow-lg">
-                  {EMOJIS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      aria-label={emoji}
-                      className="rounded text-lg hover:bg-surface"
-                      onClick={() => {
-                        insertAtCursor(emoji);
-                        setEmojiOpen(false);
-                      }}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {pickerQuery !== null && <QuickAnswerPicker answers={matches} highlight={highlight} onPick={(a) => void pickAnswer(a)} />}
+              <textarea
+                ref={textareaRef}
+                aria-label={isNote ? 'Nota interna' : 'Mensagem'}
+                value={text}
+                onChange={(e) => changeText(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder={
+                  isNote
+                    ? 'Digite sua nota interna, visível só para a equipe…'
+                    : 'Digite sua mensagem ou arraste um arquivo… ("/" para respostas rápidas)'
+                }
+                className={`field-sizing-content block max-h-48 min-h-12 w-full resize-none bg-transparent px-2 py-2 text-sm outline-none ${
+                  isNote ? 'text-note-fg placeholder:text-note-fg/70' : 'text-fg placeholder:text-muted'
+                }`}
+              />
             </div>
-            {!isNote && (
-              <div className="relative">
-                <ToolButton label="Figurinhas" onClick={() => setStickerOpen((o) => !o)}>
-                  <Sticker size={20} />
-                </ToolButton>
-                {stickerOpen && (
-                  <StickerPanel
-                    onPick={(messageId) => void sendSticker({ messageId })}
-                    onPickFile={(file) => void sendSticker({ file })}
-                    onClose={() => setStickerOpen(false)}
+
+            <div className="mt-1 flex items-center gap-1">
+              {!isNote && (
+                <>
+                  <ToolButton label="Arquivo" onClick={() => fileInputRef.current?.click()}>
+                    <Paperclip size={20} />
+                  </ToolButton>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    hidden
+                    onChange={(e) => {
+                      setFile(e.target.files?.[0] ?? null);
+                      e.target.value = ''; // picking the same file again still fires onChange
+                    }}
                   />
+                </>
+              )}
+              <ToolButton
+                label="Respostas rápidas"
+                onClick={() => {
+                  changeText('/');
+                  textareaRef.current?.focus();
+                }}
+              >
+                <Lightning size={20} />
+              </ToolButton>
+              <div className="relative">
+                <ToolButton label="Emoji" onClick={() => setEmojiOpen((o) => !o)}>
+                  <Smiley size={20} />
+                </ToolButton>
+                {emojiOpen && (
+                  <div className="absolute bottom-full left-0 z-10 mb-1 grid w-72 grid-cols-8 gap-1 rounded-md border border-border bg-panel p-2 shadow-lg">
+                    {EMOJIS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        aria-label={emoji}
+                        className="rounded text-lg hover:bg-surface"
+                        onClick={() => {
+                          insertAtCursor(emoji);
+                          setEmojiOpen(false);
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
-            )}
-            <div className="relative">
-              <ToolButton label="Chatbot" onClick={() => setBotOpen((o) => !o)}>
-                <Robot size={20} />
-              </ToolButton>
-              {botOpen && <BotPanel chatId={chatId} onClose={() => setBotOpen(false)} />}
-            </div>
-            {!isNote && (
-              <label className="ml-2 flex items-center gap-1 text-xs text-muted">
-                <input type="checkbox" checked={signature} onChange={(e) => toggleSignature(e.target.checked)} />
-                Assinatura
-              </label>
-            )}
-            <div className="ml-auto">
-              {!isNote && !canSend ? (
-                <ToolButton label="Gravar áudio" onClick={() => void toggleRecording()}>
-                  <Microphone size={20} />
-                </ToolButton>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void send()}
-                  disabled={sending || !canSend}
-                  className="flex items-center gap-1 rounded bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-                >
-                  {isNote ? 'Salvar nota' : 'Enviar'} <PaperPlaneRight size={16} />
-                </button>
+              {!isNote && (
+                <div className="relative">
+                  <ToolButton label="Figurinhas" onClick={() => setStickerOpen((o) => !o)}>
+                    <Sticker size={20} />
+                  </ToolButton>
+                  {stickerOpen && (
+                    <StickerPanel
+                      onPick={(messageId) => void sendSticker({ messageId })}
+                      onPickFile={(file) => void sendSticker({ file })}
+                      onClose={() => setStickerOpen(false)}
+                    />
+                  )}
+                </div>
               )}
+              <div className="relative">
+                <ToolButton label="Chatbot" onClick={() => setBotOpen((o) => !o)}>
+                  <Robot size={20} />
+                </ToolButton>
+                {botOpen && <BotPanel chatId={chatId} onClose={() => setBotOpen(false)} />}
+              </div>
+              {!isNote && (
+                <label className="ml-2 flex items-center gap-1.5 text-xs text-muted">
+                  <input type="checkbox" checked={signature} onChange={(e) => toggleSignature(e.target.checked)} />
+                  Assinatura
+                </label>
+              )}
+              <div className="ml-auto">
+                {!isNote && !canSend ? (
+                  <ToolButton label="Gravar áudio" onClick={() => void toggleRecording()}>
+                    <Microphone size={20} />
+                  </ToolButton>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void send()}
+                    disabled={sending || !canSend}
+                    className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
+                  >
+                    {isNote ? 'Salvar nota' : 'Enviar'} <PaperPlaneRight size={16} />
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        )}
 
-      {botAsk && (
-        <BotRunningDialog
-          runs={botAsk.runs}
-          onChoose={(choice) => {
-            botAsk.resolve(choice);
-            setBotAsk(null);
-          }}
-        />
-      )}
+        {botAsk && (
+          <BotRunningDialog
+            runs={botAsk.runs}
+            onChoose={(choice) => {
+              botAsk.resolve(choice);
+              setBotAsk(null);
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }

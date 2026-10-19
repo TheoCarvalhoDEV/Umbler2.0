@@ -17,6 +17,7 @@ import type { Db, Tx } from '../db/client.js';
 import { botRuns, bots, chats, contacts, messages } from '../db/schema.js';
 import { addEvent, type ChatEventKind } from '../inbox/events.js';
 import { badRequest, conflict, notFound } from '../lib/http-error.js';
+import { stripSignature } from '../messages/signature.js';
 import { BlockError } from './block-error.js';
 import { startNodeOf } from './graph.js';
 import type { BlockResult, BotCtx, InboundReply, ResumeEvent } from './registry.js';
@@ -409,7 +410,8 @@ async function lastInbound(db: Db, chatId: string): Promise<InboundReply | null>
     .where(and(eq(messages.chatId, chatId), eq(messages.direction, 'in')))
     .orderBy(desc(messages.createdAt))
     .limit(1);
-  return m ?? null;
+  // Same text ingest hands to resumeOnReply: an agent signature in front is not part of the answer.
+  return m ? { ...m, body: m.body === null ? null : stripSignature(m.body) } : null;
 }
 
 /** BlockError messages are safe to show; anything else may carry contact data, so only its name and code are logged. */

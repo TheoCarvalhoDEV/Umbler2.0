@@ -39,7 +39,7 @@ function ClosedFooter({ chat, onOpenChat }: { chat: ChatDetail; onOpenChat: (cha
   }
 
   return (
-    <div className="border-t border-border bg-surface px-4 py-3 text-center text-sm text-muted">
+    <div className="border-t border-border bg-sunken px-6 py-4 text-center text-sm text-muted">
       {chat.history ? 'Histórico importado do WhatsApp (só leitura)' : 'Conversa finalizada'} —{' '}
       <button type="button" disabled={busy} onClick={() => void startNew()} className="font-medium text-fg underline disabled:opacity-50">
         Nova conversa
