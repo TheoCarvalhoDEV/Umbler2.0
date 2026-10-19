@@ -144,6 +144,21 @@ describe('ingest and bots', () => {
     expect(triage.calls).toEqual([]);
   });
 
+  it('reads a reply signed by an agent of another installation as the answer itself', async () => {
+    await activeChannelBot();
+    await ingest(msg({ body: 'Bom dia' }));
+    await ingest(msg({ body: '*Atendimento - Admin Teste:*\n1' }));
+
+    const [run] = await allRuns();
+    expect(run!.state).toBe('finished');
+    expect(run!.vars.menu).toEqual({ raw: '1', value: '1', label: 'Financeiro' });
+    expect(sentTexts()).toEqual([MENU_TEXT, 'Certo!']);
+    // the stored message keeps the text as received
+    const chat = await chatOf(PHONE);
+    const bodies = (await ctx.db.select({ body: messages.body }).from(messages).where(eq(messages.chatId, chat.id))).map((m) => m.body);
+    expect(bodies).toContain('*Atendimento - Admin Teste:*\n1');
+  });
+
   it('hands a reply to the triage first and then to the bots, as the stored message', async () => {
     const calls: string[] = [];
     const replies: InboundReply[] = [];

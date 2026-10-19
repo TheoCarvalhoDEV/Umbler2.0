@@ -41,16 +41,28 @@ export function normalize(s: string): string {
     .replace(/\s+/g, ' ');
 }
 
+/** The trimmed text and, when it has more than one line, each non-empty trimmed line. */
+export function answerLines(text: string): string[] {
+  const whole = text.trim();
+  const lines = whole.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+  return lines.length > 1 ? [whole, ...lines] : [whole];
+}
+
+/** normalize()d answerLines without blanks or repeats: "1\nquero saber do processo" reads as "1" when the whole text matches nothing. */
+export function answerCandidates(text: string): string[] {
+  return [...new Set(answerLines(text).map(normalize))].filter((c) => c !== '');
+}
+
 export function matchTriageOption(text: string, menu: TriageMenu, sectorNames: Map<string, string>): TriageOption | null {
-  const t = normalize(text);
-  if (!t) return null;
-  return (
-    menu.options.find((o) => {
+  for (const t of answerCandidates(text)) {
+    const option = menu.options.find((o) => {
       const sectorName = sectorNames.get(o.sectorId);
       if (sectorName === undefined) return false; // sector was deleted
       return [o.key, o.label, sectorName].some((candidate) => normalize(candidate) === t);
-    }) ?? null
-  );
+    });
+    if (option) return option;
+  }
+  return null;
 }
 
 async function loadSectorNames(db: Db | Tx): Promise<Map<string, string>> {

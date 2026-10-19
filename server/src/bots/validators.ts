@@ -1,7 +1,8 @@
 import { Script } from 'node:vm';
 import { z } from 'zod';
-import type { AskInputConfig, MediaType } from '@talk/shared';
+import type { AskInputConfig, InputValidator, MediaType } from '@talk/shared';
 import { baseMime } from '../messages/media.js';
+import { answerLines } from '../triage/triage.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
 import type { MessageKind } from '../whatsapp/types.js';
 
@@ -119,21 +120,29 @@ export function validateAnswer(
     return { ok: true, raw: '', value: mediaValue };
   }
   if (input.body === null) return FAIL;
-  const raw = input.body.trim();
-  switch (cfg.validator) {
-    case 'email':
-      return isValidEmail(raw) ? { ok: true, raw, value: raw.toLowerCase() } : FAIL;
-    case 'phone': {
-      const phone = parsePhoneBR(raw);
-      return phone ? { ok: true, raw, value: phone } : FAIL;
-    }
-    case 'cpf':
-      return isValidCpf(raw) ? { ok: true, raw, value: formatCpf(raw) } : FAIL;
-    case 'cnpj':
-      return isValidCnpj(raw) ? { ok: true, raw, value: formatCnpj(raw) } : FAIL;
-    case 'regex': {
-      return safeRegexTest(cfg.regex ?? '', raw) ? { ok: true, raw, value: raw } : FAIL;
-    }
+  // The whole text first, then each line: "meu CPF é\n529.982.247-25" is a valid CPF answer.
+  for (const raw of answerLines(input.body)) {
+    const result = validateText(cfg.validator, cfg.regex, raw);
+    if (result) return result;
   }
   return FAIL;
+}
+
+function validateText(validator: InputValidator, regex: string | undefined, raw: string): AnswerResult | null {
+  switch (validator) {
+    case 'email':
+      return isValidEmail(raw) ? { ok: true, raw, value: raw.toLowerCase() } : null;
+    case 'phone': {
+      const phone = parsePhoneBR(raw);
+      return phone ? { ok: true, raw, value: phone } : null;
+    }
+    case 'cpf':
+      return isValidCpf(raw) ? { ok: true, raw, value: formatCpf(raw) } : null;
+    case 'cnpj':
+      return isValidCnpj(raw) ? { ok: true, raw, value: formatCnpj(raw) } : null;
+    case 'regex':
+      return safeRegexTest(regex ?? '', raw) ? { ok: true, raw, value: raw } : null;
+    default:
+      return null;
+  }
 }
