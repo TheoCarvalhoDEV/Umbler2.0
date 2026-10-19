@@ -1,6 +1,18 @@
 {$DOMAIN} {
 	encode zstd gzip
 
+	# Headers de segurança. "?" só define se o app não definiu: a mídia já sai com CSP sandbox.
+	# img-src data: é o QR code do canal; media-src blob: e microphone=(self), o gravador de áudio.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		?X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
+		?Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' wss://{$DOMAIN}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		-Server
+	}
+
 	# O webhook da Evolution chega só pela rede interna do Docker (http://app:3000).
 	# Pela internet, /webhooks responde 404 sem tocar no app.
 	@webhooks path /webhooks /webhooks/*

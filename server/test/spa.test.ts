@@ -47,7 +47,6 @@ describe('SPA static serving', () => {
 
   it('keeps unknown /api and /webhooks paths and non-GET requests as JSON 404', async () => {
     const { seed } = await appWithDist(fakeBuild());
-    // The auth hook (Task 6) answers anonymous /api/* with 401 before routing, so the 404 needs a session.
     const admin = await loginAs(app, seed.admin.email);
     const cases = [
       ['GET', '/api/nope', admin.headers],
@@ -59,9 +58,9 @@ describe('SPA static serving', () => {
       expect(res.statusCode, url).toBe(404);
       expect(res.json(), url).toEqual({ error: 'Não encontrado' });
     }
-    // anonymous: still never the SPA shell
+    // anonymous: no route matched, so the auth hook lets it through to the same JSON 404, never the SPA shell
     const anonymous = await app.inject({ method: 'GET', url: '/api/nope' });
-    expect(anonymous.statusCode).toBe(401);
+    expect(anonymous.statusCode).toBe(404);
     expect(anonymous.headers['content-type']).toMatch(/^application\/json/);
   });
 

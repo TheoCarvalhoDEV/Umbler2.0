@@ -12,7 +12,7 @@ import { createSession, deleteSession } from './sessions.js';
 
 const LoginBody = z.object({
   email: z.string().trim().toLowerCase().min(1),
-  password: z.string().min(1),
+  password: z.string().min(1).max(200),
 });
 
 const ViewBody = z.object({ seeAllSectors: z.boolean() });
@@ -37,37 +37,48 @@ export async function readAvatarUpload(req: FastifyRequest): Promise<{ data: Buf
   }
 }
 
-function loginEmail(body: unknown): string {
-  const email = (body as { email?: unknown } | null)?.email;
-  return typeof email === 'string' ? email.trim().toLowerCase() : '';
-}
+const LOCK_AFTER = 10;
+const LOCK_MS = 15 * 60_000;
 
 export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx }) => {
   // Verified when the email does not exist, so a wrong email costs the same time as a wrong password.
   // Lives in the plugin closure (Global Constraint: no module-level singletons); computed once per app.
   let dummyHash: Promise<string> | undefined;
+  // Wrong passwords per email, across IPs: 10 in a row lock that login for 15 min.
+  // ponytail: in memory, one process; move to a table if the app ever runs replicas.
+  const failures = new Map<string, { n: number; until: number }>();
 
   app.post(
     '/api/auth/login',
     {
       config: {
         rateLimit: {
-          max: 5,
+          // Per IP on onRequest (the default hook): rotating emails cannot reach argon2 past this.
+          max: 10,
           timeWindow: '1 minute',
-          hook: 'preHandler', // body must be parsed so the key can include the email
-          keyGenerator: (req) => `${req.ip}|${loginEmail(req.body)}`,
+          keyGenerator: (req) => req.ip,
           errorResponseBuilder: () => new HttpError(429, 'Muitas tentativas. Aguarde um minuto e tente de novo.'),
         },
       },
     },
     async (req, reply) => {
       const { email, password } = LoginBody.parse(req.body);
+      const f = failures.get(email);
+      if (f && f.until > Date.now()) throw new HttpError(429, 'Muitas tentativas para este usuário. Aguarde 15 minutos.');
       const [user] = await ctx.db
         .select({ id: users.id, passwordHash: users.passwordHash, active: users.active })
         .from(users)
         .where(sql`lower(${users.email}) = ${email}`);
       const ok = await verifyPassword(user?.passwordHash ?? (await (dummyHash ??= hashPassword('dummy-password'))), password);
-      if (!user || !ok) throw new HttpError(401, 'E-mail ou senha inválidos');
+      if (!user || !ok) {
+        if (failures.size > 10_000) failures.clear(); // ponytail: memory cap against email rotation
+        const cur = failures.get(email) ?? { n: 0, until: 0 };
+        cur.n += 1;
+        if (cur.n >= LOCK_AFTER) Object.assign(cur, { n: 0, until: Date.now() + LOCK_MS });
+        failures.set(email, cur);
+        throw new HttpError(401, 'E-mail ou senha inválidos');
+      }
+      failures.delete(email);
       if (!user.active) throw forbidden('Usuário desativado');
 
       const token = await createSession(ctx.db, user.id, ctx.config.sessionDays);
