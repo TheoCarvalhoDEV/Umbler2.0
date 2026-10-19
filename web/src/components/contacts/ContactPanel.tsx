@@ -8,7 +8,7 @@ import { ADDRESS_FIELDS, ContactForm } from './ContactForm';
 import { CustomFieldsEditor } from './CustomFieldsEditor';
 import { NotesList } from './NotesList';
 import { TagsEditor } from './TagsEditor';
-import { formatPhone } from '../../lib/format';
+import { contactLabel, formatPhone } from '../../lib/format';
 import { Avatar } from '../Avatar';
 import { confirmDialog } from '../../lib/confirm';
 
@@ -146,7 +146,7 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
       <div className="flex items-center gap-3">
         <Avatar name={contact.name} src={contact.avatarUrl} className="size-12 text-base bg-primary text-white" />
         <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold">{contact.name || formatPhone(contact.phone)}</p>
+          <p className="truncate font-semibold">{contactLabel(contact)}</p>
           <p className="text-sm text-muted">{formatPhone(contact.phone)}</p>
           {contact.blocked && <span className="text-xs font-medium text-danger">Bloqueado</span>}
         </div>

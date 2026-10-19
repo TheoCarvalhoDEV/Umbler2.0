@@ -57,12 +57,12 @@ function stubFetch() {
 
 const transfers = () => calls.filter((c) => c.method === 'POST' && c.path === '/api/chats/c1/transfer');
 
-function renderHeader() {
+function renderHeader(chat: ChatDetail = CHAT) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   qc.setQueryData(qk.me, ME);
   render(
     <QueryClientProvider client={qc}>
-      <ConversationHeader chat={CHAT} contactPanelOpen={false} onToggleContactPanel={() => {}} onOpenChat={() => {}} />
+      <ConversationHeader chat={chat} contactPanelOpen={false} onToggleContactPanel={() => {}} onOpenChat={() => {}} />
     </QueryClientProvider>,
   );
   return qc;
@@ -109,5 +109,15 @@ describe('ConversationHeader transfer with a running chatbot', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(transfers()).toHaveLength(1);
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('ConversationHeader for an imported history chat (§8)', () => {
+  it('is read-only: no Reabrir, labelled as WhatsApp history; a LID-only contact reads "Contato sem número"', () => {
+    stubFetch();
+    renderHeader({ ...CHAT, state: 'closed', history: true, contact: { id: 'k2', name: null, phone: null, avatarUrl: null } });
+    expect(screen.queryByRole('button', { name: 'Reabrir' })).toBeNull();
+    expect(screen.getByText('Histórico do WhatsApp')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Contato sem número' })).toBeTruthy();
   });
 });

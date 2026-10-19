@@ -58,6 +58,10 @@ export function Inbox() {
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
   const users = useQuery({ queryKey: qk.users, queryFn: api.users.list });
   const tags = useQuery({ queryKey: qk.tags, queryFn: api.tags.list });
+  const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
+  const channelList = channels.data ?? [];
+  // History spec §7: the channel shows on the card only when there is more than one
+  const channelName = new Map<string, string>(channelList.length > 1 ? channelList.map((c): [string, string] => [c.id, c.name]) : []);
   const sectorName = new Map((sectors.data ?? []).map((s) => [s.id, s.name]));
   const userById = new Map((users.data ?? []).map((u) => [u.id, u]));
   const badges: Record<ChatTab, number> = { inbox: useUnreadChats('inbox'), waiting: useUnreadChats('waiting'), closed: 0 };
@@ -206,6 +210,7 @@ export function Inbox() {
               chat={c}
               active={c.id === activeId}
               sectorName={sectorName.get(c.sectorId) ?? null}
+              channelName={channelName.get(c.channelId) ?? null}
               owner={c.ownerId ? (userById.get(c.ownerId) ?? null) : null}
               onOpen={() => navigate(`/chats/${c.id}`)}
               onTogglePin={() => pin.mutate(c)}

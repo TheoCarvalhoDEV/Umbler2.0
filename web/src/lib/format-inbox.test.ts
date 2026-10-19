@@ -11,7 +11,7 @@ describe('contactLabel', () => {
   });
   it('handles missing data', () => {
     expect(contactLabel({ name: null, phone: '123' })).toBe('123');
-    expect(contactLabel({ name: null, phone: null })).toBe('Sem nome');
+    expect(contactLabel({ name: null, phone: null })).toBe('Contato sem número'); // LID-only contact (history spec §5.4)
   });
 });
 
