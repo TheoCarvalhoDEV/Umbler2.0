@@ -97,3 +97,60 @@ describe('channel routes', () => {
     expect(res.statusCode).toBe(403);
   });
 });
+
+describe('history routes (§5.1)', () => {
+  const importUrl = () => `/api/channels/${seed.channelId}/history-import`;
+  const channelRow = async () => (await ctx.db.select().from(channels).where(eq(channels.id, seed.channelId)))[0]!;
+
+  it('POST /api/channels/:id/history-import is admin only', async () => {
+    const agent = await loginAs(app, seed.agentA.email);
+    const res = await app.inject({ method: 'POST', url: importUrl(), headers: agent.headers, payload: { period: '3m' } });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('starts an import with the period, keeps the period on the channel and answers the channel', async () => {
+    const admin = await loginAs(app, seed.admin.email);
+    const res = await app.inject({ method: 'POST', url: importUrl(), headers: admin.headers, payload: { period: '12m' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      id: seed.channelId, historyPeriod: '12m', historyImport: { period: '12m', state: 'running', messagesImported: 0 },
+    });
+    expect((await channelRow()).historyPeriod).toBe('12m');
+  });
+
+  it('a second request while one runs is 409 "Já existe uma importação em andamento" and keeps the period', async () => {
+    const admin = await loginAs(app, seed.admin.email);
+    await app.inject({ method: 'POST', url: importUrl(), headers: admin.headers, payload: { period: '3m' } });
+    const res = await app.inject({ method: 'POST', url: importUrl(), headers: admin.headers, payload: { period: 'all' } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('Já existe uma importação em andamento');
+    expect((await channelRow()).historyPeriod).toBe('3m');
+  });
+
+  it('rejects an unknown period (400) and an unknown channel (404)', async () => {
+    const admin = await loginAs(app, seed.admin.email);
+    expect((await app.inject({ method: 'POST', url: importUrl(), headers: admin.headers, payload: { period: '6m' } })).statusCode).toBe(400);
+    const res = await app.inject({
+      method: 'POST', url: `/api/channels/${crypto.randomUUID()}/history-import`, headers: admin.headers, payload: { period: '3m' },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('connect keeps the chosen period on the channel before asking Evolution for the QR', async () => {
+    const connect = vi.spyOn(ctx.wa, 'connect');
+    const admin = await loginAs(app, seed.admin.email);
+    const res = await app.inject({
+      method: 'POST', url: `/api/channels/${seed.channelId}/connect`, headers: admin.headers, payload: { historyPeriod: 'all' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(connect).toHaveBeenCalledWith(seed.instance);
+    expect((await channelRow()).historyPeriod).toBe('all');
+  });
+
+  it('connect without a body keeps working, and a bad period is 400', async () => {
+    const admin = await loginAs(app, seed.admin.email);
+    const url = `/api/channels/${seed.channelId}/connect`;
+    expect((await app.inject({ method: 'POST', url, headers: admin.headers })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url, headers: admin.headers, payload: { historyPeriod: 'x' } })).statusCode).toBe(400);
+  });
+});

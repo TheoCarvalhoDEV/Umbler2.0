@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
-import type { ChannelDto } from '@talk/shared';
+import type { ChannelDto, HistoryPeriod } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { channels } from '../db/schema.js';
@@ -82,9 +82,17 @@ export async function createChannel(ctx: AppCtx, name: string): Promise<ChannelD
   return toChannelDto(row!);
 }
 
-export async function connectChannel(ctx: AppCtx, channelId: string): Promise<{ qrBase64: string | null }> {
+export async function connectChannel(
+  ctx: AppCtx,
+  channelId: string,
+  opts: { historyPeriod?: HistoryPeriod } = {},
+): Promise<{ qrBase64: string | null }> {
   const [row] = await ctx.db.select().from(channels).where(eq(channels.id, channelId)).limit(1);
   if (!row) throw notFound();
+  // §5.1: what the automatic import after this QR pairing copies; stored before the QR can be read
+  if (opts.historyPeriod && opts.historyPeriod !== row.historyPeriod) {
+    await ctx.db.update(channels).set({ historyPeriod: opts.historyPeriod }).where(eq(channels.id, channelId));
+  }
   const { qrBase64 } = await ctx.wa.connect(row.evolutionInstance);
   // The first QR comes back here; later ones arrive as qrcode.updated webhooks (ingest → setChannelQr).
   if (qrBase64) setChannelQr(ctx, row.evolutionInstance, qrBase64);
@@ -92,6 +100,16 @@ export async function connectChannel(ctx: AppCtx, channelId: string): Promise<{ 
   const status = qrBase64 ? 'connecting' : await ctx.wa.connectionState(row.evolutionInstance);
   await setChannelStatus(ctx, row.evolutionInstance, status);
   return { qrBase64 };
+}
+
+/** "Importar histórico" (§5.1): copies what Evolution already stored, no QR. 409 while an import runs. */
+export async function importChannelHistory(ctx: AppCtx, channelId: string, period: HistoryPeriod): Promise<ChannelDto> {
+  const [row] = await ctx.db.select({ id: channels.id }).from(channels).where(eq(channels.id, channelId));
+  if (!row) throw notFound();
+  await startHistoryImport(ctx, channelId, { period, auto: false });
+  // after the start: a 409 leaves the channel's period untouched
+  await ctx.db.update(channels).set({ historyPeriod: period }).where(eq(channels.id, channelId));
+  return (await loadChannelDto(ctx.db, channelId))!;
 }
 
 /** GET /api/channels/:id/qr: the latest QR while the channel is not connected (spec §5.6). */
