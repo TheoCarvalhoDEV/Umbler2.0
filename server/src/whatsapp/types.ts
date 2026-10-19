@@ -6,6 +6,21 @@ export interface OutgoingMedia { kind: 'image' | 'video' | 'document'; base64: s
 export interface DownloadedMedia { base64: string; mime: string; fileName?: string }
 /** A message in a 1:1 chat. `address` as in waAddress: canonical phone digits or '<lid>@lid'. */
 export interface MessageKeyRef { address: string; externalId: string; fromMe: boolean }
+/** One page of Evolution's POST /chat/findMessages; records are raw Message rows (key, pushName, message, messageType, messageTimestamp, contextInfo…). */
+export interface MessagePage { total: number; pages: number; records: unknown[] }
+/** A row of Evolution's Contact table (DATABASE_SAVE_DATA_CONTACTS=true): the phone's address-book or push name. */
+export interface EvolutionContact { remoteJid: string; pushName: string | null }
+
+/** A non-2xx answer from Evolution. `status` tells "media expired" (400) from a temporary failure. */
+export class GatewayError extends Error {
+  override name = 'GatewayError';
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 export interface WhatsAppGateway {
   createInstance(instance: string, webhookUrl: string): Promise<void>;
@@ -26,6 +41,12 @@ export interface WhatsAppGateway {
   sendSticker(instance: string, phone: string, base64: string, quoted?: QuotedRef): Promise<SendResult>;
   /** Replaces the instance's webhook URL and event list (createInstance only sets them at creation). */
   setWebhook(instance: string, webhookUrl: string): Promise<void>;
+  /** Evolution's stored messages with messageTimestamp in [gte, lte] (inclusive, whole seconds), newest first; `page` is 1-based. */
+  findMessages(instance: string, q: { gte: Date; lte: Date; page: number; offset: number }): Promise<MessagePage>;
+  /** Every Contact row Evolution keeps for the instance. */
+  findContacts(instance: string): Promise<EvolutionContact[]>;
+  /** Media of a message Evolution has stored, looked up by key.id; GatewayError 400 when WhatsApp no longer has the file. */
+  downloadMediaById(instance: string, externalId: string): Promise<DownloadedMedia>;
 }
 
 export type InboundEvent =

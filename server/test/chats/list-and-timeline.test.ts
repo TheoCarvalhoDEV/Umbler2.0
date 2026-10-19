@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatListItem, TimelineItem } from '@talk/shared';
-import { chatPins, contactTags, tags, userSectors } from '../../src/db/schema.js';
+import { eq } from 'drizzle-orm';
+import { chatPins, chats, contactTags, tags, userSectors } from '../../src/db/schema.js';
 import { enableSeeAll, loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 import { seedChat, seedEvent, seedMessage } from './seed.js';
 
@@ -117,6 +118,35 @@ describe('GET /api/chats', () => {
 
     expect((await app.inject({ method: 'GET', url: '/api/chats?cursor=xyz', headers })).statusCode).toBe(400);
     expect((await app.inject({ method: 'GET', url: '/api/chats?limit=101', headers })).statusCode).toBe(400);
+  });
+});
+
+describe('history chats (§8)', () => {
+  it('Finalizados leaves history chats out, but a search finds them', async () => {
+    const closed = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, state: 'closed', name: 'Ana Paula' });
+    const hist = await seedChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, state: 'closed', name: 'Ana Histórico' });
+    await ctx.db.update(chats).set({ history: true }).where(eq(chats.id, hist.chatId));
+    const { headers } = await loginAs(app, s.agentA.email);
+
+    expect(ids(await list(headers, '?tab=closed'))).toEqual([closed.chatId]);
+    expect(ids(await list(headers, '?tab=closed&q=Hist'))).toEqual([hist.chatId]);
+    const found = await list(headers, '?tab=closed&q=Ana');
+    expect(found.items.find((i) => i.id === hist.chatId)?.history).toBe(true);
+    expect(found.items.find((i) => i.id === closed.chatId)?.history).toBe(false);
+  });
+
+  it('an agent of another sector opens a history chat and reads its timeline', async () => {
+    const hist = await seedChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, state: 'closed' });
+    await ctx.db.update(chats).set({ history: true }).where(eq(chats.id, hist.chatId));
+    await seedMessage(ctx, hist.chatId, s.channelId, t(1), { body: 'histórico' });
+    const { headers } = await loginAs(app, s.agentB.email);
+
+    const detail = await app.inject({ method: 'GET', url: `/api/chats/${hist.chatId}`, headers });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ history: true, state: 'closed' });
+    const timeline = await app.inject({ method: 'GET', url: `/api/chats/${hist.chatId}/timeline`, headers });
+    expect(timeline.statusCode).toBe(200);
+    expect((timeline.json() as TimelineItem[]).map((i) => (i.type === 'message' ? i.body : i.kind))).toEqual(['histórico']);
   });
 });
 

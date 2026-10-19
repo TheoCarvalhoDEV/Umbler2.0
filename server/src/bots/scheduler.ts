@@ -11,11 +11,12 @@ export interface Scheduler {
 
 const TICK_LIMIT = 50;
 
-/** Error name and pg code only: never the message, which may quote contact data. */
-function errorTag(err: unknown): string {
-  const e = err as { name?: unknown; code?: unknown } | null;
+/** Error name and pg code (or HTTP status of a GatewayError) only: never the message, which may quote contact data. */
+export function errorTag(err: unknown): string {
+  const e = err as { name?: unknown; code?: unknown; status?: unknown } | null;
   const name = typeof e?.name === 'string' ? e.name : 'Error';
-  return typeof e?.code === 'string' ? `${name} ${e.code}` : name;
+  if (typeof e?.code === 'string') return `${name} ${e.code}`;
+  return typeof e?.status === 'number' ? `${name} ${e.status}` : name;
 }
 
 export function createScheduler(ctx: AppCtx, opts: { intervalMs?: number } = {}): Scheduler {

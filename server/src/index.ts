@@ -10,6 +10,7 @@ import { createBotRuntime } from './bots/runtime.js';
 import { failInterruptedRuns } from './bots/engine.js';
 import { createScheduler } from './bots/scheduler.js';
 import { createAvatarSweep } from './contacts/avatar.js';
+import { createHistoryWorker } from './history/jobs.js';
 import type { AppCtx } from './ctx.js';
 
 const config = loadConfig(process.env);
@@ -55,11 +56,17 @@ scheduler.start();
 const avatarSweep = createAvatarSweep(ctx);
 avatarSweep.start();
 
+// History spec §5-6: import passes (repeated every 2 min after a QR), the 5-min back-fill (also now, at boot) and the
+// media queue (<= 21 days, one at a time). State lives in the DB: a restart resumes.
+const history = createHistoryWorker(ctx);
+history.start();
+
 // Node as PID 1 in Docker ignores SIGTERM unless handled; close cleanly so `docker compose stop` is fast
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     scheduler.stop();
     void avatarSweep.stop();
+    void history.stop();
     void app.close().then(() => process.exit(0));
   });
 }

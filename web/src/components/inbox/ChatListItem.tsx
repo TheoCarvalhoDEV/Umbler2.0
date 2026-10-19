@@ -6,13 +6,15 @@ import { Avatar } from '../Avatar';
 interface Props {
   chat: ChatItem;
   sectorName: string | null;
+  /** History spec §7: set only when there is more than one channel. */
+  channelName?: string | null;
   owner: { name: string; avatarUrl: string | null } | null;
   active: boolean;
   onOpen(): void;
   onTogglePin(): void;
 }
 
-export function ChatListItem({ chat, sectorName, owner, active, onOpen, onTogglePin }: Props) {
+export function ChatListItem({ chat, sectorName, channelName = null, owner, active, onOpen, onTogglePin }: Props) {
   const title = contactLabel(chat.contact);
   const unread = chat.unread > 0;
   return (
@@ -45,6 +47,7 @@ export function ChatListItem({ chat, sectorName, owner, active, onOpen, onToggle
             )}
           </span>
           <span className="mt-1 flex items-center gap-1">
+            {channelName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{channelName}</span>}
             {sectorName && <span className="rounded bg-panel px-1.5 text-xs text-muted">{sectorName}</span>}
             {owner && (
               <span title={owner.name} role="img" aria-label={`Responsável: ${owner.name}`}>

@@ -105,6 +105,10 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
       return `Mensagem apagada${changedBy(e)}`;
     case 'message_edited':
       return `Mensagem editada${changedBy(e)}`;
+    case 'history_imported':
+      return `Histórico do WhatsApp importado: ${Number(e.data.count ?? 0).toLocaleString('pt-BR')} mensagens`;
+    case 'contact_merged':
+      return 'Contato sem número juntado a este contato';
   }
 }
 

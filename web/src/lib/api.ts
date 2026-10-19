@@ -17,6 +17,7 @@ import type {
   ContactNoteDto,
   CustomFieldDto,
   GraphProblem,
+  HistoryPeriod,
   ManualBotDto,
   Me,
   MessageDto,
@@ -196,6 +197,8 @@ export const api = Object.assign(call, {
   messages: {
     resend: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/resend`),
     mediaUrl: (messageId: string) => `/api/media/${enc(messageId)}`,
+    /** "Baixar": one download try for a media message without a file (history spec §5.5). */
+    downloadMedia: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/media`),
     /** '' or the current emoji removes the office's reaction. */
     react: (messageId: string, emoji: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/reaction`, { emoji }),
     /** Delete for everyone. */
@@ -242,7 +245,10 @@ export const api = Object.assign(call, {
   channels: {
     list: () => request<ChannelDto[]>('GET', '/api/channels'),
     create: (name: string) => request<ChannelDto>('POST', '/api/channels', { name }),
-    connect: (id: string) => request<{ qrBase64: string | null }>('POST', `/api/channels/${enc(id)}/connect`),
+    /** `historyPeriod`: what the automatic import after this QR copies (history spec §5.1). */
+    connect: (id: string, historyPeriod?: HistoryPeriod) =>
+      request<{ qrBase64: string | null }>('POST', `/api/channels/${enc(id)}/connect`, historyPeriod ? { historyPeriod } : undefined),
+    importHistory: (id: string, period: HistoryPeriod) => request<ChannelDto>('POST', `/api/channels/${enc(id)}/history-import`, { period }),
   },
   bots: {
     list: () => request<BotDto[]>('GET', '/api/bots'),

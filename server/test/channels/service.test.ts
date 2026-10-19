@@ -39,7 +39,7 @@ describe('createChannel', () => {
 
     const dto = await createChannel(ctx, 'Escritório');
 
-    expect(dto).toEqual({ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null });
+    expect(dto).toEqual({ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null, historyPeriod: '3m', disconnectedAt: null, historyImport: null });
     const instance = `talk-${dto.id.slice(0, 8)}`;
     expect(spy).toHaveBeenCalledWith(
       instance,

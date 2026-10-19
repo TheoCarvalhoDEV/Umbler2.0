@@ -33,11 +33,11 @@ export function initials(name: string | null | undefined): string {
   return (first + last).toUpperCase();
 }
 
-/** Contact display name: name, else the phone through Task 15's formatPhone (the only phone formatter). */
+/** Contact display name: name, else the phone through formatPhone; a LID-only contact without a name is "Contato sem número". */
 export function contactLabel(c: { name: string | null; phone: string | null }): string {
   const name = c.name?.trim();
   if (name) return name;
-  return formatPhone(c.phone) || 'Sem nome';
+  return formatPhone(c.phone) || 'Contato sem número';
 }
 
 /** Chat list time: HH:MM today, "Ontem", dd/mm this year, dd/mm/yy older. */

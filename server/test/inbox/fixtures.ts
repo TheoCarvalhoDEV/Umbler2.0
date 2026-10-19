@@ -25,7 +25,7 @@ export async function newContact(ctx: AppCtx, opts: { phone?: string; name?: str
 /** Inserts a chat row directly (no event, no hub); returns its id. */
 export async function insertChat(
   ctx: AppCtx,
-  f: { channelId: string; sectorId: string; contactId?: string; ownerId?: string | null; private?: boolean; state?: 'open' | 'closed'; unread?: number },
+  f: { channelId: string; sectorId: string; contactId?: string; ownerId?: string | null; private?: boolean; state?: 'open' | 'closed'; unread?: number; history?: boolean },
 ): Promise<string> {
   const id = randomUUID();
   const state = f.state ?? 'open';
@@ -43,6 +43,7 @@ export async function insertChat(
     unread: f.unread ?? 0,
     createdAt: new Date(),
     closedAt: state === 'closed' ? new Date() : null,
+    history: f.history ?? false,
   });
   return id;
 }

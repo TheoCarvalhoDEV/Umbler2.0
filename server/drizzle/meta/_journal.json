@@ -29,6 +29,13 @@
       "when": 1792191334633,
       "tag": "0003_acoes_mensagem",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792429390059,
+      "tag": "0004_historico_whatsapp",
+      "breakpoints": true
     }
   ]
 }

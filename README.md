@@ -52,6 +52,17 @@ Fica para os próximos módulos:
 - chatbot 2c (Webhook, Pipedrive, Asaas);
 - horários, agendamentos, relatórios, logs de atividade, webhooks e permissões finas.
 
+## Histórico do WhatsApp
+
+- **Importação ao ler o QR:** o celular manda o histórico recente (cerca de 3,5 meses) e o sistema copia da Evolution, no período escolhido em Configurações › Canais (**3 meses**, **12 meses** ou **Tudo**). A cópia se repete a cada 2 minutos enquanto chegam mensagens novas e termina após 10 minutos sem novidade (no máximo 1 hora). A tela mostra "Importando histórico… N mensagens" e, no fim, "Histórico importado: N mensagens, desde DD/MM/AAAA".
+- **Importar histórico** (admin) copia de novo o que a Evolution já guardou, sem QR. Uma importação por canal de cada vez.
+- **Só histórico:** nada importado conta como não lido, vai para a fila ou dispara chatbot ou triagem. Vai para a conversa aberta do contato, se houver; senão, para uma **conversa de histórico** (finalizada, só leitura, visível para todos os atendentes, fora da aba Finalizados; aparece na ficha do contato e na busca).
+- **Contatos sem número:** quem o WhatsApp só identifica por um código interno aparece como "Contato sem número" e é juntado sozinho ao contato com telefone quando o número aparece.
+- **Mídia:** fotos, áudios, vídeos e documentos das últimas 3 semanas são baixados em segundo plano; os mais antigos mostram "Arquivo não está mais disponível no WhatsApp". O botão **Baixar** tenta de novo quando a mídia ainda não veio.
+- **Recuperação:** a cada 5 minutos (e ao ligar o servidor) o sistema copia da Evolution, como histórico, as mensagens que chegaram enquanto ele estava fora do ar.
+- **Canal:** aviso para os admins quando um canal fica desconectado por mais de 1 minuto; o QR aparece mesmo quando demora ("Gerando QR code…"); com mais de um canal, o nome do canal aparece no cartão da conversa.
+- Grupos ficam de fora. Guardar o histórico na Evolution tem efeito na LGPD: veja `docs/IMPLANTACAO.md` › Histórico do WhatsApp e LGPD.
+
 ## Arquitetura
 
 ```

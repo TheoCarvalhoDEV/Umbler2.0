@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import type { ChannelDto } from '@talk/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ChannelDto, HistoryImportDto, HistoryPeriod } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { formatPhone } from '../../lib/format';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
@@ -13,6 +13,13 @@ const STATUS: Record<ChannelDto['status'], { label: string; className: string }>
   disconnected: { label: 'Desconectado', className: 'bg-danger/20 text-danger' },
 };
 
+/** History spec §3: the three periods (the phone sends about 3.5 months whatever is picked). */
+const PERIODS: Array<[HistoryPeriod, string]> = [
+  ['3m', '3 meses'],
+  ['12m', '12 meses'],
+  ['all', 'Tudo'],
+];
+
 const asImageSrc = (qr: string) => (qr.startsWith('data:') ? qr : `data:image/png;base64,${qr}`);
 
 function withQr(current: Record<string, string>, channelId: string, qr: string | null) {
@@ -22,39 +29,64 @@ function withQr(current: Record<string, string>, channelId: string, qr: string |
   return next;
 }
 
+const count = (n: number) => n.toLocaleString('pt-BR');
+const day = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+/** History spec §5.6: the import line under the channel; channel.status keeps it live. */
+export function importText(imp: HistoryImportDto): string {
+  if (imp.state === 'running') return `Importando histórico… ${count(imp.messagesImported)} mensagens`;
+  if (imp.state === 'failed') return 'A importação do histórico falhou. Clique em “Importar histórico” para tentar de novo.';
+  return `Histórico importado: ${count(imp.messagesImported)} mensagens${imp.oldestMessageAt ? `, desde ${day(imp.oldestMessageAt)}` : ''}`;
+}
+
 export function ChannelsSettings() {
-  // Task 15's applyWsEvent writes every channel.status into qk.channels, so this list (and the pill) is live
+  const qc = useQueryClient();
+  // applyWsEvent writes every channel.status into qk.channels, so this list (pill and import line) is live
   const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
   const create = useSend(qk.channels);
   const [name, setName] = useState('');
   const [qr, setQr] = useState<Record<string, string>>({});
+  const [periods, setPeriods] = useState<Record<string, HistoryPeriod>>({});
+  const periodOf = (c: ChannelDto): HistoryPeriod => periods[c.id] ?? c.historyPeriod ?? '3m';
+
   const connect = useMutation({
-    mutationFn: (channelId: string) => api.channels.connect(channelId),
-    // the first QR comes back here; null QR = Evolution already has a session (status arrives via channel.status)
-    onSuccess: ({ qrBase64 }, channelId) => setQr((cur) => withQr(cur, channelId, qrBase64)),
+    mutationFn: (v: { id: string; period: HistoryPeriod }) => api.channels.connect(v.id, v.period),
+    // the first QR may come back here; null QR = no QR yet or Evolution already has a session. Refetch the list too,
+    // so a "connecting" status starts the QR polling below even if the channel.status event is late.
+    onSuccess: ({ qrBase64 }, v) => {
+      setQr((cur) => withQr(cur, v.id, qrBase64));
+      void qc.invalidateQueries({ queryKey: qk.channels });
+    },
+  });
+  const importHistory = useMutation({
+    mutationFn: (v: { id: string; period: HistoryPeriod }) => api.channels.importHistory(v.id, v.period),
+    onSuccess: (ch) => qc.setQueryData<ChannelDto[]>(qk.channels, (list) => list?.map((c) => (c.id === ch.id ? ch : c))),
   });
 
-  // channels showing a QR that are not connected yet (a stable string, so the interval is not reset on every render)
-  const waiting = Object.keys(qr)
-    .filter((id) => channels.data?.find((c) => c.id === id)?.status !== 'connected')
+  // History spec §7: poll while a channel is connecting, even when connect answered without a QR (it can come later),
+  // and while a shown QR is not connected yet (later QRs arrive as qrcode.updated). A stable string, so the
+  // interval is not reset on every render.
+  const polling = (channels.data ?? [])
+    .filter((c) => c.status === 'connecting' || (qr[c.id] !== undefined && c.status !== 'connected'))
+    .map((c) => c.id)
     .join(',');
 
-  // §5.6: later QRs arrive as qrcode.updated webhooks; the server keeps the latest (Task 14,
-  // GET /api/channels/:id/qr). Poll it while the channel is not connected.
   // ponytail: 5 s polling; push qrcode.updated over WS if this ever feels slow.
   useEffect(() => {
-    if (!waiting) return;
-    const t = setInterval(() => {
-      for (const id of waiting.split(',')) {
+    if (!polling) return;
+    const poll = () => {
+      for (const id of polling.split(',')) {
         send<{ qrBase64: string | null }>(`/api/channels/${id}/qr`, 'GET')
           .then(({ qrBase64 }) => {
             if (qrBase64) setQr((cur) => withQr(cur, id, qrBase64));
           })
           .catch(() => {}); // a failed poll keeps the last QR on screen; the next tick retries
       }
-    }, QR_POLL_MS);
+    };
+    poll();
+    const t = setInterval(poll, QR_POLL_MS);
     return () => clearInterval(t);
-  }, [waiting]);
+  }, [polling]);
 
   if (!channels.data) return <Loading error={channels.error} />;
 
@@ -81,11 +113,13 @@ export function ChannelsSettings() {
       </form>
       <ErrorText error={create.error} />
       <ErrorText error={connect.error} />
+      <ErrorText error={importHistory.error} />
 
       {channels.data.length === 0 && <p className="text-sm text-muted">Nenhum canal cadastrado.</p>}
       <ul className="space-y-3">
         {channels.data.map((c) => {
           const code = qr[c.id];
+          const running = c.historyImport?.state === 'running';
           return (
             <li key={c.id} className="rounded border border-border p-4">
               <div className="flex items-center justify-between gap-3">
@@ -97,16 +131,50 @@ export function ChannelsSettings() {
                   {STATUS[c.status].label}
                 </span>
               </div>
-              {c.status !== 'connected' && (
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted">Período do histórico</span>
+                <select
+                  aria-label="Período do histórico"
+                  value={periodOf(c)}
+                  onChange={(e) => setPeriods((cur) => ({ ...cur, [c.id]: e.target.value as HistoryPeriod }))}
+                  className="rounded border border-field px-2 py-1 text-sm"
+                >
+                  {PERIODS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                {c.status !== 'connected' && (
+                  <button
+                    type="button"
+                    disabled={connect.isPending}
+                    onClick={() => connect.mutate({ id: c.id, period: periodOf(c) })}
+                    className={btn}
+                  >
+                    Gerar novo QR / Reconectar
+                  </button>
+                )}
                 <button
                   type="button"
-                  disabled={connect.isPending}
-                  onClick={() => connect.mutate(c.id)}
-                  className={`${btn} mt-3`}
+                  disabled={importHistory.isPending || running}
+                  onClick={() => importHistory.mutate({ id: c.id, period: periodOf(c) })}
+                  className={btn}
                 >
-                  Gerar novo QR / Reconectar
+                  Importar histórico
                 </button>
+              </div>
+              <p className="mt-1 text-xs text-muted">
+                O WhatsApp envia cerca de 3,5 meses de histórico; com “12 meses” ou “Tudo” vem só o que o celular mandar.
+              </p>
+              {c.historyImport && (
+                <p role="status" className="mt-2 text-sm">
+                  {importText(c.historyImport)}
+                </p>
               )}
+
+              {c.status === 'connecting' && !code && <p className="mt-4 text-sm text-muted">Gerando QR code…</p>}
               {code && c.status !== 'connected' && (
                 <div className="mt-4 flex flex-wrap gap-4">
                   <img src={asImageSrc(code)} alt={`QR Code do canal ${c.name}`} className="h-64 w-64 rounded border border-border bg-panel p-2" />

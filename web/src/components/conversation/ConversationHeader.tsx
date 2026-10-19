@@ -4,7 +4,7 @@ import { ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockS
 import type { BotAction, BotRunningErrorBody, ChatDetail } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
-import { formatPhone } from '../../lib/format';
+import { contactLabel } from '../../lib/format';
 import { Avatar } from '../Avatar';
 import { BotRunningDialog, CloseDialog, TransferDialog } from './ChatDialogs';
 import { errorMessage, isConflict } from './model';
@@ -116,7 +116,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
       <header className="flex items-center gap-1 border-b border-border bg-surface px-4 py-2">
         <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="mr-2 size-10 text-sm bg-sidebar-active" />
         <div className="min-w-0 flex-1">
-          <h2 className="truncate font-semibold text-fg">{chat.contact.name ?? formatPhone(chat.contact.phone)}</h2>
+          <h2 className="truncate font-semibold text-fg">{contactLabel(chat.contact)}</h2>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
             <span className="rounded bg-panel px-1.5 text-fg">{sectorName}</span>
             <span>{ownerName}</span>
@@ -125,7 +125,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
                 <LockSimple size={12} /> Privada
               </span>
             )}
-            {!open && <span>Finalizada</span>}
+            {!open && <span>{chat.history ? 'Histórico do WhatsApp' : 'Finalizada'}</span>}
           </div>
         </div>
 
@@ -134,7 +134,7 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
             <UserPlus size={16} /> Assumir
           </button>
         )}
-        {!open && (
+        {!open && !chat.history && (
           <button type="button" disabled={busy} onClick={() => void act({ kind: 'reopen' })} className={`${pill} bg-panel text-fg hover:bg-sidebar-hover`}>
             <ArrowCounterClockwise size={16} /> Reabrir
           </button>

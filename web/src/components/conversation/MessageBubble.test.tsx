@@ -229,3 +229,29 @@ describe('MessageBubble action menu', () => {
     expect(screen.getByRole('dialog', { name: 'Encaminhar mensagem' })).toBeTruthy();
   });
 });
+
+describe('MessageBubble media that is not on the server', () => {
+  const missing: MessageDto = {
+    ...base, direction: 'in', kind: 'image', body: null, media: null, mediaUnavailable: true,
+    authorId: null, authorName: null, authorAvatarUrl: null,
+  };
+
+  it('says the file is gone from WhatsApp and offers no download', () => {
+    const c = renderBubble({ ...missing, mediaExpired: true });
+    expect(c.textContent).toContain('Arquivo não está mais disponível no WhatsApp');
+    expect(screen.queryByRole('button', { name: 'Baixar' })).toBeNull();
+  });
+
+  it('"Baixar" asks the server for a file that is not downloaded yet', async () => {
+    stubFetch({
+      'POST /api/messages/m1/media': {
+        ...missing, media: { url: '/api/media/m1', mime: 'image/png', name: null, size: 70 }, mediaUnavailable: false,
+      },
+    });
+    renderBubble({ ...missing, mediaExpired: false });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Baixar' }));
+
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/messages/m1/media', body: undefined }));
+  });
+});

@@ -39,6 +39,7 @@ describe('toMessageDto', () => {
       id, chatId, direction: 'out', kind: 'document', body: 'Segue',
       media: { url: `/api/media/${id}`, mime: 'application/pdf', name: 'contrato.pdf', size: 1234 },
       mediaUnavailable: false,
+      mediaExpired: false,
       authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
       officeReaction: null, deleted: null, edited: null, forwarded: false,
       replyTo: { id: quotedId, body: 'Pode mandar o contrato?', kind: 'text' },

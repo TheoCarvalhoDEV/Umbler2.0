@@ -21,11 +21,19 @@ export interface Me { id: string; name: string; email: string; role: Role; signa
 export interface SectorDto { id: string; name: string; position: number; isDefault: boolean }
 export interface TagDto { id: string; name: string; emoji: string | null; color: string; position: number }
 export interface UserDto { id: string; name: string; email: string; role: Role; signature: string | null; active: boolean; sectorIds: string[]; avatarUrl: string | null }
-export interface ChannelDto { id: string; name: string; status: 'disconnected' | 'connecting' | 'connected'; phone: string | null }
+export type HistoryPeriod = '3m' | '12m' | 'all';
+export type HistoryImportState = 'running' | 'done' | 'failed';
+/** One copy of the phone's history from Evolution (spec 2026-10-16 §5.6). Dates are ISO. */
+export interface HistoryImportDto { id: string; period: HistoryPeriod; state: HistoryImportState; startedAt: string; finishedAt: string | null; messagesImported: number; contactsCreated: number; oldestMessageAt: string | null; error: string | null }
+export interface ChannelDto { id: string; name: string; status: 'disconnected' | 'connecting' | 'connected'; phone: string | null;
+  // optional so existing literals compile; the server always fills them (history import, Task 7)
+  historyPeriod?: HistoryPeriod; disconnectedAt?: string | null; historyImport?: HistoryImportDto | null }
 export interface ContactRef { id: string; name: string | null; phone: string | null; avatarUrl: string | null }
 export type ChatTab = 'inbox' | 'waiting' | 'closed';
 export interface ChatListFilters { tab: ChatTab; q?: string; sectorId?: string; ownerId?: string; tagId?: string; from?: string; to?: string; cursor?: string; limit?: number }
-export interface ChatListItem { id: string; contact: ContactRef; channelId: string; sectorId: string; ownerId: string | null; state: 'open' | 'closed'; waiting: boolean; private: boolean; unread: number; lastMessageAt: string | null; lastMessagePreview: string | null; pinned: boolean; tagIds: string[] }
+export interface ChatListItem { id: string; contact: ContactRef; channelId: string; sectorId: string; ownerId: string | null; state: 'open' | 'closed'; waiting: boolean; private: boolean; unread: number; lastMessageAt: string | null; lastMessagePreview: string | null; pinned: boolean; tagIds: string[];
+  // imported from the phone (closed, read-only, visible to everyone); optional so existing literals compile (Task 10 fills it)
+  history?: boolean }
 export interface ChatDetail extends ChatListItem { triagePending: boolean; createdAt: string; closedAt: string | null }
 export interface MediaDto { url: string; mime: string; name: string | null; size: number | null }
 export interface MessageDto { id: string; chatId: string; direction: 'in' | 'out'; kind: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'note' | 'unsupported'; body: string | null; media: MediaDto | null; mediaUnavailable: boolean; authorId: string | null; authorName: string | null; authorAvatarUrl: string | null; replyTo: { id: string; body: string | null; kind: string } | null; reaction: string | null; status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'; error: string | null; sentAt: string;
@@ -35,12 +43,15 @@ export interface MessageDto { id: string; chatId: string; direction: 'in' | 'out
   officeReaction?: string | null;
   deleted?: { at: string; source: MessageChangeSource; byName: string | null } | null;
   edited?: { at: string; source: MessageChangeSource; newTextUnavailable: boolean } | null;
-  forwarded?: boolean }
+  forwarded?: boolean;
+  // history media (spec 2026-10-16 historico §5.5), optional for the same reason; toMessageDto always fills it (history Task 6)
+  mediaExpired?: boolean }
 export interface ChatEventDto { id: string; chatId: string; kind: ChatEventKind; data: Record<string, unknown>; authorName: string | null; createdAt: string }
 export type ChatEventKind =
   | 'created' | 'assigned' | 'transferred' | 'closed' | 'reopened' | 'privacy_changed' | 'triage_routed'
   | 'bot_started' | 'bot_finished' | 'bot_stopped' | 'bot_failed' | 'bot_transferred' | 'bot_note'
-  | 'message_deleted' | 'message_edited'; // data: { messageId, source: MessageChangeSource }
+  | 'message_deleted' | 'message_edited' // data: { messageId, source: MessageChangeSource }
+  | 'history_imported' | 'contact_merged'; // data: { count } | {}
 export type TimelineItem = ({ type: 'message' } & MessageDto) | ({ type: 'event' } & ChatEventDto);
 /** GET /api/messages/:id/edits: the text before each edit, newest first. */
 export interface MessageEditDto { id: string; previousBody: string | null; source: MessageChangeSource; editedByName: string | null; newTextUnavailable: boolean; editedAt: string }

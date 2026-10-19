@@ -14,7 +14,9 @@ import {
   varchar,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
-import type { BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, MessageChangeSource } from '@talk/shared';
+import type {
+  BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
+} from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
 const id = () => uuid('id').primaryKey().$defaultFn(() => randomUUID());
@@ -68,6 +70,9 @@ export const channels = pgTable('channels', {
   status: text('status').$type<'disconnected' | 'connecting' | 'connected'>().notNull().default('disconnected'),
   phone: text('phone'),
   createdAt: createdAt(),
+  historyPeriod: text('history_period').$type<HistoryPeriod>().notNull().default('3m'), // §5.1: what a QR pairing imports
+  backfillUntil: timestamp('backfill_until', { withTimezone: true }), // §6: Evolution rows up to here were copied
+  disconnectedAt: timestamp('disconnected_at', { withTimezone: true }), // §7: start of the current outage (admin banner)
 });
 
 export const contacts = pgTable(
@@ -155,12 +160,17 @@ export const chats = pgTable(
     lastMessagePreview: text('last_message_preview'),
     createdAt: createdAt(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    history: boolean('history').notNull().default(false), // §5.3: imported from the phone; closed, read-only, visible to all
   },
   (t) => [
     uniqueIndex('chats_one_open_per_contact_channel')
       .on(t.contactId, t.channelId)
       .where(sql`${t.state} = 'open'`),
     index('chats_last_message_at_idx').on(t.lastMessageAt),
+    // §5.3: later imports append to the contact's one history chat on the channel
+    uniqueIndex('chats_one_history_per_contact_channel')
+      .on(t.contactId, t.channelId)
+      .where(sql`${t.history} = true`),
   ],
 );
 
@@ -205,6 +215,7 @@ export const messages = pgTable(
     editedAt: timestamp('edited_at', { withTimezone: true }), // previous texts live in message_edits
     forwardedFromId: uuid('forwarded_from_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
     mediaSha256: text('media_sha256'), // hex digest of the stored file; dedupes the recent stickers (spec §6)
+    mediaStatus: text('media_status').$type<'queued' | 'expired'>(), // §5.5 history media: waiting for the queue, or gone from WhatsApp
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
@@ -212,6 +223,7 @@ export const messages = pgTable(
     // NULLs never collide, so notes/pending rows coexist; ingest uses ON CONFLICT (channel_id, external_id).
     uniqueIndex('messages_channel_external_unique').on(t.channelId, t.externalId),
     index('messages_chat_sent_idx').on(t.chatId, t.sentAt),
+    index('messages_media_queued_idx').on(t.sentAt).where(sql`${t.mediaStatus} = 'queued'`),
   ],
 );
 
@@ -331,4 +343,28 @@ export const messageEdits = pgTable(
     editedAt: timestamp('edited_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('message_edits_message_idx').on(t.messageId, t.editedAt)],
+);
+
+export const historyImports = pgTable(
+  'history_imports',
+  {
+    id: id(),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    period: text('period').$type<HistoryPeriod>().notNull(),
+    auto: boolean('auto').notNull(), // true = started by a QR pairing: repeats every 2 min while news arrive (§5.1)
+    state: text('state').$type<HistoryImportState>().notNull().default('running'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    messagesImported: integer('messages_imported').notNull().default(0),
+    contactsCreated: integer('contacts_created').notNull().default(0),
+    oldestMessageAt: timestamp('oldest_message_at', { withTimezone: true }),
+    error: text('error'), // error name/code only (§9)
+    lastNewAt: timestamp('last_new_at', { withTimezone: true }), // last pass that inserted something
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }), // when the worker runs the next pass; null once finished
+  },
+  (t) => [
+    // §5.1: one import per channel at a time; a second request is a 409
+    uniqueIndex('history_imports_one_running_per_channel').on(t.channelId).where(sql`${t.state} = 'running'`),
+    index('history_imports_channel_idx').on(t.channelId, t.startedAt),
+  ],
 );

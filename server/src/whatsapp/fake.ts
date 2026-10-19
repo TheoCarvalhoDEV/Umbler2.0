@@ -1,7 +1,9 @@
-import type { ChannelStatus, SendResult, WhatsAppGateway } from './types.js';
+import type { ChannelStatus, DownloadedMedia, EvolutionContact, SendResult, WhatsAppGateway } from './types.js';
 
 // 1×1 transparent PNG.
 const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+const stamp = (r: unknown) => Number((r as { messageTimestamp?: unknown } | null)?.messageTimestamp);
 
 export function createFakeGateway(): WhatsAppGateway & {
   sent: Array<{ method: string; instance: string; phone?: string; payload: unknown }>;
@@ -10,11 +12,24 @@ export function createFakeGateway(): WhatsAppGateway & {
   /** fetchProfilePicture answers by address: a URL, or an Error to throw; unset → null (no picture). */
   profilePictures: Map<string, string | Error>;
   pictureLookups: Array<{ instance: string; address: string }>;
+  /** Rows findMessages serves (Evolution's Message table), filtered by messageTimestamp seconds, newest first, paged. */
+  historyRecords: unknown[];
+  findCalls: Array<{ instance: string; gte: string; lte: string; page: number; offset: number }>;
+  /** Rows findContacts answers. */
+  contactRecords: EvolutionContact[];
+  /** downloadMediaById answers by key.id: media, or an Error to throw; unset → the 1×1 PNG. */
+  mediaById: Map<string, DownloadedMedia | Error>;
+  mediaLookups: Array<{ instance: string; externalId: string }>;
 } {
   const sent: Array<{ method: string; instance: string; phone?: string; payload: unknown }> = [];
   const status = new Map<string, ChannelStatus>();
   const profilePictures = new Map<string, string | Error>();
   const pictureLookups: Array<{ instance: string; address: string }> = [];
+  const historyRecords: unknown[] = [];
+  const findCalls: Array<{ instance: string; gte: string; lte: string; page: number; offset: number }> = [];
+  const contactRecords: EvolutionContact[] = [];
+  const mediaById = new Map<string, DownloadedMedia | Error>();
+  const mediaLookups: Array<{ instance: string; externalId: string }> = [];
   let pendingError: Error | null = null;
   let n = 0;
 
@@ -39,6 +54,11 @@ export function createFakeGateway(): WhatsAppGateway & {
     status,
     profilePictures,
     pictureLookups,
+    historyRecords,
+    findCalls,
+    contactRecords,
+    mediaById,
+    mediaLookups,
     failNext(err = new Error('fake gateway failure')) {
       pendingError = err;
     },
@@ -93,6 +113,26 @@ export function createFakeGateway(): WhatsAppGateway & {
       const v = profilePictures.get(address);
       if (v instanceof Error) throw v;
       return v ?? null;
+    },
+    async findMessages(instance, q) {
+      guard();
+      findCalls.push({ instance, gte: q.gte.toISOString(), lte: q.lte.toISOString(), page: q.page, offset: q.offset });
+      const lo = Math.floor(q.gte.getTime() / 1000);
+      const hi = Math.floor(q.lte.getTime() / 1000);
+      const rows = historyRecords.filter((r) => stamp(r) >= lo && stamp(r) <= hi).sort((a, b) => stamp(b) - stamp(a));
+      const start = (q.page - 1) * q.offset;
+      return { total: rows.length, pages: Math.ceil(rows.length / q.offset), records: rows.slice(start, start + q.offset) };
+    },
+    // No guard(): names are best effort and must not eat an error armed for findMessages.
+    async findContacts() {
+      return contactRecords;
+    },
+    async downloadMediaById(instance, externalId) {
+      guard();
+      mediaLookups.push({ instance, externalId });
+      const v = mediaById.get(externalId);
+      if (v instanceof Error) throw v;
+      return v ?? { base64: PNG_1X1, mime: 'image/png' };
     },
   };
 }

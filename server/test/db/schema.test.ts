@@ -3,7 +3,7 @@ import { PgTable } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import * as schema from '../../src/db/schema.js';
-import { botRuns, botVersions, bots, chats, contacts, messageEdits, messages, sectors } from '../../src/db/schema.js';
+import { botRuns, botVersions, bots, chats, contacts, historyImports, messageEdits, messages, sectors } from '../../src/db/schema.js';
 import { makeTestDb, seedBasics, type Seeded } from '../helpers.js';
 
 // Postgres error code of a rejected query (drizzle wraps driver errors in `cause`), null if it succeeded.
@@ -30,9 +30,35 @@ describe('database schema', () => {
 
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(21);
+    expect(tables).toHaveLength(22);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
+  });
+
+  it('history_imports: one running import per channel; finished ones never block a new one (§5.1)', async () => {
+    const base = { channelId: s.channelId, period: '3m' as const, auto: false };
+    expect(await pgCode(db.insert(historyImports).values({ ...base, state: 'done' }))).toBeNull();
+    expect(await pgCode(db.insert(historyImports).values({ ...base, state: 'running' }))).toBeNull();
+    expect(await pgCode(db.insert(historyImports).values({ ...base, state: 'running' }))).toBe(UNIQUE_VIOLATION);
+  });
+
+  it('chats: one history chat per contact and channel, which may sit next to an open one (§5.3)', async () => {
+    const [c] = await db.insert(contacts).values({ phone: '5565999990001' }).returning({ id: contacts.id });
+    const chat = { contactId: c!.id, channelId: s.channelId, sectorId: s.defaultSector };
+    expect(await pgCode(db.insert(chats).values({ ...chat, state: 'open' }))).toBeNull();
+    expect(await pgCode(db.insert(chats).values({ ...chat, state: 'closed', history: true }))).toBeNull();
+    expect(await pgCode(db.insert(chats).values({ ...chat, state: 'closed', history: true }))).toBe(UNIQUE_VIOLATION);
+    expect(await pgCode(db.insert(chats).values({ ...chat, state: 'closed' }))).toBeNull();
+  });
+
+  it('new channel and chat columns start empty, with the 3-month period', async () => {
+    const [ch] = await db.select().from(schema.channels).where(eq(schema.channels.id, s.channelId));
+    expect(ch).toMatchObject({ historyPeriod: '3m', backfillUntil: null, disconnectedAt: null });
+    const [chat] = await db
+      .insert(chats)
+      .values({ contactId: (await db.insert(contacts).values({ phone: '5565999990002' }).returning())[0]!.id, channelId: s.channelId, sectorId: s.defaultSector })
+      .returning();
+    expect(chat!.history).toBe(false);
   });
 
   it('allows only one default sector', async () => {

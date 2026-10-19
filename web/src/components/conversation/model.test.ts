@@ -107,6 +107,15 @@ describe('eventText', () => {
   });
 });
 
+describe('eventText for history events', () => {
+  it('describes an import into a history chat and a contact merge', () => {
+    expect(eventText(event({ kind: 'history_imported', data: { count: 1234 } }), new Map())).toBe(
+      'Histórico do WhatsApp importado: 1.234 mensagens',
+    );
+    expect(eventText(event({ kind: 'contact_merged' }), new Map())).toBe('Contato sem número juntado a este contato');
+  });
+});
+
 describe('eventText for chatbot events', () => {
   const names = new Map([['s-fin', 'Financeiro'], ['u-ana', 'Ana']]);
   const bot = { botId: 'b1', botName: 'Triagem', runId: 'r1' };

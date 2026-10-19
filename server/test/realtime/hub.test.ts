@@ -93,6 +93,7 @@ describe('createHub.publishChat', () => {
       lastMessagePreview: 'Olá',
       pinned: true,
       tagIds: [tagId],
+      history: false,
     };
     expect(a.events).toEqual([{ type: 'chat.updated', chat: expected }]);
     expect(adm.events).toEqual([{ type: 'chat.updated', chat: { ...expected, pinned: false } }]);
@@ -157,7 +158,7 @@ describe('createHub.publishMessage', () => {
 
     const message = {
       id: messageId, chatId: chat.id, direction: 'out', kind: 'text', body: 'Bom dia',
-      media: null, mediaUnavailable: false, authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
+      media: null, mediaUnavailable: false, mediaExpired: false, authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
       officeReaction: null, deleted: null, edited: null, forwarded: false,
       replyTo: null, reaction: null, status: 'sent', error: null, sentAt: '2026-10-14T12:01:00.000Z',
     };
@@ -182,7 +183,7 @@ describe('createHub.publishChannel', () => {
 
     await hub.publishChannel(s.channelId);
 
-    const event = { type: 'channel.status', channel: { id: row.id, name: row.name, status: 'connected', phone: '5565999990000' } };
+    const event = { type: 'channel.status', channel: { id: row.id, name: row.name, status: 'connected', phone: '5565999990000', historyPeriod: '3m', disconnectedAt: null, historyImport: null } };
     expect(a.events).toEqual([event]);
     expect(b.events).toEqual([event]);
   });
