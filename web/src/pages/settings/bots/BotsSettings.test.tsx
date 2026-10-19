@@ -4,7 +4,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router';
 import type { BotDto, ChannelDto, Me, SectorDto, UserDto } from '@talk/shared';
+import { confirmDialog } from '../../../lib/confirm';
 import { SettingsPage } from '../SettingsPage';
+
+vi.mock('../../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
 
 const admin: Me = { id: 'u-admin', name: 'Admin Teste', email: 'admin@teste.local', role: 'admin', signature: null, sectorIds: [], seeAllSectors: false, avatarUrl: null };
 const agent: Me = { ...admin, id: 'u-agent', name: 'Ana Financeiro', role: 'agent' };
@@ -151,7 +154,7 @@ describe('Settings › Chatbots', () => {
   });
 
   it('asks before deleting and shows which flows still call the bot', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(confirmDialog).mockResolvedValueOnce(true);
     routes['DELETE /api/bots/b2'] = {
       status: 409,
       body: {
@@ -163,15 +166,17 @@ describe('Settings › Chatbots', () => {
     fireEvent.click(within(await screen.findByRole('row', { name: /Cobrança/ })).getByRole('button', { name: 'Excluir' }));
 
     const alert = await screen.findByRole('alert');
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('"Cobrança"'));
+    expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: 'Excluir o chatbot "Cobrança"?' }));
     expect(alert.textContent).toContain('Este chatbot é acionado por outros fluxos');
     expect(alert.textContent).toContain('Usado por: Fluxo do escritório, Retorno');
   });
 
   it('does not delete when the confirmation is refused', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.mocked(confirmDialog).mockClear().mockResolvedValueOnce(false);
     renderAt('/configuracoes/chatbots');
     fireEvent.click(within(await screen.findByRole('row', { name: /Cobrança/ })).getByRole('button', { name: 'Excluir' }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 0)); // let the refused answer settle
     expect(called('DELETE', '/api/bots/b2')).toHaveLength(0);
   });
 

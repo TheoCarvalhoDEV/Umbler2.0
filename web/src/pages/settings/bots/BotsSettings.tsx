@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { BotDto, BotExport } from '@talk/shared';
 import { Loading, Section, btn, btnPrimary, field, useSend } from '../../../components/settings/common';
 import { api, ApiError, qk } from '../../../lib/api';
+import { confirmDialog } from '../../../lib/confirm';
 import { OfficeTemplateDialog } from './OfficeTemplateDialog';
 
 const editorPath = (id: string) => `/configuracoes/chatbots/${id}`;
@@ -77,8 +78,9 @@ export function BotsSettings() {
     save.mutate(() => api.bots.setStatus(b.id, b.status === 'active' ? 'paused' : 'active'));
   }
 
-  function remove(b: BotDto) {
-    if (window.confirm(`Excluir o chatbot "${b.name}"? As versões e o histórico de execuções também serão apagados.`)) {
+  async function remove(b: BotDto) {
+    const body = 'As versões e o histórico de execuções também serão apagados.';
+    if (await confirmDialog({ title: `Excluir o chatbot "${b.name}"?`, body, confirmLabel: 'Excluir chatbot' })) {
       save.mutate(() => api.bots.remove(b.id));
     }
   }

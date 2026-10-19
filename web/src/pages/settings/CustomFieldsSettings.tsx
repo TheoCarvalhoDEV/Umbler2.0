@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { CustomFieldDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
-import { confirmDialog } from '../../lib/confirm';
+import { confirmDialog, promptDialog } from '../../lib/confirm';
 
 const KINDS: Record<CustomFieldDto['kind'], string> = {
   text: 'Texto',
@@ -28,13 +28,16 @@ export function CustomFieldsSettings() {
     save.mutate(() => send('/api/custom-fields', 'POST', { name: name.trim(), kind }), { onSuccess: () => setName('') });
   }
 
-  function rename(f: CustomFieldDto) {
-    // ponytail: native prompt for a one-field rename
-    const next = window.prompt(
-      `Novo nome do campo. Respostas rápidas que usam {{campo.${f.name}}} precisam ser ajustadas.`,
-      f.name,
-    )?.trim();
-    if (next && next !== f.name) save.mutate(() => send(`/api/custom-fields/${f.id}`, 'PATCH', { name: next }));
+  async function rename(f: CustomFieldDto) {
+    const next = await promptDialog({
+      title: 'Renomear campo',
+      body: `Respostas rápidas que usam {{campo.${f.name}}} precisam ser ajustadas.`,
+      label: 'Nome do campo',
+      initial: f.name,
+      confirmLabel: 'Salvar',
+      maxLength: 60,
+    });
+    if (next) save.mutate(() => send(`/api/custom-fields/${f.id}`, 'PATCH', { name: next }));
   }
 
   async function remove(f: CustomFieldDto) {
