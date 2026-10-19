@@ -3,7 +3,7 @@ import { PgTable } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import * as schema from '../../src/db/schema.js';
-import { botRuns, botVersions, bots, chats, contacts, messages, sectors } from '../../src/db/schema.js';
+import { botRuns, botVersions, bots, chats, contacts, messageEdits, messages, sectors } from '../../src/db/schema.js';
 import { makeTestDb, seedBasics, type Seeded } from '../helpers.js';
 
 // Postgres error code of a rejected query (drizzle wraps driver errors in `cause`), null if it succeeded.
@@ -30,7 +30,7 @@ describe('database schema', () => {
 
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(20);
+    expect(tables).toHaveLength(21);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
   });
@@ -156,5 +156,55 @@ describe('bot tables', () => {
     expect(await db.select().from(botRuns)).toEqual([]);
     const [kept] = await db.select().from(messages).where(eq(messages.id, msg.id));
     expect(kept.botRunId).toBeNull();
+  });
+});
+
+describe('message action columns', () => {
+  let db: Db;
+  let s: Seeded;
+
+  beforeEach(async () => {
+    db = await makeTestDb();
+    s = await seedBasics({ db });
+  });
+
+  async function seedMessage() {
+    const [contact] = await db.insert(contacts).values({ phone: '5565999999999' }).returning();
+    const [chat] = await db
+      .insert(chats)
+      .values({ contactId: contact.id, channelId: s.channelId, sectorId: s.defaultSector })
+      .returning();
+    const [m] = await db
+      .insert(messages)
+      .values({ chatId: chat.id, channelId: s.channelId, direction: 'out', kind: 'text', body: 'oi', sentAt: new Date() })
+      .returning();
+    return m;
+  }
+
+  it('defaults a message to no office reaction, not deleted, not edited, not forwarded', async () => {
+    expect(await seedMessage()).toMatchObject({
+      officeReaction: null, deletedAt: null, deletedBy: null, deletedSource: null, editedAt: null, forwardedFromId: null,
+      mediaSha256: null,
+    });
+  });
+
+  it('drops the edit history with its message and only unlinks a forwarded copy', async () => {
+    const original = await seedMessage();
+    const [copy] = await db
+      .insert(messages)
+      .values({
+        chatId: original.chatId, channelId: s.channelId, direction: 'out', kind: 'text', body: 'oi', sentAt: new Date(),
+        forwardedFromId: original.id,
+      })
+      .returning();
+    const [edit] = await db.insert(messageEdits).values({ messageId: original.id, previousBody: 'antes', source: 'contact' }).returning();
+    expect(edit).toMatchObject({ editedBy: null, newTextUnavailable: false });
+    expect(edit.editedAt).toBeInstanceOf(Date);
+
+    await db.delete(messages).where(eq(messages.id, original.id));
+
+    expect(await db.select().from(messageEdits)).toEqual([]);
+    const [after] = await db.select().from(messages).where(eq(messages.id, copy.id));
+    expect(after.forwardedFromId).toBeNull();
   });
 });

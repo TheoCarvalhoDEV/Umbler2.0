@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpLeft, Check, Checks, Clock, FileText, ImageBroken, Robot, WarningCircle } from '@phosphor-icons/react';
-import type { MessageDto } from '@talk/shared';
-import { api } from '../../lib/api';
+import { Check, Checks, Clock, FileText, ImageBroken, Robot, ShareFat, WarningCircle } from '@phosphor-icons/react';
+import type { Me, MessageDto } from '@talk/shared';
+import { api, qk } from '../../lib/api';
+import { confirmDialog } from '../../lib/confirm';
 import { Avatar } from '../Avatar';
 import { applyWsEvent } from '../../lib/ws';
-import { errorMessage, previewText, timeOfDay } from './model';
+import { EditHistoryDialog, ForwardDialog } from './MessageDialogs';
+import { MessageMenu, menuItems, type MenuAction } from './MessageMenu';
+import { deletedTag, editedTag, errorMessage, previewText, timeOfDay } from './model';
+
+const chip = 'rounded-full border border-border bg-surface px-1.5 text-sm shadow-sm';
 
 const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 
@@ -73,15 +78,27 @@ function MediaView({ m }: { m: MessageDto }) {
   }
 }
 
-export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: MessageDto) => void }) {
+export interface MessageBubbleProps {
+  m: MessageDto;
+  onReply: (m: MessageDto) => void;
+  /** Spec §2: no action in a closed chat (only Copiar). */
+  chatOpen?: boolean;
+}
+
+export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubbleProps) {
   const qc = useQueryClient();
   const [resending, setResending] = useState(false);
   const [resendError, setResendError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [forwarding, setForwarding] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const isNote = m.kind === 'note';
   const right = isNote || m.direction === 'out';
   const showStatus = m.direction === 'out' && !isNote;
-  // quoting needs the WhatsApp id, which pending/failed sends do not have yet
-  const canReply = !isNote && !(m.direction === 'out' && (m.status === 'pending' || m.status === 'failed'));
   // a chatbot run sends as the system (authorId null) and the server fills botName
   const botName = !isNote && m.direction === 'out' ? (m.botName ?? null) : null;
   const label = isNote
@@ -92,6 +109,9 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
         ? (m.authorName ?? 'Celular ou sistema') // authorId null = sent from the phone or by the triage
         : null;
   const tone = isNote ? 'bg-yellow-200 text-zinc-900' : m.direction === 'out' ? 'bg-primary/25 text-fg' : 'bg-bubble-in text-fg';
+  // me is loaded before any chat renders (RequireAuth); read it without subscribing
+  const meId = qc.getQueryData<Me | null>(qk.me)?.id ?? null;
+  const items = menuItems(m, meId, chatOpen, Date.now());
 
   async function resend() {
     setResending(true);
@@ -105,26 +125,99 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
     }
   }
 
-  const replyButton = canReply && (
-    <button
-      type="button"
-      aria-label="Responder"
-      title="Responder"
-      onClick={() => onReply(m)}
-      className="self-center p-1 text-muted opacity-0 hover:text-fg focus:opacity-100 group-hover:opacity-100"
-    >
-      <ArrowBendUpLeft size={16} />
-    </button>
+  /** Runs one action; its answer goes through the same cache path as the WS echo. */
+  async function act(call: () => Promise<MessageDto>): Promise<boolean> {
+    setBusy(true);
+    setActionError(null);
+    try {
+      applyWsEvent(qc, { type: 'message.updated', message: await call() });
+      return true;
+    } catch (e) {
+      setActionError(errorMessage(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(m.body ?? '');
+    } catch {
+      setActionError('Não foi possível copiar');
+    }
+  }
+
+  async function remove() {
+    const ok = await confirmDialog({
+      title: 'Apagar para todos?',
+      body: 'O contato deixa de ver esta mensagem.',
+      confirmLabel: 'Apagar para todos',
+    });
+    if (ok) await act(() => api.messages.remove(m.id));
+  }
+
+  function onAction(action: Exclude<MenuAction, 'react'>) {
+    if (action === 'reply') onReply(m);
+    else if (action === 'forward') setForwarding(true);
+    else if (action === 'copy') void copy();
+    else if (action === 'edit') {
+      setDraft(m.body ?? '');
+      setActionError(null);
+      setEditing(true);
+    } else void remove();
+  }
+
+  async function saveEdit() {
+    const text = draft.trim();
+    if (!text || busy) return;
+    if (await act(() => api.messages.edit(m.id, text))) setEditing(false);
+  }
+
+  function onEditKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setEditing(false);
+      setActionError(null);
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      void saveEdit();
+    }
+  }
+
+  const menu = (
+    <MessageMenu
+      items={items}
+      officeReaction={m.officeReaction ?? null}
+      alignRight={right}
+      open={menuOpen}
+      onOpenChange={setMenuOpen}
+      onAction={onAction}
+      onReact={(emoji) => void act(() => api.messages.react(m.id, emoji))}
+    />
   );
 
   return (
     <div className={`group flex px-4 py-1 ${right ? 'justify-end' : 'justify-start'}`}>
-      {right && replyButton}
-      <div className={`relative max-w-[75%] rounded-lg px-3 py-2 shadow-sm ${tone} ${m.reaction ? 'mb-3' : ''}`}>
+      {right && menu}
+      <div
+        onContextMenu={(e) => {
+          // a long press on touch screens fires contextmenu: open the same menu (spec §9 "toque longo")
+          if (items.length === 0 || editing) return;
+          e.preventDefault();
+          setMenuOpen(true);
+        }}
+        className={`relative max-w-[75%] rounded-lg px-3 py-2 shadow-sm ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''}`}
+      >
         {label && (
           <p className="mb-1 flex items-center gap-1 text-xs font-semibold opacity-75">
             {botName && <Robot size={14} weight="fill" aria-hidden data-bot-icon className="shrink-0" />}
             {label}
+          </p>
+        )}
+        {m.forwarded && (
+          <p data-tag="forwarded" className="mb-1 flex items-center gap-1 text-xs italic opacity-70">
+            <ShareFat size={12} aria-hidden /> Encaminhada
           </p>
         )}
         {m.replyTo && (
@@ -133,12 +226,41 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
           </div>
         )}
         <MediaView m={m} />
-        {m.kind === 'unsupported' ? (
+        {editing ? (
+          <div>
+            <textarea
+              aria-label="Editar mensagem"
+              autoFocus
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onEditKey}
+              className="field-sizing-content block max-h-48 min-h-10 w-72 max-w-full resize-none rounded border border-field bg-panel px-2 py-1 text-sm text-fg outline-none focus:ring-2 focus:ring-primary"
+            />
+            <p className="mt-1 text-xs opacity-70">Enter salva · Esc cancela</p>
+          </div>
+        ) : m.kind === 'unsupported' ? (
           <p className="text-sm italic opacity-70">Mensagem não suportada</p>
         ) : (
           m.body && <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>
         )}
-        <div className="mt-1 flex items-center justify-end gap-1 text-xs opacity-70">
+        <div className="mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5 text-xs opacity-70">
+          {m.deleted && (
+            <span data-tag="deleted" className="font-medium text-danger">
+              {deletedTag(m.deleted)}
+            </span>
+          )}
+          {m.edited && (
+            <button
+              type="button"
+              data-tag="edited"
+              title="Ver versões anteriores"
+              onClick={() => setHistoryOpen(true)}
+              className="hover:underline"
+            >
+              {editedTag(m.edited)}
+            </button>
+          )}
           <time dateTime={m.sentAt}>{timeOfDay(m.sentAt)}</time>
           {showStatus && <StatusTick status={m.status} />}
         </div>
@@ -150,12 +272,23 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
             </button>
           </div>
         )}
-        {m.reaction && (
-          <span
-            aria-label={`Reação ${m.reaction}`}
-            className={`absolute -bottom-3 ${right ? 'left-2' : 'right-2'} rounded-full border border-border bg-surface px-1.5 text-sm shadow-sm`}
-          >
-            {m.reaction}
+        {actionError && (
+          <p role="alert" className="mt-1 text-xs text-danger">
+            {actionError}
+          </p>
+        )}
+        {(m.reaction || m.officeReaction) && (
+          <span className={`absolute -bottom-3 ${right ? 'left-2' : 'right-2'} flex gap-0.5`}>
+            {m.reaction && (
+              <span aria-label={`Reação do contato ${m.reaction}`} className={chip}>
+                {m.reaction}
+              </span>
+            )}
+            {m.officeReaction && (
+              <span aria-label={`Reação do escritório ${m.officeReaction}`} className={chip}>
+                {m.officeReaction}
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -165,7 +298,9 @@ export function MessageBubble({ m, onReply }: { m: MessageDto; onReply: (m: Mess
           <Avatar name={m.authorName} src={m.authorAvatarUrl} className="size-7 text-xs bg-primary text-white" />
         </span>
       )}
-      {!right && replyButton}
+      {!right && menu}
+      {historyOpen && <EditHistoryDialog messageId={m.id} onClose={() => setHistoryOpen(false)} />}
+      {forwarding && <ForwardDialog message={m} onClose={() => setForwarding(false)} />}
     </div>
   );
 }

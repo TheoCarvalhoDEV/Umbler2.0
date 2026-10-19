@@ -260,3 +260,43 @@ describe('Composer with a running chatbot', () => {
     expect(screen.queryByText('Executar chatbot')).toBeNull();
   });
 });
+
+describe('Composer stickers', () => {
+  it('sends a recent sticker by id', async () => {
+    stubFetch({
+      'GET /api/stickers/recent': [{ messageId: 's1', url: '/api/media/s1' }],
+      'POST /api/chats/c1/messages': message({ kind: 'sticker', body: null }),
+    });
+    renderComposer();
+    fireEvent.click(screen.getByRole('button', { name: 'Figurinhas' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Enviar figurinha' }));
+    await waitFor(() => expect(posts('/api/chats/c1/messages')).toHaveLength(1));
+    expect(posts('/api/chats/c1/messages')[0]!.body).toEqual({ stickerFromMessageId: 's1' });
+  });
+
+  it('sends a picked image as a sticker and refuses a file over 1 MB', async () => {
+    stubFetch({ 'GET /api/stickers/recent': [], 'POST /api/chats/c1/messages': message({ kind: 'sticker', body: null }) });
+    renderComposer();
+    fireEvent.click(screen.getByRole('button', { name: 'Figurinhas' }));
+    expect(await screen.findByText('Nenhuma figurinha ainda.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Enviar imagem como figurinha' })).toBeTruthy();
+    const input = screen.getByLabelText('Imagem para figurinha');
+
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array(1024 * 1024 + 1)], 'grande.png', { type: 'image/png' })] } });
+    expect(screen.getByRole('alert').textContent).toBe('Envie uma imagem PNG, JPEG ou WebP de até 1 MB');
+    expect(posts('/api/chats/c1/messages')).toHaveLength(0);
+
+    fireEvent.change(input, { target: { files: [new File(['png'], 'fig.png', { type: 'image/png' })] } });
+    await waitFor(() => expect(posts('/api/chats/c1/messages')).toHaveLength(1));
+    const form = posts('/api/chats/c1/messages')[0]!.body as FormData;
+    expect(form.get('asSticker')).toBe('true');
+    expect((form.get('file') as File).name).toBe('fig.png');
+  });
+
+  it('has no sticker button in note mode', () => {
+    stubFetch({});
+    renderComposer();
+    fireEvent.click(screen.getByRole('button', { name: 'Nota interna' }));
+    expect(screen.queryByRole('button', { name: 'Figurinhas' })).toBeNull();
+  });
+});

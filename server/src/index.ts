@@ -4,7 +4,7 @@ import { runMigrations } from './db/migrate.js';
 import { createEvolutionGateway } from './whatsapp/evolution.js';
 import { createHub } from './realtime/hub.js';
 import { buildApp } from './app.js';
-import { syncChannelStatuses } from './channels/service.js';
+import { syncChannelStatuses, syncWebhooks } from './channels/service.js';
 import { failInterruptedSends } from './messages/send.js';
 import { createBotRuntime } from './bots/runtime.js';
 import { failInterruptedRuns } from './bots/engine.js';
@@ -41,6 +41,9 @@ const app = await buildApp(ctx, {
 
 // ponytail: one-shot correction at boot (§5.6), no periodic polling; on failure the stored status stays until the next connection.update
 syncChannelStatuses(ctx).catch((err: unknown) => app.log.error({ err }, 'falha ao sincronizar status dos canais'));
+// Once per boot: existing instances get today's webhook events (MESSAGES_DELETE since "ações de mensagem"). Never throws
+// per channel; only a failing DB read reaches this catch.
+syncWebhooks(ctx).catch((err: unknown) => app.log.error({ err }, 'falha ao atualizar os webhooks dos canais'));
 
 await app.listen({ host: '0.0.0.0', port: config.port });
 

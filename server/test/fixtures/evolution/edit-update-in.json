@@ -1,0 +1,18 @@
+{
+  "event": "messages.update",
+  "instance": "talk-test",
+  "data": {
+    "keyId": "MSG-TEXT-IN",
+    "remoteJid": "201234567890123@lid",
+    "fromMe": false,
+    "participant": null,
+    "status": "SERVER_ACK",
+    "instanceId": "00000000-0000-4000-8000-000000000001",
+    "messageId": "cmgq0000000000000000000002",
+    "message": { "editedMessage": { "message": { "conversation": "Olá, preciso de ajuda urgente" } } }
+  },
+  "date_time": "2025-10-14T11:08:00.000Z",
+  "sender": "556500000000@s.whatsapp.net",
+  "server_url": "http://evolution:8080",
+  "apikey": "chave-falsa-da-instancia"
+}

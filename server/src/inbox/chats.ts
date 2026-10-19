@@ -297,13 +297,17 @@ async function resolveContactId(tx: Tx, input: { contactId?: string; phone?: str
 export async function startChat(
   ctx: AppCtx,
   user: AuthUser,
-  input: { contactId?: string; phone?: string; name?: string; sectorId?: string },
+  input: { contactId?: string; phone?: string; name?: string; sectorId?: string; channelId?: string },
 ): Promise<ChatRow> {
   if (input.sectorId !== undefined && !(await sectorExists(ctx.db, input.sectorId))) throw badRequest('Setor inválido.');
   const sectorId = input.sectorId ?? (await getDefaultSectorId(ctx.db));
-  // ponytail: one WhatsApp number today; take the oldest channel. Add channelId to the input when a second number exists.
-  const [channel] = await ctx.db.select({ id: channels.id }).from(channels).orderBy(asc(channels.createdAt)).limit(1);
-  if (!channel) throw conflict('Nenhum canal de WhatsApp cadastrado.');
+  // channelId: a forward keeps the source message's number. Otherwise the oldest channel (one WhatsApp number today).
+  const [channel] = input.channelId
+    ? UUID_RE.test(input.channelId)
+      ? await ctx.db.select({ id: channels.id }).from(channels).where(eq(channels.id, input.channelId))
+      : []
+    : await ctx.db.select({ id: channels.id }).from(channels).orderBy(asc(channels.createdAt)).limit(1);
+  if (!channel) throw input.channelId ? badRequest('Canal inválido.') : conflict('Nenhum canal de WhatsApp cadastrado.');
 
   const { chat, created } = await ctx.db.transaction(async (tx) => {
     const contactId = await resolveContactId(tx, input);

@@ -68,6 +68,25 @@ export function createFakeGateway(): WhatsAppGateway & {
       guard();
       return { base64: PNG_1X1, mime: 'image/png' };
     },
+    async sendReaction(instance, key, emoji) {
+      guard();
+      sent.push({ method: 'sendReaction', instance, phone: key.address, payload: { key, emoji } });
+    },
+    async deleteForEveryone(instance, key) {
+      guard();
+      sent.push({ method: 'deleteForEveryone', instance, phone: key.address, payload: { key } });
+    },
+    async editText(instance, key, text) {
+      guard();
+      sent.push({ method: 'editText', instance, phone: key.address, payload: { key, text } });
+    },
+    async sendSticker(instance, phone, base64, quoted) {
+      return send('sendSticker', instance, phone, { base64, quoted });
+    },
+    async setWebhook(instance, webhookUrl) {
+      guard();
+      sent.push({ method: 'setWebhook', instance, payload: { webhookUrl } });
+    },
     // No guard(): this runs in the background after inbound messages and must not eat an error armed by failNext.
     async fetchProfilePicture(instance, address) {
       pictureLookups.push({ instance, address });
