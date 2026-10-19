@@ -1,14 +1,15 @@
 import { posix } from 'node:path';
 import { eq } from 'drizzle-orm';
 import type {
-  AskChoiceConfig, AskInputConfig, BotAttachment, BotNode, EditTagsConfig, NoteConfig, SendMessageConfig, SetContactFieldConfig,
+  AskChoiceConfig, AskInputConfig, BotAttachment, BotNode, ChoiceOption, EditTagsConfig, NoteConfig, SendMessageConfig,
+  SetContactFieldConfig,
 } from '@talk/shared';
 import { setContactFields, setContactTags, updateContact, type ContactInput } from '../../contacts/service.js';
 import { contactTags, contacts } from '../../db/schema.js';
 import { addEvent } from '../../inbox/events.js';
 import { HttpError } from '../../lib/http-error.js';
 import { sendSystemMessage, type SystemSendInput } from '../../messages/send.js';
-import { normalize } from '../../triage/triage.js';
+import { answerCandidates, normalize } from '../../triage/triage.js';
 import type { BotRunRow } from '../repo.js';
 import { BlockError } from '../block-error.js';
 import type { BlockDefinition, BlockRegistry, BlockResult, BotCtx } from '../registry.js';
@@ -127,8 +128,23 @@ function timeoutFrom(ctx: BotCtx, hours: number | null | undefined): Date | null
   return hours && hours > 0 ? new Date(ctx.now.getTime() + hours * HOUR_MS) : null;
 }
 
+const menuLine = (o: ChoiceOption) => `${o.key}: ${o.label}`;
+
 function menuText(cfg: AskChoiceConfig): string {
-  return `${cfg.text ?? ''}\n\n${(cfg.options ?? []).map((o) => `${o.key}: ${o.label}`).join('\n')}`;
+  return `${cfg.text ?? ''}\n\n${(cfg.options ?? []).map(menuLine).join('\n')}`;
+}
+
+/**
+ * Same matching as the triage: key, label or the menu line itself, no accents, no case, surrounding punctuation dropped;
+ * the whole text first, then each line ("1\nquero saber do processo" picks 1). Media (body null) never matches.
+ */
+function matchOption(options: ChoiceOption[], body: string | null): ChoiceOption | undefined {
+  if (body === null) return undefined;
+  for (const t of answerCandidates(body)) {
+    const hit = options.find((o) => [o.key, o.label, menuLine(o)].some((s) => normalize(s) === t));
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 /** Invalid answer: with retries left, send the invalid text (and `repeat`, if any) and wait again on the same deadline. */
@@ -157,11 +173,7 @@ const askChoice: BlockDefinition = {
     const cfg = node.config as unknown as AskChoiceConfig;
     if (ev.kind === 'timeout') return { next: 'timeout' };
     if (ev.kind !== 'reply') throw new BlockError('Evento inesperado no bloco "Pedir para escolher"');
-    // Same matching as the triage: key or label, no accents, no case, surrounding punctuation dropped. Media (body null) never matches.
-    const answer = ev.reply.body === null ? '' : normalize(ev.reply.body);
-    const option = answer
-      ? (cfg.options ?? []).find((o) => normalize(o.key) === answer || normalize(o.label) === answer)
-      : undefined;
+    const option = matchOption(cfg.options ?? [], ev.reply.body);
     if (option) {
       run.vars[varName(node)] = { raw: ev.reply.body ?? '', value: option.key, label: option.label };
       return { next: `opt:${option.key}` };

@@ -43,6 +43,8 @@ describe('matchTriageOption', () => {
     ['JURIDICO.', '2'],
     ['processos', '2'],
     ['"Processos"', '2'],
+    ['1\nquero saber do meu boleto', '1'], // the whole text matches nothing, its first line does
+    ['Bom dia!\nJurídico', '2'],
   ])('%j matches option %s', (text, key) => {
     expect(matchTriageOption(text, menu, sectorNames)?.key).toBe(key);
   });
@@ -55,6 +57,8 @@ describe('matchTriageOption', () => {
     ['   '],
     ['...'],
     ['oi, quero falar com o financeiro'],
+    ['oi\nquero falar com alguém'],
+    ['\n \n'],
   ])('%j matches nothing', (text) => {
     expect(matchTriageOption(text, menu, sectorNames)).toBeNull();
   });
