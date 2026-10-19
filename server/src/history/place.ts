@@ -7,6 +7,7 @@ import { getDefaultSectorId } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import { messagePreview } from '../messages/dto.js';
 import { replyToIdOf, resolveContact, type Contact, type MessageEvent } from '../messages/ingest.js';
+import { mergeLidPairs } from './merge.js';
 import { parseEvolutionWebhook } from '../whatsapp/parse.js';
 
 /** §5.5: WhatsApp keeps media downloadable for about 3 weeks (measured: ok at 22 days, gone at 23). */
@@ -114,6 +115,9 @@ export async function placeRecords(
 ): Promise<PlaceResult> {
   const result: PlaceResult = { inserted: 0, contactsCreated: 0, oldest: null, historyCounts: new Map() };
   const parsed = toHistoryEvents(channel.evolutionInstance, records);
+  // §5.4/§6: a live row carries remoteJid @lid + remoteJidAlt (the phone). Join a LID-only contact into the phone one
+  // first, so this batch (and every later one) finds a single contact. Rows the app already stores count too.
+  await mergeLidPairs(ctx, parsed.flatMap((ev) => (ev.phone && ev.lid ? [{ lid: ev.lid, phone: ev.phone }] : [])));
   const events = parsed.filter((ev) => {
     if (opts.seen.has(ev.externalId)) return false;
     opts.seen.add(ev.externalId);
