@@ -72,5 +72,10 @@ export function mediaResponseHeaders(mime: string, fileName: string): Record<str
     'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encoded}`,
   };
   if (type !== 'application/pdf') headers['Content-Security-Policy'] = 'sandbox';
+  else {
+    // the app's own viewer shows PDFs in an iframe; no other site may frame them
+    headers['Content-Security-Policy'] = "frame-ancestors 'self'";
+    headers['X-Frame-Options'] = 'SAMEORIGIN';
+  }
   return headers;
 }

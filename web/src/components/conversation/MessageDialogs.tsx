@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { DownloadSimple, X } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { BotAction, BotRunningErrorBody, MessageDto, MessageEditDto } from '@talk/shared';
+import type { BotAction, BotRunningErrorBody, MediaDto, MessageDto, MessageEditDto } from '@talk/shared';
 import { api, botRunningRuns, qk, type ForwardInput } from '../../lib/api';
 import { contactLabel } from '../../lib/format';
 import { applyWsEvent } from '../../lib/ws';
@@ -149,5 +150,56 @@ export function ForwardDialog({ message, onClose }: { message: MessageDto; onClo
         />
       )}
     </Modal>
+  );
+}
+
+/**
+ * Opens a photo or document over the conversation instead of a new tab (videos and audio already play in the bubble). Only PDFs render as documents: the
+ * server sends every other document as an attachment, so those get the download button only.
+ */
+export function MediaViewer({ media, kind, onClose }: { media: MediaDto; kind: MessageDto['kind']; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    ref.current?.showModal();
+  }, []);
+  const image = kind === 'image' || kind === 'sticker';
+  const name = media.name ?? (image ? 'Imagem' : 'Documento');
+  const pdf = media.mime.split(';')[0]!.trim().toLowerCase() === 'application/pdf';
+  return (
+    <dialog
+      ref={ref}
+      aria-label={name}
+      onCancel={(e) => {
+        e.preventDefault(); // Esc: let React unmount it
+        onClose();
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose(); // a click on the backdrop
+      }}
+      className="m-auto h-[calc(100%-2rem)] w-[calc(100%-2rem)] max-w-5xl flex-col overflow-hidden rounded-lg bg-panel p-0 text-fg shadow-xl backdrop:bg-black/70 open:flex"
+    >
+      <header className="flex items-center gap-2 border-b border-border px-4 py-2">
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{name}</p>
+        <a
+          href={media.url}
+          download={media.name ?? ''}
+          className="flex items-center gap-1 rounded px-2 py-1 text-sm hover:bg-surface"
+        >
+          <DownloadSimple size={16} /> Baixar
+        </a>
+        <button type="button" onClick={onClose} aria-label="Fechar" title="Fechar" className="rounded p-1 hover:bg-surface">
+          <X size={18} />
+        </button>
+      </header>
+      <div className="flex min-h-0 flex-1 items-center justify-center bg-black/80">
+        {image ? (
+          <img src={media.url} alt={name} className="max-h-full max-w-full object-contain" />
+        ) : pdf ? (
+          <iframe title={name} src={media.url} className="size-full bg-white" />
+        ) : (
+          <p className="px-4 text-center text-sm text-white/80">Este tipo de arquivo não tem pré-visualização. Use “Baixar”.</p>
+        )}
+      </div>
+    </dialog>
   );
 }

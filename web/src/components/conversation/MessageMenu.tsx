@@ -4,13 +4,13 @@ import {
   QUICK_REACTIONS, deleteBlock, editBlock, forwardBlock, isSingleEmoji, reactBlock, replyBlock, type ActionBlock, type MessageDto,
 } from '@talk/shared';
 
-export type MenuAction = 'react' | 'reply' | 'forward' | 'copy' | 'edit' | 'delete';
+export type MenuAction = 'react' | 'reply' | 'forward' | 'copy' | 'download' | 'edit' | 'delete';
 /** hint set = the action applies but its time is over: shown disabled with the hint. */
 export interface MenuItem { action: MenuAction; label: string; hint: string | null }
 
 /**
- * Spec §9: Reagir · Responder · Encaminhar · Copiar · Editar · Apagar para todos. An action that does not apply to
- * this message is left out; one whose time is over stays, disabled, with its hint. A closed chat only offers Copiar.
+ * Spec §9: Reagir · Responder · Encaminhar · Copiar · Baixar arquivo · Editar · Apagar para todos. An action that does not apply to
+ * this message is left out; one whose time is over stays, disabled, with its hint. A closed chat only offers Copiar and Baixar arquivo.
  */
 export function menuItems(m: MessageDto, meId: string | null, chatOpen: boolean, now: number): MenuItem[] {
   const items: MenuItem[] = [];
@@ -24,6 +24,7 @@ export function menuItems(m: MessageDto, meId: string | null, chatOpen: boolean,
     add('forward', 'Encaminhar', forwardBlock(m));
   }
   if (m.body) items.push({ action: 'copy', label: 'Copiar', hint: null });
+  if (m.media) items.push({ action: 'download', label: 'Baixar arquivo', hint: null }); // only a file the server has
   if (chatOpen) {
     add('edit', 'Editar', editBlock(m, meId, now));
     add('delete', 'Apagar para todos', deleteBlock(m, now));

@@ -1,18 +1,20 @@
 import { useState, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Checks, Clock, FileText, ImageBroken, Robot, ShareFat, WarningCircle } from '@phosphor-icons/react';
+import { Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, Robot, ShareFat, WarningCircle } from '@phosphor-icons/react';
 import type { Me, MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 import { Avatar } from '../Avatar';
 import { applyWsEvent } from '../../lib/ws';
-import { EditHistoryDialog, ForwardDialog } from './MessageDialogs';
+import { EditHistoryDialog, ForwardDialog, MediaViewer } from './MessageDialogs';
 import { MessageMenu, menuItems, type MenuAction } from './MessageMenu';
 import { deletedTag, editedTag, errorMessage, previewText, timeOfDay } from './model';
 
 const chip = 'rounded-full border border-border bg-surface px-1.5 text-sm shadow-sm';
 
 const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
+// download button over a photo or video: shows on hover, like WhatsApp Web
+const overlay = 'absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100';
 
 function formatSize(bytes: number | null): string {
   if (bytes == null) return '';
@@ -66,7 +68,24 @@ function DownloadButton({ m }: { m: MessageDto }) {
   );
 }
 
+/** Saves the stored file with its original name (same origin, so the download attribute wins over inline). */
+function saveFile(url: string, name: string | null) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name ?? '';
+  a.click();
+}
+
+function SaveLink({ url, name, className = '' }: { url: string; name: string | null; className?: string }) {
+  return (
+    <a href={url} download={name ?? ''} aria-label="Baixar arquivo" title="Baixar arquivo" className={`shrink-0 ${className}`}>
+      <DownloadSimple size={18} />
+    </a>
+  );
+}
+
 function MediaView({ m }: { m: MessageDto }) {
+  const [viewing, setViewing] = useState(false);
   if (m.mediaExpired) {
     return (
       <p className="flex items-center gap-1 text-sm italic text-muted">
@@ -84,35 +103,53 @@ function MediaView({ m }: { m: MessageDto }) {
   // inbound media is downloaded after the message is stored (§5.1 step 6); message.updated fills it in
   if (!m.media) return MEDIA_KINDS.has(m.kind) ? <p className="text-sm italic text-muted">Carregando mídia…</p> : null;
   const { url, name, size } = m.media;
+  const viewer = viewing && <MediaViewer media={m.media} kind={m.kind} onClose={() => setViewing(false)} />;
   switch (m.kind) {
     case 'image':
     case 'sticker':
       return (
-        <a href={url} target="_blank" rel="noopener noreferrer">
-          <img
-            src={url}
-            alt={name ?? 'Imagem'}
-            loading="lazy"
-            className={m.kind === 'sticker' ? 'size-32 object-contain' : 'max-h-72 max-w-full rounded'}
-          />
-        </a>
+        <div className="relative">
+          <button type="button" onClick={() => setViewing(true)} aria-label="Abrir imagem" className="block cursor-zoom-in">
+            <img
+              src={url}
+              alt={name ?? 'Imagem'}
+              loading="lazy"
+              className={m.kind === 'sticker' ? 'size-32 object-contain' : 'max-h-72 max-w-full rounded'}
+            />
+          </button>
+          <SaveLink url={url} name={name} className={overlay} />
+          {viewer}
+        </div>
       );
     case 'audio':
-      return <audio controls preload="none" src={url} className="max-w-full" />;
+      return (
+        <div className="flex items-center gap-2">
+          <audio controls preload="none" src={url} className="max-w-full" />
+          <SaveLink url={url} name={name} className="text-muted hover:text-fg" />
+        </div>
+      );
     case 'video':
-      return <video controls preload="metadata" src={url} className="max-h-72 max-w-full rounded" />;
+      return (
+        <div className="relative">
+          <video controls preload="metadata" src={url} className="max-h-72 max-w-full rounded" />
+          <SaveLink url={url} name={name} className={overlay} />
+        </div>
+      );
     default:
       return (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 rounded bg-black/20 px-2 py-1.5 text-sm hover:bg-black/30"
-        >
-          <FileText size={24} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{name ?? 'Documento'}</span>
-          <span className="text-xs opacity-70">{formatSize(size)}</span>
-        </a>
+        <div className="flex items-center gap-2 rounded bg-black/20 px-2 py-1.5 text-sm">
+          <button
+            type="button"
+            onClick={() => setViewing(true)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left hover:underline"
+          >
+            <FileText size={24} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{name ?? 'Documento'}</span>
+            <span className="text-xs opacity-70">{formatSize(size)}</span>
+          </button>
+          <SaveLink url={url} name={name} className="opacity-80 hover:opacity-100" />
+          {viewer}
+        </div>
       );
   }
 }
@@ -204,6 +241,9 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
     if (action === 'reply') onReply(m);
     else if (action === 'forward') setForwarding(true);
     else if (action === 'copy') void copy();
+    else if (action === 'download') {
+      if (m.media) saveFile(m.media.url, m.media.name);
+    }
     else if (action === 'edit') {
       setDraft(m.body ?? '');
       setActionError(null);

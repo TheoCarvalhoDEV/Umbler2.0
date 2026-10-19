@@ -255,3 +255,60 @@ describe('MessageBubble media that is not on the server', () => {
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/messages/m1/media', body: undefined }));
   });
 });
+
+describe('MessageBubble saving a file', () => {
+  const doc: MessageDto = {
+    ...base, kind: 'document', body: null, media: { url: '/api/media/m1', mime: 'application/pdf', name: 'contrato.pdf', size: 2048 },
+  };
+
+  it('shows a download link with the original name on stored media', () => {
+    renderBubble(doc);
+    const link = screen.getByRole('link', { name: 'Baixar arquivo' });
+    expect(link.getAttribute('href')).toBe('/api/media/m1');
+    expect(link.getAttribute('download')).toBe('contrato.pdf');
+    cleanup();
+    renderBubble({ ...doc, kind: 'image', media: { ...doc.media!, mime: 'image/png', name: null } });
+    expect(screen.getByRole('link', { name: 'Baixar arquivo' }).getAttribute('download')).toBe('');
+  });
+
+  it('offers Baixar arquivo in the menu, also in a closed chat, and never without a stored file', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    renderBubble(doc, { chatOpen: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Ações da mensagem' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Baixar arquivo/ }));
+    expect(click).toHaveBeenCalledTimes(1);
+    click.mockRestore();
+    cleanup();
+    renderBubble({ ...doc, media: null, mediaUnavailable: true, body: 'legenda' }, { chatOpen: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Ações da mensagem' }));
+    expect(screen.queryByRole('menuitem', { name: /^Baixar arquivo/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Baixar arquivo' })).toBeNull();
+  });
+});
+
+describe('MessageBubble media viewer', () => {
+  const media = { url: '/api/media/m1', mime: 'application/pdf', name: 'contrato.pdf', size: 2048 };
+  const doc: MessageDto = { ...base, kind: 'document', body: null, media };
+  const viewer = () => screen.queryByRole('dialog', { hidden: true });
+
+  it('opens a photo in the page, not in a new tab, and closes on Fechar', () => {
+    renderBubble({ ...doc, kind: 'image', media: { ...media, mime: 'image/png', name: null } });
+    expect(document.querySelector('a[target="_blank"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir imagem' }));
+    expect(viewer()?.querySelector('img')?.getAttribute('src')).toBe('/api/media/m1');
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar', hidden: true }));
+    expect(viewer()).toBeNull();
+  });
+
+  it('shows a PDF in the page and offers only the download for other documents', () => {
+    renderBubble(doc);
+    fireEvent.click(screen.getByRole('button', { name: /contrato.pdf/ }));
+    expect(viewer()?.querySelector('iframe')?.getAttribute('src')).toBe('/api/media/m1');
+    cleanup();
+    renderBubble({ ...doc, media: { ...media, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name: 'peticao.docx' } });
+    fireEvent.click(screen.getByRole('button', { name: /peticao.docx/ }));
+    expect(viewer()?.querySelector('iframe')).toBeNull();
+    expect(viewer()?.textContent).toContain('não tem pré-visualização');
+    expect(viewer()?.querySelector('a[download="peticao.docx"]')).toBeTruthy();
+  });
+});
