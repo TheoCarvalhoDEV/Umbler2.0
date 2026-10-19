@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createEvolutionGateway, jidOf } from '../../src/whatsapp/evolution.js';
+import { GatewayError } from '../../src/whatsapp/types.js';
 
 const PHONE = '5565999999999';
 const JSON_HEADERS = { apikey: 'k-123', 'content-type': 'application/json' };
@@ -226,6 +227,63 @@ describe('createEvolutionGateway', () => {
     const { wa, req } = setup(200, { instance: { state: 'open' } });
     await wa.connectionState('a b');
     expect(req().url).toBe('http://evolution:8080/instance/connectionState/a%20b');
+  });
+
+  it('findMessages posts both ISO bounds, the offset and the page, and reads the page', async () => {
+    const record = { key: { id: 'A1', remoteJid: '556599999999@s.whatsapp.net', fromMe: false }, messageTimestamp: 1790000000 };
+    const { wa, req } = setup(200, { messages: { total: 1, pages: 1, currentPage: 2, records: [record] } });
+    await expect(
+      wa.findMessages('talk-abc', { gte: new Date('2026-09-01T00:00:00Z'), lte: new Date('2026-09-30T23:59:59Z'), page: 2, offset: 500 }),
+    ).resolves.toEqual({ total: 1, pages: 1, records: [record] });
+    expect(req()).toEqual({
+      url: 'http://evolution:8080/chat/findMessages/talk-abc',
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: { where: { messageTimestamp: { gte: '2026-09-01T00:00:00.000Z', lte: '2026-09-30T23:59:59.000Z' } }, offset: 500, page: 2 },
+    });
+  });
+
+  it("findMessages caps lte at Evolution's int4 seconds limit", async () => {
+    const { wa, req } = setup(200, { messages: { total: 0, pages: 0, currentPage: 1, records: [] } });
+    await wa.findMessages('talk-abc', { gte: new Date('2009-01-01T00:00:00Z'), lte: new Date('2100-01-01T00:00:00Z'), page: 1, offset: 500 });
+    expect(req().body.where.messageTimestamp.lte).toBe('2038-01-19T03:14:07.000Z');
+  });
+
+  it('findMessages answers an empty page for an answer without records', async () => {
+    const { wa } = setup(200, {});
+    await expect(
+      wa.findMessages('talk-abc', { gte: new Date(0), lte: new Date(1000), page: 1, offset: 500 }),
+    ).resolves.toEqual({ total: 0, pages: 0, records: [] });
+  });
+
+  it('findContacts returns the remoteJid and push name of each Contact row', async () => {
+    const { wa, req } = setup(200, [
+      { id: 'c1', remoteJid: '201234567890123@lid', pushName: 'Maria Souza', profilePicUrl: null },
+      { id: 'c2', remoteJid: '556599999999@s.whatsapp.net', pushName: '' },
+      { id: 'c3' },
+    ]);
+    await expect(wa.findContacts('talk-abc')).resolves.toEqual([
+      { remoteJid: '201234567890123@lid', pushName: 'Maria Souza' },
+      { remoteJid: '556599999999@s.whatsapp.net', pushName: null },
+    ]);
+    expect(req()).toMatchObject({ url: 'http://evolution:8080/chat/findContacts/talk-abc', method: 'POST', body: { where: {} } });
+  });
+
+  it('downloadMediaById asks Evolution by key.id only', async () => {
+    const { wa, req } = setup(201, { mediaType: 'imageMessage', fileName: 'x.jpeg', mimetype: 'image/jpeg', base64: 'QUJD' });
+    await expect(wa.downloadMediaById('talk-abc', '3EB0FOTO')).resolves.toEqual({ base64: 'QUJD', mime: 'image/jpeg', fileName: 'x.jpeg' });
+    expect(req()).toMatchObject({
+      url: 'http://evolution:8080/chat/getBase64FromMediaMessage/talk-abc',
+      method: 'POST',
+      body: { message: { key: { id: '3EB0FOTO' } }, convertToMp4: false },
+    });
+  });
+
+  it('a non-2xx answer throws GatewayError carrying the HTTP status', async () => {
+    const { wa } = setup(400, { status: 400, error: 'Bad Request', response: { message: ['Error: Failed to fetch stream from https://mmg.whatsapp.net/x'] } });
+    const err = await wa.downloadMediaById('talk-abc', '3EB0VELHA').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(GatewayError);
+    expect(err).toMatchObject({ name: 'GatewayError', status: 400 });
   });
 });
 
