@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { CaretDown } from '@phosphor-icons/react';
 import {
   QUICK_REACTIONS, deleteBlock, editBlock, forwardBlock, isSingleEmoji, reactBlock, replyBlock, type ActionBlock, type MessageDto,
@@ -33,6 +33,14 @@ export function menuItems(m: MessageDto, meId: string | null, chatOpen: boolean,
 
 const firstGrapheme = (s: string) => [...new Intl.Segmenter('pt-BR', { granularity: 'grapheme' }).segment(s.trim())][0]?.segment ?? '';
 
+/** Visible box the menu must fit in: the nearest scrolling ancestor (the timeline), else the viewport. */
+function clipBox(el: HTMLElement): { top: number; bottom: number } {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (/auto|scroll|hidden/.test(getComputedStyle(p).overflowY)) return p.getBoundingClientRect();
+  }
+  return { top: 0, bottom: window.innerHeight };
+}
+
 export interface MessageMenuProps {
   items: MenuItem[];
   officeReaction: string | null;
@@ -52,6 +60,18 @@ export function MessageMenu(props: MessageMenuProps) {
   const [reacting, setReacting] = useState(false);
   const [other, setOther] = useState('');
   const [otherError, setOtherError] = useState(false);
+  // Near the bottom of the timeline the menu would be clipped: open it upward instead.
+  const [up, setUp] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!props.open || !triggerRef.current || !menuRef.current) return;
+    const btn = triggerRef.current.getBoundingClientRect();
+    const h = menuRef.current.offsetHeight + 4;
+    const box = clipBox(triggerRef.current);
+    const below = box.bottom - btn.bottom;
+    setUp(below < h && btn.top - box.top > below);
+  }, [props.open, reacting]);
   if (props.items.length === 0) return null;
 
   function close() {
@@ -91,6 +111,7 @@ export function MessageMenu(props: MessageMenuProps) {
       }}
     >
       <button
+        ref={triggerRef}
         type="button"
         aria-label="Ações da mensagem"
         title="Ações da mensagem"
@@ -105,11 +126,12 @@ export function MessageMenu(props: MessageMenuProps) {
         <>
           <div className="fixed inset-0 z-10" aria-hidden onClick={close} />
           <div
+            ref={menuRef}
             role="menu"
             aria-label="Ações da mensagem"
-            className={`absolute top-full z-20 mt-1 w-60 rounded-md border border-border bg-panel py-1 text-sm text-fg shadow-lg ${
-              props.alignRight ? 'right-0' : 'left-0'
-            }`}
+            className={`absolute z-20 w-60 rounded-md border border-border bg-panel py-1 text-sm text-fg shadow-lg ${
+              up ? 'bottom-full mb-1' : 'top-full mt-1'
+            } ${props.alignRight ? 'right-0' : 'left-0'}`}
           >
             {reacting ? (
               <div className="px-2 py-1">
