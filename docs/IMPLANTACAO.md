@@ -72,13 +72,48 @@ Depois disso, entre em `https://talk.jvo.adv.br` e crie os demais usuários pela
 ## 4. Conectar o WhatsApp
 
 1. Entre como administrador e vá em **Configurações → Canais**.
-2. Crie o canal e clique em **Gerar novo QR / Reconectar**.
+2. Crie o canal. Em **Período do histórico** escolha **3 meses**, **12 meses** ou **Tudo** e clique em **Gerar novo QR / Reconectar**. Enquanto o código é preparado a tela mostra "Gerando QR code…".
 3. No celular do escritório: WhatsApp → **Aparelhos conectados** → **Conectar um aparelho** → leia o QR.
-4. O status muda para **Conectado** e o banner vermelho "WhatsApp desconectado" some.
+4. O status muda para **Conectado** e aparece "Importando histórico… N mensagens". O celular manda o histórico recente (cerca de 3,5 meses, mesmo com "12 meses" ou "Tudo") e o sistema copia em segundo plano por até 1 hora. No fim: "Histórico importado: N mensagens, desde DD/MM/AAAA".
 
 Atenção: conectar o mesmo número aqui desconecta o número do Umbler Talk. Faça isso só no dia da virada (seção 10).
 
-Se o canal cair (logout pelo celular, QR expirado), repita os passos 2 e 3. O botão **Gerar novo QR / Reconectar** serve para isso.
+Se o canal cair (logout pelo celular, QR expirado), depois de 1 minuto os administradores veem na caixa de entrada a faixa "Canal X desconectado: leia o QR code em Configurações › Canais". Repita os passos 2 e 3. **Importar histórico** copia de novo o que a Evolution já guardou, sem ler o QR.
+
+### 4.1 Histórico do WhatsApp e LGPD
+
+A Evolution guarda o histórico que o celular manda a cada leitura de QR (`DATABASE_SAVE_DATA_HISTORIC`, `DATABASE_SAVE_DATA_CHATS` e `DATABASE_SAVE_DATA_CONTACTS` = `"true"` no `docker-compose.yml`). Isso muda a decisão do núcleo (§6), que não guardava esse texto:
+
+- o banco `evolution` passa a ter o **texto** das conversas do celular, cerca de 1 kB por mensagem (~45 MB por leitura de QR com o volume do escritório), **inclusive de grupos**: o sistema não importa grupos, mas a Evolution os guarda;
+- a mídia não fica na Evolution: o sistema baixa só a das últimas 3 semanas para `data/media`;
+- esse banco já está no backup diário (`pg_dumpall`, seção 7) e segue as mesmas regras de acesso e retenção do núcleo. O dump fica maior.
+
+Não há tela para apagar o histórico da Evolution. Depois que a importação terminou ("Histórico importado…" em Configurações › Canais), você pode apagar da Evolution as mensagens com mais de N dias. O que já foi importado continua no sistema. Use N de pelo menos **30**: o botão **Baixar** e a recuperação de mensagens perdidas usam as linhas recentes. **Importar histórico** só traz de novo o que ainda estiver na Evolution.
+
+```bash
+docker compose exec postgres psql -U postgres -d evolution
+```
+
+```sql
+-- 1) Conte antes (troque 90 pelo número de dias que vai manter):
+SELECT i.name AS instancia, count(*) AS mensagens
+FROM evolution_api."Message" m
+JOIN evolution_api."Instance" i ON i.id = m."instanceId"
+WHERE m."messageTimestamp" < extract(epoch FROM now() - interval '90 days')
+GROUP BY i.name;
+
+-- 2) Apague só a instância do canal (o nome "talk-xxxxxxxx" do passo 1).
+--    As linhas de "MessageUpdate" dessas mensagens saem junto (cascata).
+BEGIN;
+DELETE FROM evolution_api."Message" m
+USING evolution_api."Instance" i
+WHERE i.id = m."instanceId"
+  AND i.name = 'talk-xxxxxxxx'
+  AND m."messageTimestamp" < extract(epoch FROM now() - interval '90 days');
+COMMIT;
+```
+
+Rode o passo 1 de novo: a instância não deve aparecer. Anote a data e o N usado no registro de tratamento de dados do escritório.
 
 ## 5. Importar do Umbler Talk
 
