@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { channels, historyImports, messages } from '../../src/db/schema.js';
 import { listChannels, setChannelQr, setChannelStatus } from '../../src/channels/service.js';
 import { IMPORT_RUNNING, startHistoryImport } from '../../src/history/imports.js';
-import { periodStart, runImportPass } from '../../src/history/jobs.js';
+import { periodStart, runBackfill, runImportPass } from '../../src/history/jobs.js';
 import { GatewayError } from '../../src/whatsapp/types.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 import { statusOf } from '../inbox/fixtures.js';
@@ -51,6 +51,19 @@ describe('startHistoryImport', () => {
 });
 
 describe('runImportPass', () => {
+  it('stops 30 min before now: a 5-min-old row is left to the webhook, and the back-fill copies it later', async () => {
+    ctx.wa.historyRecords.push(rec({ id: 'velha', at: '2026-10-10T12:00:00Z' }), rec({ id: 'viva', at: '2026-10-14T12:55:00Z' }));
+    const imp = await startHistoryImport(ctx, s.channelId, { period: '3m', auto: false });
+
+    await runImportPass(ctx, imp.id);
+    expect((await ctx.db.select().from(messages)).map((m) => m.externalId)).toEqual(['velha']);
+
+    await ctx.db.update(channels).set({ backfillUntil: new Date('2026-10-14T12:00:00Z') }).where(eq(channels.id, s.channelId));
+    ctx.clock.set(new Date('2026-10-14T13:40:00Z'));
+    await runBackfill(ctx, s.channelId);
+    expect((await ctx.db.select().from(messages)).map((m) => m.externalId).sort()).toEqual(['velha', 'viva']);
+  });
+
   it('a manual import copies its period once and ends done with the counts and the oldest date', async () => {
     ctx.wa.historyRecords.push(rec({ id: 'a', at: '2026-10-10T12:00:00Z' }), rec({ id: 'b', at: '2026-08-20T09:00:00Z' }));
     const imp = await startHistoryImport(ctx, s.channelId, { period: '3m', auto: false });

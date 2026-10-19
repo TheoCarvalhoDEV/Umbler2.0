@@ -23,12 +23,13 @@ export type MediaOutcome = 'saved' | 'expired' | 'failed' | 'skipped';
  */
 export async function downloadMessageMedia(ctx: AppCtx, messageId: string): Promise<MediaOutcome> {
   const [found] = await ctx.db
-    .select({ msg: messages, instance: channels.evolutionInstance })
+    .select({ msg: messages, instance: channels.evolutionInstance, status: channels.status })
     .from(messages)
     .innerJoin(channels, eq(channels.id, messages.channelId))
     .where(eq(messages.id, messageId));
   if (!found || found.msg.mediaPath || found.msg.mediaStatus === 'expired' || !found.msg.externalId) return 'skipped';
   const { msg, instance } = found;
+  if (found.status !== 'connected') return 'failed'; // channel down: nothing to ask, and the message keeps its state
   const stillMissing = and(eq(messages.id, msg.id), isNull(messages.mediaPath)); // a double click or the queue got there first
 
   let outcome: MediaOutcome;
@@ -83,10 +84,13 @@ export async function drainMediaQueue(ctx: AppCtx, signal?: AbortSignal): Promis
       .orderBy(desc(messages.sentAt))
       .limit(1);
     if (!next) break;
-    if ((await downloadMessageMedia(ctx, next.id)) === 'skipped') {
+    const outcome = await downloadMessageMedia(ctx, next.id);
+    if (outcome === 'skipped') {
       await ctx.db.update(messages).set({ mediaStatus: null }).where(eq(messages.id, next.id)); // not downloadable: leave the queue
     }
     tried += 1;
+    if (outcome === 'failed') break; // Evolution is probably down (the DB still says connected): don't turn the whole queue into "Baixar"
+
   }
   return tried;
 }

@@ -77,7 +77,31 @@ describe('downloadMessageMedia', () => {
   });
 });
 
+describe('a disconnected channel', () => {
+  it('"Baixar" fails without asking Evolution or touching the message', async () => {
+    await ctx.db.update(channels).set({ status: 'disconnected' }).where(eq(channels.id, s.channelId));
+    const id = await media('aud1', '2026-10-10T12:00:00Z', { error: MEDIA_UNAVAILABLE });
+
+    expect(await downloadMessageMedia(ctx, id)).toBe('failed');
+
+    expect(await row(id)).toMatchObject({ mediaStatus: null, error: MEDIA_UNAVAILABLE, mediaPath: null });
+    expect(ctx.wa.mediaLookups).toEqual([]);
+  });
+});
+
 describe('drainMediaQueue', () => {
+  it('stops at the first failed download and leaves the rest queued', async () => {
+    const a = await queued('a', '2026-10-12T12:00:00Z');
+    const b = await queued('b', '2026-10-10T12:00:00Z');
+    ctx.wa.mediaById.set('a', new Error('connect ECONNREFUSED'));
+
+    expect(await drainMediaQueue(ctx)).toBe(1);
+
+    expect(ctx.wa.mediaLookups.map((l) => l.externalId)).toEqual(['a']);
+    expect((await row(b)).mediaStatus).toBe('queued');
+    expect((await row(a)).error).toBe(MEDIA_UNAVAILABLE);
+  });
+
   it('downloads queued media one at a time, newest first; what aged past 21 days becomes expired unasked', async () => {
     const a = await queued('a', '2026-10-10T12:00:00Z');
     const b = await queued('b', '2026-10-12T12:00:00Z');

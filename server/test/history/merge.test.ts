@@ -103,6 +103,8 @@ describe('mergeLidPairs (§5.4)', () => {
     expect(await ctx.db.select().from(chats).where(eq(chats.contactId, phoneId))).toHaveLength(1);
     expect(await chatById(phoneChat)).toMatchObject({ createdAt: at('2026-08-01T10:00:00Z'), closedAt: at('2026-09-03T10:00:00Z') });
     expect((await ctx.db.select().from(messages).where(eq(messages.id, m1)))[0]!.chatId).toBe(phoneChat);
+    expect(ctx.hub.events).toContainEqual({ type: 'chat.removed', chatId: lidChat }); // the absorbed chat leaves every client
+    expect(ctx.hub.events).toContainEqual({ type: 'chat', chatId: phoneChat });
   });
 
   it('without a contact holding that phone, the LID-only contact only gains the phone', async () => {

@@ -38,14 +38,16 @@ async function absorb(tx: Tx, from: ChatRow, twin: ChatRow): Promise<void> {
     .where(eq(chats.id, twin.id));
 }
 
-/** Joins `from` (LID only) into `into` (has the phone); returns the ids of the chats that now hold `from`'s history. */
-async function moveContact(tx: Tx, from: Contact, into: Contact): Promise<string[]> {
+/** Joins `from` (LID only) into `into` (has the phone); returns the chats that now hold `from`'s history and the absorbed ones that are gone. */
+async function moveContact(tx: Tx, from: Contact, into: Contact): Promise<{ touched: string[]; removed: string[] }> {
   const touched = new Set<string>();
+  const removed: string[] = [];
   for (const chat of await tx.select().from(chats).where(eq(chats.contactId, from.id))) {
     const twin = await twinOf(tx, chat, into.id);
     if (twin) {
       await absorb(tx, chat, twin);
       touched.add(twin.id);
+      removed.push(chat.id);
     } else {
       await tx.update(chats).set({ contactId: into.id }).where(eq(chats.id, chat.id));
       touched.add(chat.id);
@@ -78,7 +80,7 @@ async function moveContact(tx: Tx, from: Contact, into: Contact): Promise<string
     })
     .where(eq(contacts.id, into.id));
   for (const id of touched) await addEvent(tx, id, 'contact_merged', {}, null);
-  return [...touched];
+  return { touched: [...touched], removed };
 }
 
 /**
@@ -100,12 +102,13 @@ export async function mergeLidPairs(ctx: AppCtx, pairs: Array<{ lid: string; pho
         await tx.update(contacts).set({ phone, updatedAt: new Date() }).where(eq(contacts.id, from.id));
         return null;
       }
-      return { chatIds: await moveContact(tx, from, into), avatarPath: from.avatarPath };
+      return { ...(await moveContact(tx, from, into)), avatarPath: from.avatarPath };
     });
     if (!out) continue;
     merged += 1;
     if (out.avatarPath) await removeAvatarFile(ctx.config.mediaDir, out.avatarPath).catch(() => undefined);
-    for (const chatId of out.chatIds) await ctx.hub.publishChat(chatId);
+    for (const chatId of out.removed) ctx.hub.publishChatRemoved(chatId);
+    for (const chatId of out.touched) await ctx.hub.publishChat(chatId);
   }
   return merged;
 }

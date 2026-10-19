@@ -12,6 +12,8 @@ const MIN = 60_000;
 const AUTO_REPEAT_MS = 2 * MIN;
 const AUTO_QUIET_MS = 10 * MIN;
 const AUTO_MAX_MS = 60 * MIN;
+/** The last 30 min still belong to the webhook (Evolution retries ~20 min): there a message keeps its queue and bots. */
+const BACKFILL_LAG_MS = 30 * MIN;
 /** "Tudo" starts the year WhatsApp launched: monthly windows from there are ~210 cheap requests. */
 const ALL_START = new Date('2009-01-01T00:00:00Z');
 
@@ -25,7 +27,7 @@ export function periodStart(period: HistoryPeriod, now: Date): Date {
 }
 
 /**
- * One pass of a running import (§5.1–5.6): copies [periodStart, now], adds the counts after each page and publishes
+ * One pass of a running import (§5.1–5.6): copies [periodStart, now - 30 min] (the rest is the webhook's; the back-fill picks it up later), adds the counts after each page and publishes
  * channel.status, then decides done / next pass in 2 min / failed. Returns the updated row, or null when the import
  * is no longer running.
  */
@@ -42,7 +44,7 @@ export async function runImportPass(ctx: AppCtx, importId: string): Promise<Hist
   let inserted = 0;
   let patch: Partial<typeof historyImports.$inferInsert>;
   try {
-    await copyRange(ctx, channel, periodStart(imp.period, now), now, async (r) => {
+    await copyRange(ctx, channel, periodStart(imp.period, now), new Date(now.getTime() - BACKFILL_LAG_MS), async (r) => {
       if (r.inserted === 0 && r.contactsCreated === 0) return;
       inserted += r.inserted;
       await ctx.db
@@ -73,8 +75,6 @@ export async function runImportPass(ctx: AppCtx, importId: string): Promise<Hist
 
 /** §6: back-fill cadence (also once at boot). */
 export const BACKFILL_EVERY_MS = 5 * MIN;
-/** The last 30 min still belong to the webhook (Evolution retries ~20 min): there a message keeps its queue and bots. */
-const BACKFILL_LAG_MS = 30 * MIN;
 const BACKFILL_OVERLAP_MS = 10 * MIN;
 
 /**
