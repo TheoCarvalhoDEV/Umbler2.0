@@ -31,7 +31,7 @@ describe('channel routes', () => {
       id: seed.channelId,
       name: expect.any(String),
       status: expect.stringMatching(/^(disconnected|connecting|connected)$/),
-      phone: null,
+      phone: null, historyPeriod: '3m', disconnectedAt: null, historyImport: null,
     });
   });
 
@@ -54,7 +54,7 @@ describe('channel routes', () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body).toEqual({ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null });
+    expect(body).toEqual({ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null, historyPeriod: '3m', disconnectedAt: null, historyImport: null });
     expect(spy).toHaveBeenCalledWith(`talk-${body.id.slice(0, 8)}`, expect.stringContaining('/webhooks/evolution/'));
   });
 

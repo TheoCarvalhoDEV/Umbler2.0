@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm';
 import type { NotificationDto, WsEvent } from '@talk/shared';
+import { loadChannelDto } from '../channels/service.js';
 import type { Db } from '../db/client.js';
-import { channels, chats, messages } from '../db/schema.js';
+import { chats, messages } from '../db/schema.js';
 import { toChatListItem } from '../inbox/queries.js';
 import { canSee, loadAuthUser, type AuthUser } from '../inbox/visibility.js';
 import { toMessageDto } from '../messages/dto.js';
@@ -86,12 +87,9 @@ export function createHub(getDb: () => Db): Hub {
 
     async publishChannel(channelId) {
       if (byUser.size === 0) return;
-      const [row] = await getDb().select().from(channels).where(eq(channels.id, channelId));
-      if (!row) return;
-      const event: WsEvent = {
-        type: 'channel.status',
-        channel: { id: row.id, name: row.name, status: row.status, phone: row.phone },
-      };
+      const channel = await loadChannelDto(getDb(), channelId); // with the import progress (history spec §5.6)
+      if (!channel) return;
+      const event: WsEvent = { type: 'channel.status', channel };
       for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, event);
     },
 

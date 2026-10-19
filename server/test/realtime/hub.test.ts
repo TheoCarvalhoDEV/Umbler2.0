@@ -182,7 +182,7 @@ describe('createHub.publishChannel', () => {
 
     await hub.publishChannel(s.channelId);
 
-    const event = { type: 'channel.status', channel: { id: row.id, name: row.name, status: 'connected', phone: '5565999990000' } };
+    const event = { type: 'channel.status', channel: { id: row.id, name: row.name, status: 'connected', phone: '5565999990000', historyPeriod: '3m', disconnectedAt: null, historyImport: null } };
     expect(a.events).toEqual([event]);
     expect(b.events).toEqual([event]);
   });

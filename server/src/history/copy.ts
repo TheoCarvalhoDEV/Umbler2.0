@@ -62,7 +62,7 @@ export async function copyRange(
   try {
     for (const w of monthlyWindows(from, to)) {
       // ponytail: OFFSET pages over "messageTimestamp DESC" with no tiebreaker may swap a row at a page edge inside a
-      // same-second group (measured: never at offset 500); the next import or back-fill pass picks a missed row up.
+      // same-second group (measured: never at offset 500); a later import pass over the same window picks a missed row up.
       for (let page = 1, pages = 1; page <= pages; page += 1) {
         const res = await ctx.wa.findMessages(channel.evolutionInstance, { gte: w.gte, lte: w.lte, page, offset: PAGE_SIZE });
         pages = res.pages;
@@ -75,7 +75,8 @@ export async function copyRange(
       }
     }
   } finally {
-    await writeHistoryEvents(ctx, historyCounts);
+    // best effort: a failure here must not mask the Evolution error that is propagating
+    await writeHistoryEvents(ctx, historyCounts).catch((err: unknown) => console.error('history: writing events failed', errorTag(err)));
   }
   return totals;
 }
