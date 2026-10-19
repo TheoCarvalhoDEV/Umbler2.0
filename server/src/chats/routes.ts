@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { stopRunsForChat } from '../bots/engine.js';
 import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
+import { downloadMediaForUser } from '../history/media.js';
 import {
   assumeChat, closeChat, getChatForUser, markChatRead, pinChat, reopenChat, setChatPrivacy, startChat, transferChat,
   type ChatRow,
@@ -188,6 +189,9 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
     r.post('/api/messages/:id/resend', async (req) =>
       resendMessage(ctx, req.user, idParams.parse(req.params).id),
     );
+
+    // §5.5 "Baixar": one download by key.id for a media message that has no file yet
+    r.post('/api/messages/:id/media', async (req) => downloadMediaForUser(ctx, req.user, idParams.parse(req.params).id));
 
     r.post('/api/messages/:id/reaction', async (req) =>
       reactToMessage(ctx, req.user, idParams.parse(req.params).id, reactionBody.parse(req.body).emoji),

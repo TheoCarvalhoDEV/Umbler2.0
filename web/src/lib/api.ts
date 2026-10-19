@@ -196,6 +196,8 @@ export const api = Object.assign(call, {
   messages: {
     resend: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/resend`),
     mediaUrl: (messageId: string) => `/api/media/${enc(messageId)}`,
+    /** "Baixar": one download try for a media message without a file (history spec §5.5). */
+    downloadMedia: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/media`),
     /** '' or the current emoji removes the office's reaction. */
     react: (messageId: string, emoji: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/reaction`, { emoji }),
     /** Delete for everyone. */

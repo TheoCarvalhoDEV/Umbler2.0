@@ -6,7 +6,7 @@ import { userAvatarUrl } from '../media/avatar-files.js';
 
 type MessageRow = typeof messages.$inferSelect;
 
-const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
+export const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 
 const PREVIEW_LABEL: Record<MessageDto['kind'], string> = {
   text: '',
@@ -62,6 +62,8 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
     // when the download fails; while a download is still running this is briefly true and the
     // message.updated that follows the download carries the file.
     mediaUnavailable: row.mediaPath == null && MEDIA_KINDS.has(row.kind),
+    // §5.5: WhatsApp no longer has the file (history older than 3 weeks, or a 400 on download); never retried
+    mediaExpired: row.mediaStatus === 'expired',
     authorId: row.authorId,
     authorName: author?.name ?? null,
     authorAvatarUrl: author ? userAvatarUrl(author) : null,

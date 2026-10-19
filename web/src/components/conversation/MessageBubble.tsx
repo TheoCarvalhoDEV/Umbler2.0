@@ -34,11 +34,50 @@ function StatusTick({ status }: { status: MessageDto['status'] }) {
   }
 }
 
+/** §5.5: one download try; the answer replaces the message in the timeline cache. */
+function DownloadButton({ m }: { m: MessageDto }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function download() {
+    setBusy(true);
+    setError(null);
+    try {
+      applyWsEvent(qc, { type: 'message.updated', message: await api.messages.downloadMedia(m.id) });
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button type="button" onClick={() => void download()} disabled={busy} className="font-semibold not-italic underline disabled:opacity-50">
+        Baixar
+      </button>
+      {error && (
+        <span role="alert" className="not-italic text-danger">
+          {error}
+        </span>
+      )}
+    </>
+  );
+}
+
 function MediaView({ m }: { m: MessageDto }) {
-  if (m.mediaUnavailable) {
+  if (m.mediaExpired) {
     return (
       <p className="flex items-center gap-1 text-sm italic text-muted">
-        <ImageBroken size={16} /> mídia indisponível
+        <ImageBroken size={16} /> Arquivo não está mais disponível no WhatsApp
+      </p>
+    );
+  }
+  if (m.mediaUnavailable) {
+    return (
+      <p className="flex flex-wrap items-center gap-2 text-sm italic text-muted">
+        <ImageBroken size={16} /> mídia indisponível <DownloadButton m={m} />
       </p>
     );
   }
