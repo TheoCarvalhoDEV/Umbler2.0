@@ -15,12 +15,12 @@ import type { InboundEvent } from '../whatsapp/types.js';
 import { messagePreview } from './dto.js';
 import { saveMedia } from './media.js';
 
-type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
+export type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
 type StatusEvent = Extract<InboundEvent, { type: 'status' }>;
 type RevokeEvent = Extract<InboundEvent, { type: 'revoke' }>;
 type EditEvent = Extract<InboundEvent, { type: 'edit' }>;
 type MessageStatus = (typeof messages.$inferSelect)['status'];
-type Contact = typeof contacts.$inferSelect;
+export type Contact = typeof contacts.$inferSelect;
 
 /** Test seams. The bot hooks are optional so triage-only stubs keep compiling; a missing hook uses the real code. */
 export interface IngestHooks {
@@ -173,7 +173,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
         .limit(1);
       if (dup) throw new Skip(); // duplicate webhook, or the echo of a message we sent ourselves
 
-      const contact = await resolveContact(tx, ev);
+      const contact = (await resolveContact(tx, ev))?.contact;
       if (!contact || contact.blocked) throw new Skip();
 
       const { chat, created } = await findOrOpenChat(tx, {
@@ -182,15 +182,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
         init: { sectorId: await getDefaultSectorId(tx), ownerId: null, waiting: inbound, triagePending: false, createdBy: null },
       });
 
-      let replyToId: string | null = null;
-      if (ev.replyToExternalId) {
-        const [quoted] = await tx
-          .select({ id: messages.id })
-          .from(messages)
-          .where(and(eq(messages.channelId, channelId), eq(messages.externalId, ev.replyToExternalId)))
-          .limit(1);
-        replyToId = quoted?.id ?? null;
-      }
+      const replyToId = await replyToIdOf(tx, channelId, ev.replyToExternalId);
 
       const [inserted] = await tx
         .insert(messages)
@@ -273,20 +265,44 @@ async function lookup(tx: Tx, phone: string | null, lid: string | null) {
   };
 }
 
-/** Match by normalized phone, then by lid; fill what is missing; create on first contact (race-safe). */
-async function resolveContact(tx: Tx, ev: MessageEvent): Promise<Contact | undefined> {
+/** The stored message a quote points at, if the app has it. */
+export async function replyToIdOf(tx: Tx, channelId: string, externalId: string | null | undefined): Promise<string | null> {
+  if (!externalId) return null;
+  const [quoted] = await tx
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.channelId, channelId), eq(messages.externalId, externalId)))
+    .limit(1);
+  return quoted?.id ?? null;
+}
+
+/**
+ * Match by normalized phone, then by lid; fill what is missing; create on first contact (race-safe).
+ * `name` defaults to the push name of inbound messages (on fromMe it is the office's own name); the history
+ * import passes the name it trusts (spec 2026-10-16 §5.4). `created` = this call inserted the contact.
+ */
+export async function resolveContact(
+  tx: Tx,
+  ev: MessageEvent,
+  name: string | null = ev.direction === 'in' ? ev.pushName : null,
+): Promise<{ contact: Contact; created: boolean } | undefined> {
   const phone = ev.phone ? normalizePhoneBR(ev.phone) : null;
-  const name = ev.direction === 'in' ? ev.pushName : null; // on fromMe messages pushName is the office's own name
   if (!phone && !ev.lid) return undefined;
 
   const { byPhone, byLid } = await lookup(tx, phone, ev.lid);
-  // ponytail: when phone and lid point at two different contacts we use the phone one and do not merge
+  // ponytail: when phone and lid point at two different contacts we use the phone one; the history
+  // copy joins a LID-only contact into the phone one (history/merge.ts)
   const found = byPhone ?? byLid;
 
   if (!found) {
-    await tx.insert(contacts).values({ id: randomUUID(), phone, lid: ev.lid, name }).onConflictDoNothing();
+    const [inserted] = await tx
+      .insert(contacts)
+      .values({ id: randomUUID(), phone, lid: ev.lid, name })
+      .onConflictDoNothing()
+      .returning({ id: contacts.id });
     const again = await lookup(tx, phone, ev.lid);
-    return again.byPhone ?? again.byLid;
+    const contact = again.byPhone ?? again.byLid;
+    return contact ? { contact, created: !!inserted } : undefined;
   }
 
   const patch: Partial<typeof contacts.$inferInsert> = {};
@@ -296,7 +312,7 @@ async function resolveContact(tx: Tx, ev: MessageEvent): Promise<Contact | undef
   if (Object.keys(patch).length > 0) {
     await tx.update(contacts).set({ ...patch, updatedAt: new Date() }).where(eq(contacts.id, found.id));
   }
-  return found;
+  return { contact: found, created: false };
 }
 
 /** Runs after commit; a failed download never loses the message (§5.1 step 6). */
