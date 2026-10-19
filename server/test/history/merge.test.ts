@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, messages, tags } from '../../src/db/schema.js';
+import {
+  chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, tags,
+} from '../../src/db/schema.js';
 import { mergeLidPairs } from '../../src/history/merge.js';
 import { placeRecords } from '../../src/history/place.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
@@ -112,6 +114,16 @@ describe('mergeLidPairs (§5.4)', () => {
     expect(await mergeLidPairs(ctx, pair)).toBe(0);
     const [c] = await ctx.db.select().from(contacts).where(eq(contacts.id, lidId));
     expect(c).toMatchObject({ phone: PHONE, lid: LID });
+  });
+
+  it("moves a deleted chat's tombstone to the phone contact, so the merge never brings the chat back", async () => {
+    const lidId = await lidOnly();
+    const phoneId = await newContact(ctx, { phone: PHONE, name: 'Maria' });
+    const now = at('2026-10-19T12:00:00.000Z');
+    await ctx.db.insert(deletedChats).values({ id: randomUUID(), contactId: lidId, channelId: s.channelId, until: now, deletedAt: now });
+    await mergeLidPairs(ctx, pair);
+    const rows = await ctx.db.select({ contactId: deletedChats.contactId }).from(deletedChats);
+    expect(rows).toEqual([{ contactId: phoneId }]);
   });
 
   it('leaves a contact that already has a phone alone', async () => {

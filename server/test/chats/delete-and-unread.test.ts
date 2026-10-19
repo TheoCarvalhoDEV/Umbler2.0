@@ -114,6 +114,17 @@ describe('DELETE /api/chats/:id', () => {
   });
 });
 
+describe('deleteChat tombstone', () => {
+  it('covers a message stamped after the server clock (phone clock ahead)', async () => {
+    const { chatId } = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, phone: PHONE });
+    const ahead = new Date(ctx.botRuntime.now().getTime() + 5 * 60_000);
+    await seedMessage(ctx, chatId, s.channelId, ahead, { externalId: 'AHEAD' });
+    await deleteChat(ctx, await enableSeeAll(ctx, s.admin), chatId);
+    const [tomb] = await ctx.db.select().from(deletedChats);
+    expect(tomb?.until).toEqual(ahead);
+  });
+});
+
 describe('after a chat is deleted', () => {
   async function deleteSeeded() {
     const { chatId, contactId } = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, phone: PHONE });

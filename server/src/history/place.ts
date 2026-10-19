@@ -138,8 +138,7 @@ export async function placeRecords(
     const sectorId = await getDefaultSectorId(tx);
     // A chat an admin deleted never comes back: skip its contact's rows up to the deletion (live ingest is not affected).
     // ponytail: loads every tombstone of the channel once per batch (a handful of rows); filter by the batch's contacts
-    // if it ever grows. A LID-only contact merged into its phone contact loses its tombstone (cascade); acceptable
-    // because the merge happens on live rows first.
+    // if it ever grows. A LID-only contact's tombstone moves with it when merged (merge.ts).
     const tombs = await tx
       .select({ contactId: deletedChats.contactId, until: max(deletedChats.until) })
       .from(deletedChats)

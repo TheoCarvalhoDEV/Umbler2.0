@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
-import { and, asc, eq, gt, inArray, isNotNull, isNull, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, max, type SQL } from 'drizzle-orm';
 import { stopRunsForChat } from '../bots/engine.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -294,8 +294,11 @@ export async function deleteChat(ctx: AppCtx, user: AuthUser, chatId: string): P
       .where(and(eq(messages.chatId, chatId), isNotNull(messages.mediaPath)));
     // chatbot library files are shared by every chat that ran the bot
     const paths = rows.flatMap((r) => (r.path && !r.path.startsWith('bots/') ? [r.path] : []));
+    // a phone clock ahead of the server can stamp a message after `now`: cover every message of the chat
+    const [last] = await tx.select({ at: max(messages.sentAt) }).from(messages).where(eq(messages.chatId, chatId));
+    const until = last?.at && last.at > now ? last.at : now;
     await tx.insert(deletedChats).values({
-      id: randomUUID(), contactId: chat.contactId, channelId: chat.channelId, until: now, deletedBy: user.id, deletedAt: now,
+      id: randomUUID(), contactId: chat.contactId, channelId: chat.channelId, until, deletedBy: user.id, deletedAt: now,
     });
     await tx.delete(chats).where(eq(chats.id, chatId));
     if (paths.length === 0) return [];
