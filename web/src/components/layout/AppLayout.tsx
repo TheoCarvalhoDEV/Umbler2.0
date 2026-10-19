@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AddressBookIcon,
   ChatCircleDotsIcon,
@@ -8,12 +8,11 @@ import {
   SignOutIcon,
   type Icon,
 } from '@phosphor-icons/react';
-import { api, qk } from '../../lib/api';
 import { useCurrentUser, useLogout } from '../../lib/auth';
 import { Avatar } from '../Avatar';
 import { connectWs } from '../../lib/ws';
 import { NotificationPermissionButton, useMessageNotifications } from '../../lib/notify';
-import { ChannelBanner, downChannels } from './ChannelBanner';
+import { ChannelBanner } from './ChannelBanner';
 import { NotificationToasts } from './NotificationToasts';
 import { readThemePref, setThemePref, type ThemePref } from '../../lib/theme';
 
@@ -36,20 +35,6 @@ function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon
         </>
       )}
     </NavLink>
-  );
-}
-
-/** Everyone sees whether WhatsApp is up; the banner with the way back stays admin-only. */
-function ChannelStatus() {
-  const { data } = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
-  if (!data) return null;
-  const up = downChannels(data, Date.now()).length === 0;
-  return (
-    <p className="mb-3 flex flex-col items-center gap-1 text-[10px] font-medium text-rail-fg">
-      <span aria-hidden className={`size-2 rounded-full ${up ? 'bg-[#3fb27a] ring-3 ring-[#3fb27a]/25' : 'bg-[#f2777d] ring-3 ring-[#f2777d]/25'}`} />
-      <span>{up ? 'Online' : 'Offline'}</span>
-      <span className="sr-only">{up ? 'WhatsApp conectado' : 'WhatsApp desconectado'}</span>
-    </p>
   );
 }
 
@@ -129,12 +114,11 @@ export default function AppLayout() {
   return (
     <div className="flex h-dvh bg-ground text-fg">
       <nav className="flex w-20 shrink-0 flex-col items-center gap-1 bg-rail py-4" aria-label="Menu principal">
-        <img src="/logo-mark.png" alt="" className="mb-4 size-10" />
+        <img src="/logo-mark.svg" alt="" className="mb-4 size-10" />
         <NavItem to="/chats" label="Conversas" icon={ChatCircleDotsIcon} />
         <NavItem to="/contacts" label="Contatos" icon={AddressBookIcon} />
         <NavItem to="/configuracoes" label="Configurações" icon={GearSixIcon} />
         <div className="flex-1" />
-        <ChannelStatus />
         <UserMenu />
       </nav>
       <div className="flex min-w-0 flex-1 flex-col">
