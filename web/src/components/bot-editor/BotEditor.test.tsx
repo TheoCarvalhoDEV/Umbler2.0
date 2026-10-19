@@ -4,7 +4,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import type { BotDto, BotGraph, BotVersionDto, BotVersionSummaryDto } from '@talk/shared';
+import { confirmDialog } from '../../lib/confirm';
 import { BotEditor } from './BotEditor';
+
+vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => false) }));
 
 // React Flow measures nodes through ResizeObserver/offsetWidth and reads the zoom through DOMMatrixReadOnly; jsdom has neither.
 class ResizeObserverStub {
@@ -230,14 +233,13 @@ it('views an old version read-only and restores it as a draft', async () => {
 });
 
 it('asks before leaving with unsaved changes', async () => {
-  const confirm = vi.fn(() => false);
-  vi.stubGlobal('confirm', confirm);
+  const confirm = vi.mocked(confirmDialog).mockResolvedValue(false);
   renderEditor();
   fireEvent.click(await screen.findByRole('button', { name: 'Condição' }));
   fireEvent.click(screen.getByRole('link', { name: 'Voltar para a lista de chatbots' }));
-  await waitFor(() => expect(confirm).toHaveBeenCalledWith('Há alterações não salvas. Sair mesmo assim?'));
+  await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'Há alterações não salvas. Sair mesmo assim?' })));
   expect(screen.queryByText('Lista de chatbots')).toBeNull();
-  confirm.mockReturnValue(true);
+  confirm.mockResolvedValue(true);
   fireEvent.click(screen.getByRole('link', { name: 'Voltar para a lista de chatbots' }));
   expect(await screen.findByText('Lista de chatbots')).toBeTruthy();
 });

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { SectorDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
-import { confirmDialog } from '../../lib/confirm';
+import { confirmDialog, promptDialog } from '../../lib/confirm';
 
 export function SectorsSettings() {
   const list = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
@@ -29,10 +29,9 @@ export function SectorsSettings() {
     );
   }
 
-  function rename(s: SectorDto) {
-    // ponytail: native prompt for a one-field rename
-    const next = window.prompt('Novo nome do setor', s.name)?.trim();
-    if (next && next !== s.name) save.mutate(() => send(`/api/sectors/${s.id}`, 'PATCH', { name: next }));
+  async function rename(s: SectorDto) {
+    const next = await promptDialog({ title: 'Renomear setor', label: 'Nome do setor', initial: s.name, confirmLabel: 'Salvar', maxLength: 60 });
+    if (next) save.mutate(() => send(`/api/sectors/${s.id}`, 'PATCH', { name: next }));
   }
 
   async function remove(s: SectorDto) {
