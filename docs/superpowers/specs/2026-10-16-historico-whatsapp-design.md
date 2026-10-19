@@ -44,7 +44,7 @@ Teste real de 16/10 (número de teste, `HISTORIC/CHATS/CONTACTS=true`, só conta
 
 - `DATABASE_SAVE_DATA_HISTORIC`, `DATABASE_SAVE_DATA_CHATS`, `DATABASE_SAVE_DATA_CONTACTS` = `"true"` em `docker-compose.dev.yml` e `docker-compose.yml`.
 - `syncFullHistory` continua `false` (não passar no `createInstance`); `CONFIG_SESSION_PHONE_CLIENT` volta a `Atendimento` (prod) / `Atendimento (teste)` (dev), sem `CONFIG_SESSION_PHONE_NAME`.
-- Webhook continua com `MESSAGES_UPSERT, MESSAGES_UPDATE, CONNECTION_UPDATE, QRCODE_UPDATED` (sem `MESSAGES_SET`, sem `MESSAGES_EDITED`, que trava a fila da Evolution quando o app está fora).
+- Webhook continua com `MESSAGES_UPSERT, MESSAGES_UPDATE, MESSAGES_DELETE, CONNECTION_UPDATE, QRCODE_UPDATED` (o `MESSAGES_DELETE` veio das ações de mensagem) (sem `MESSAGES_SET`, sem `MESSAGES_EDITED`, que trava a fila da Evolution quando o app está fora).
 - **LGPD (altera núcleo §6):** a Evolution passa a guardar o texto do histórico do celular (~1 kB/mensagem), inclusive de grupos. Esse banco já segue as regras de backup/LGPD do núcleo. Documentar em `docs/IMPLANTACAO.md` um procedimento manual (SQL) para apagar mensagens da Evolution mais antigas que N dias depois da importação; não há tela para isso.
 
 ## 5. Importação do histórico

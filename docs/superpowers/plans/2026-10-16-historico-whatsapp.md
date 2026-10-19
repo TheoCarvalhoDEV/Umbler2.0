@@ -14,10 +14,11 @@
 
 - No new dependency in any workspace. Use the stdlib and what is installed.
 - Evolution stays `evoapicloud/evolution-api:v2.3.7`. In **both** `docker-compose.dev.yml` and `docker-compose.yml`: `DATABASE_SAVE_DATA_HISTORIC`, `DATABASE_SAVE_DATA_CHATS`, `DATABASE_SAVE_DATA_CONTACTS` = `"true"`; `CONFIG_SESSION_PHONE_CLIENT` = `Atendimento` (prod) / `Atendimento (teste)` (dev); no `CONFIG_SESSION_PHONE_NAME`. `syncFullHistory` is never passed to `createInstance`.
-- The instance webhook stays exactly `MESSAGES_UPSERT, MESSAGES_UPDATE, CONNECTION_UPDATE, QRCODE_UPDATED` (never `MESSAGES_SET`, never `MESSAGES_EDITED`, which stalls Evolution's queue while the app is down).
+- The instance webhook stays exactly what the message-actions delivery set: `MESSAGES_UPSERT, MESSAGES_UPDATE, MESSAGES_DELETE, CONNECTION_UPDATE, QRCODE_UPDATED` (`WEBHOOK_EVENTS` in `whatsapp/evolution.ts`, pushed to existing instances at boot by `syncWebhooks`). Never `MESSAGES_SET`, never `MESSAGES_EDITED`, which stalls Evolution's queue while the app is down. (Spec §4 lists the four events from before message actions; `MESSAGES_DELETE` carries live revokes and stays.) No task of this plan touches `WEBHOOK_EVENTS`, `webhookConfig`, `setWebhook` or `syncWebhooks`.
 - `findMessages`: `where.messageTimestamp {gte, lte}`, ISO strings with `Z`, both bounds always, `lte` ≤ `2038-01-19T03:14:07Z`; monthly windows from newest to oldest inside the period; `offset` 500; every page; repeated ids dropped by `key.id`.
 - Insert only ids the app does not have (`unique(channel_id, external_id)`); **never update** an existing message. Batches of ≤ 500 messages per transaction. `created_at` = `sent_at` on every copied message. No hub call per message: one `chat.updated` per open chat touched, after each batch commits.
 - Everything copied is history only: never `unread`, `waiting`, `triage_pending`, triage, bots, `startChannelBot`, `resumeBotsOnReply`, live media fetch or avatar refresh.
+- Message actions stay live-only (spec §2 "Fora: edição/remoção aplicadas a mensagens antigas"; §5.2 "nunca atualiza"). The parser now turns some rows into `revoke`, `edit` and `reaction` events (ingest's `applyRevoke`/`applyEdit`/`applyReaction`); a copy keeps only `type: 'message'` events, never calls those functions, and never writes `office_reaction`, `deleted_at/by/source`, `edited_at`, `forwarded_from_id` or `message_edits`. A row Evolution already rewrote after an edit or a delete is copied as Evolution holds it, without the "editada"/"apagada" mark.
 - Left out of every copy: groups, `status@broadcast`, `@newsletter`, `protocolMessage`, `associatedChildMessage`, `secretEncryptedMessage`, reactions, and all the parser already ignores. Groups stay out of scope.
 - Periods: `'3m' | '12m' | 'all'`, labels **3 meses**, **12 meses**, **Tudo**.
 - Timings: automatic import repeats every **2 min** and ends after **10 min without news** (at most **60 min** after it started); back-fill every **5 min** and at boot, window `backfill_until − 10 min` … `now − 30 min`; media download only for messages **≤ 21 days** old, one at a time, **30 s** timeout; down banner after **> 1 min** disconnected.
@@ -25,7 +26,7 @@
 - Logs carry only ids, counts and error name/code (`errorTag`). Never a body, phone, LID, name or Evolution's response text.
 - Import and back-fill never run inside the live ingest transaction. Inside `ctx.db.transaction(tx => …)` use only `tx` (PGlite deadlocks otherwise); publish to the hub only after commit.
 - Every user read of a chat, message or media goes through `canSee` / `visibleChatsWhere` (404 otherwise). History chats (`chats.history = true`) are visible to every logged-in user and read-only.
-- One migration, `0003`, generated with `npm run db:generate -w server -- --name historico_whatsapp`.
+- One migration, `0004` (after `0003_acoes_mensagem`), generated with `npm run db:generate -w server -- --name historico_whatsapp`; never hand-edited.
 - ESM with `.js` import extensions in server code, `strict: true`, ids from `crypto.randomUUID()`, `timestamptz` in UTC.
 - New DTO fields are optional in `@talk/shared` (existing literals keep compiling); the server always fills them.
 - Tests run on PGlite (`makeTestCtx` / `makeTestApp`) with the fake gateway and the fake clock (`2026-10-14T13:00:00Z`). No real network, no real timers: the worker is driven through `tick()` and `drainMediaQueue()`.
@@ -40,6 +41,7 @@ These are inputs the spec implies but its test list does not pin, most likely fi
 3. **A blocked contact.** Live ingest drops their messages; the import must do the same and must not create a history chat for them. **Owner: Task 3**, test `drops a blocked contact's history (Review Focus 3)`.
 4. **The channel drops while media is queued.** Evolution cannot fetch then; the queue must leave the items queued (not mark them failed or expired) and resume once the channel is back. **Owner: Task 6**, test `leaves queued media alone while the channel is disconnected (Review Focus 4)`.
 5. **The server restarts in the middle of an automatic import** (the phone can take 44 min to send everything). The import is a DB row; the next process must pick it up and keep repeating. **Owner: Task 8**, test `resumes an automatic import left running by a previous process (Review Focus 5)`.
+6. **The history holds a revoke, an edit or a reaction about a message the app already stores.** Since message actions the parser turns those rows into `revoke`/`edit`/`reaction` events; a copy must drop them, leaving the stored message, its marks and the timeline untouched. **Owner: Task 3**, test `never applies an edit, a revoke or a reaction found in the history (Review Focus 6)`.
 
 ---
 
@@ -57,7 +59,7 @@ Each line gives the path, the task that creates or first modifies it, and its re
 
 **Server**
 - `server/src/db/schema.ts` (T1): `channels.historyPeriod/backfillUntil/disconnectedAt`, `chats.history` + `chats_one_history_per_contact_channel`, `messages.mediaStatus` + `messages_media_queued_idx`, table `historyImports` + `history_imports_one_running_per_channel`.
-- `server/drizzle/0003_historico_whatsapp.sql`, `server/drizzle/meta/0003_snapshot.json`, `server/drizzle/meta/_journal.json` (T1): generated.
+- `server/drizzle/0004_historico_whatsapp.sql`, `server/drizzle/meta/0004_snapshot.json`, `server/drizzle/meta/_journal.json` (T1): generated.
 - `server/src/whatsapp/types.ts` (T2): `GatewayError`, `MessagePage`, `EvolutionContact`, gateway methods `findMessages`, `findContacts`, `downloadMediaById`.
 - `server/src/whatsapp/evolution.ts` (T2): the three calls; `call()` gets a per-call timeout and throws `GatewayError`.
 - `server/src/whatsapp/fake.ts` (T2): `historyRecords`, `findCalls`, `contactRecords`, `mediaById`, `mediaLookups`.
@@ -194,11 +196,11 @@ api.channels.importHistory(id: string, period: HistoryPeriod): Promise<ChannelDt
 ### Task 1: Schema, shared types, event texts and Evolution config
 
 **Files:**
-- Modify: `shared/src/index.ts:18` (`ChannelDto`), `:22` (`ChatListItem`), `:25-27` (`MessageDto`), `:29-31` (`ChatEventKind`)
-- Modify: `server/src/db/schema.ts:17` (import), `:63-71` (`channels`), `:141-165` (`chats`), `:177-207` (`messages`), end of file (`historyImports`)
-- Create (generated): `server/drizzle/0003_historico_whatsapp.sql`, `server/drizzle/meta/0003_snapshot.json`; Modify (generated): `server/drizzle/meta/_journal.json`
-- Modify: `web/src/components/conversation/model.ts:102-104` (`eventText`)
-- Modify: `docker-compose.dev.yml:31-46`, `docker-compose.yml:75-87`
+- Modify: `shared/src/index.ts:24` (`ChannelDto`), `:28` (`ChatListItem`), `:38` (end of `MessageDto`), `:40-43` (`ChatEventKind`)
+- Modify: `server/src/db/schema.ts:17` (import), `:63-71` (`channels`), `:141-165` (`chats`), `:177-216` (`messages`), end of file after `messageEdits` (`historyImports`)
+- Create (generated): `server/drizzle/0004_historico_whatsapp.sql`, `server/drizzle/meta/0004_snapshot.json`; Modify (generated): `server/drizzle/meta/_journal.json`
+- Modify: `web/src/components/conversation/model.ts:106-107` (`eventText`, after `message_edited`)
+- Modify: `docker-compose.dev.yml:31-46`, `docker-compose.yml:78-80`
 - Test: `server/test/db/schema.test.ts`, `web/src/components/conversation/model.test.ts`
 
 **Interfaces:**
@@ -210,13 +212,15 @@ api.channels.importHistory(id: string, period: HistoryPeriod): Promise<ChannelDt
 In `server/test/db/schema.test.ts`, change the import line and the table count, then add three tests inside `describe('database schema', …)`:
 
 ```ts
-import { botRuns, botVersions, bots, chats, contacts, historyImports, messages, sectors } from '../../src/db/schema.js';
+import { botRuns, botVersions, bots, chats, contacts, historyImports, messageEdits, messages, sectors } from '../../src/db/schema.js';
 ```
+
+(`messageEdits` stays: the `message action columns` tests use it.)
 
 ```ts
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(21);
+    expect(tables).toHaveLength(22);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
   });
@@ -266,14 +270,14 @@ describe('eventText for history events', () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `npm test -w server -- test/db/schema.test.ts`
-Expected: FAIL. `expected [ …20 tables ] to have a length of 21`; the `history_imports` test fails because `historyImports` is `undefined` (drizzle throws on `insert(undefined)`); the `chats` and columns tests fail with `column "history" of relation "chats" does not exist` / `historyPeriod` missing.
+Expected: FAIL. `expected [ …21 tables ] to have a length of 22` (21 = 20 of the core and chatbot plus `message_edits` of message actions); the `history_imports` test fails because `historyImports` is `undefined` (drizzle throws on `insert(undefined)`); the `chats` and columns tests fail with `column "history" of relation "chats" does not exist` / `historyPeriod` missing.
 
 Run: `npm test -w web -- src/components/conversation/model.test.ts`
 Expected: FAIL in `eventText for history events`: `expected undefined to be 'Histórico do WhatsApp importado: 1.234 mensagens'`.
 
 - [ ] **Step 3: Add the shared types**
 
-In `shared/src/index.ts`, replace line 18 (`export interface ChannelDto …`) with:
+In `shared/src/index.ts`, replace line 24 (`export interface ChannelDto …`) with:
 
 ```ts
 export type HistoryPeriod = '3m' | '12m' | 'all';
@@ -285,7 +289,7 @@ export interface ChannelDto { id: string; name: string; status: 'disconnected' |
   historyPeriod?: HistoryPeriod; disconnectedAt?: string | null; historyImport?: HistoryImportDto | null }
 ```
 
-Replace line 22 (`export interface ChatListItem …`) with:
+Replace line 28 (`export interface ChatListItem …`) with:
 
 ```ts
 export interface ChatListItem { id: string; contact: ContactRef; channelId: string; sectorId: string; ownerId: string | null; state: 'open' | 'closed'; waiting: boolean; private: boolean; unread: number; lastMessageAt: string | null; lastMessagePreview: string | null; pinned: boolean; tagIds: string[];
@@ -293,20 +297,22 @@ export interface ChatListItem { id: string; contact: ContactRef; channelId: stri
   history?: boolean }
 ```
 
-Replace lines 26-27 (the `// optional so existing literals compile …` comment and `botRunId?…`) with:
+Replace line 38 (`  forwarded?: boolean }`, the last line of `MessageDto`; the message-action fields above it stay) with:
 
 ```ts
-  // optional so existing literals compile; toMessageDto always fills them (Task 2 of 2a; mediaExpired: history Task 6)
-  botRunId?: string | null; botName?: string | null; mediaExpired?: boolean }
+  forwarded?: boolean;
+  // history media (spec 2026-10-16 historico §5.5), optional for the same reason; toMessageDto always fills it (history Task 6)
+  mediaExpired?: boolean }
 ```
 
-Replace lines 29-31 (`export type ChatEventKind = …`) with:
+Replace lines 40-43 (`export type ChatEventKind = …`, through the `message_deleted`/`message_edited` line) with:
 
 ```ts
 export type ChatEventKind =
   | 'created' | 'assigned' | 'transferred' | 'closed' | 'reopened' | 'privacy_changed' | 'triage_routed'
   | 'bot_started' | 'bot_finished' | 'bot_stopped' | 'bot_failed' | 'bot_transferred' | 'bot_note'
-  | 'history_imported' | 'contact_merged';
+  | 'message_deleted' | 'message_edited' // data: { messageId, source: MessageChangeSource }
+  | 'history_imported' | 'contact_merged'; // data: { count } | {}
 ```
 
 - [ ] **Step 4: Add the columns and the table to the schema**
@@ -314,7 +320,9 @@ export type ChatEventKind =
 In `server/src/db/schema.ts`, replace line 17 with:
 
 ```ts
-import type { BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod } from '@talk/shared';
+import type {
+  BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
+} from '@talk/shared';
 ```
 
 Replace the `channels` table (lines 63-71) with:
@@ -349,7 +357,7 @@ and add to its index list, after `index('chats_last_message_at_idx').on(t.lastMe
       .where(sql`${t.history} = true`),
 ```
 
-In the `messages` table, add after `botRunId: …,` (line 198):
+In the `messages` table, add after `mediaSha256: …,` (line 207, the last message-action column; `officeReaction` … `mediaSha256` above it stay as they are):
 
 ```ts
     mediaStatus: text('media_status').$type<'queued' | 'expired'>(), // §5.5 history media: waiting for the queue, or gone from WhatsApp
@@ -361,7 +369,7 @@ and add to its index list, after `index('messages_chat_sent_idx').on(t.chatId, t
     index('messages_media_queued_idx').on(t.sentAt).where(sql`${t.mediaStatus} = 'queued'`),
 ```
 
-Append at the end of the file:
+Append at the end of the file (after `messageEdits`):
 
 ```ts
 export const historyImports = pgTable(
@@ -392,14 +400,17 @@ export const historyImports = pgTable(
 - [ ] **Step 5: Generate the migration**
 
 Run: `npm run db:generate -w server -- --name historico_whatsapp`
-Expected: drizzle-kit prints `[✓] Your SQL migration file ➜ drizzle\0003_historico_whatsapp.sql 🚀` with no rename prompt. It writes `server/drizzle/0003_historico_whatsapp.sql`, `server/drizzle/meta/0003_snapshot.json` and appends `"idx": 3, "tag": "0003_historico_whatsapp"` to `_journal.json`.
+Expected: drizzle-kit prints `[✓] Your SQL migration file ➜ drizzle\0004_historico_whatsapp.sql 🚀` with no rename prompt. It writes `server/drizzle/0004_historico_whatsapp.sql`, `server/drizzle/meta/0004_snapshot.json` and appends `"idx": 4, "tag": "0004_historico_whatsapp"` to `_journal.json` (after `0003_acoes_mensagem`). Do not edit the generated files.
 
-Run: `grep -n "CREATE TABLE \"history_imports\"\|history_imports_one_running_per_channel\|chats_one_history_per_contact_channel\|ADD COLUMN \"history\"\|ADD COLUMN \"media_status\"\|ADD COLUMN \"history_period\" text DEFAULT '3m' NOT NULL\|messages_media_queued_idx" server/drizzle/0003_historico_whatsapp.sql`
+Run: `grep -n "CREATE TABLE \"history_imports\"\|history_imports_one_running_per_channel\|chats_one_history_per_contact_channel\|ADD COLUMN \"history\"\|ADD COLUMN \"media_status\"\|ADD COLUMN \"history_period\" text DEFAULT '3m' NOT NULL\|messages_media_queued_idx" server/drizzle/0004_historico_whatsapp.sql`
 Expected: seven matching lines.
+
+Run: `grep -c "office_reaction\|message_edits\|deleted_at" server/drizzle/0004_historico_whatsapp.sql`
+Expected: `0` (those came with `0003_acoes_mensagem`; a non-zero count means the 0003 snapshot was not picked up, so stop and regenerate from a clean tree).
 
 - [ ] **Step 6: Add the two event texts**
 
-In `web/src/components/conversation/model.ts`, add after the `case 'bot_note':` return (line 103), inside the switch:
+In `web/src/components/conversation/model.ts`, add after the `case 'message_edited':` return (line 107, the last case), inside the switch:
 
 ```ts
     case 'history_imported':
@@ -410,7 +421,7 @@ In `web/src/components/conversation/model.ts`, add after the `case 'bot_note':` 
 
 - [ ] **Step 7: Evolution config in both compose files**
 
-In `docker-compose.dev.yml`, replace lines 31-46 (from `DATABASE_SAVE_DATA_INSTANCE` through `CONFIG_SESSION_PHONE_NAME: Desktop`) with:
+In `docker-compose.dev.yml`, replace lines 31-46 (from `DATABASE_SAVE_DATA_INSTANCE` through `CONFIG_SESSION_PHONE_NAME: Desktop`; that is the uncommitted 16/10 test edit in the working tree, with the "Teste do histórico" and "Windows + Desktop" comments) with the block below. On a clean checkout the same block is lines 31-43 (the three `"false"` values, `CONFIG_SESSION_PHONE_CLIENT: Atendimento (teste)`, no `CONFIG_SESSION_PHONE_NAME`); replace that one the same way.
 
 ```yaml
       DATABASE_SAVE_DATA_INSTANCE: "true"
@@ -462,7 +473,7 @@ Expected: PASS. Nothing else reads the new columns yet.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add shared/src/index.ts server/src/db/schema.ts server/drizzle/0003_historico_whatsapp.sql server/drizzle/meta/0003_snapshot.json server/drizzle/meta/_journal.json server/test/db/schema.test.ts web/src/components/conversation/model.ts web/src/components/conversation/model.test.ts docker-compose.dev.yml docker-compose.yml
+git add shared/src/index.ts server/src/db/schema.ts server/drizzle/0004_historico_whatsapp.sql server/drizzle/meta/0004_snapshot.json server/drizzle/meta/_journal.json server/test/db/schema.test.ts web/src/components/conversation/model.ts web/src/components/conversation/model.test.ts docker-compose.dev.yml docker-compose.yml
 git commit -m "feat(server): tabela history_imports, conversas de histórico e config da Evolution para guardar o histórico" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
@@ -472,7 +483,7 @@ git commit -m "feat(server): tabela history_imports, conversas de histórico e c
 
 **Files:**
 - Modify: `server/src/whatsapp/types.ts` (whole file shown)
-- Modify: `server/src/whatsapp/evolution.ts:71` (import), `:81-92` (`call`), `:158-173` (media and picture methods)
+- Modify: `server/src/whatsapp/evolution.ts:48` (import), `:55` (below `webhookConfig`), `:76-87` (`call`), `:153-168` (media and picture methods)
 - Modify: `server/src/whatsapp/fake.ts` (whole file shown)
 - Test: `server/test/whatsapp/evolution.test.ts`, `server/test/whatsapp/fake.test.ts`
 
@@ -487,7 +498,7 @@ Facts this task relies on (Evolution 2.3.7 source + live probes): the time filte
 Add to `server/test/whatsapp/evolution.test.ts`, change the import line to:
 
 ```ts
-import { createEvolutionGateway } from '../../src/whatsapp/evolution.js';
+import { createEvolutionGateway, jidOf } from '../../src/whatsapp/evolution.js';
 import { GatewayError } from '../../src/whatsapp/types.js';
 ```
 
@@ -589,7 +600,7 @@ Expected: FAIL. `wa.findMessages is not a function`, `wa.findContacts is not a f
 
 - [ ] **Step 3: Extend the gateway types**
 
-Replace `server/src/whatsapp/types.ts` with:
+Replace `server/src/whatsapp/types.ts` with (everything message actions added — `MessageKeyRef`, `sendReaction`, `deleteForEveryone`, `editText`, `sendSticker`, `setWebhook`, the `revoke`/`edit` events and `reaction.fromMe` — is kept verbatim):
 
 ```ts
 export type ChannelStatus = 'disconnected' | 'connecting' | 'connected';
@@ -598,6 +609,8 @@ export interface QuotedRef { externalId: string; body: string | null; fromMe: bo
 export interface SendResult { externalId: string }
 export interface OutgoingMedia { kind: 'image' | 'video' | 'document'; base64: string; mime: string; fileName: string; caption?: string }
 export interface DownloadedMedia { base64: string; mime: string; fileName?: string }
+/** A message in a 1:1 chat. `address` as in waAddress: canonical phone digits or '<lid>@lid'. */
+export interface MessageKeyRef { address: string; externalId: string; fromMe: boolean }
 /** One page of Evolution's POST /chat/findMessages; records are raw Message rows (key, pushName, message, messageType, messageTimestamp, contextInfo…). */
 export interface MessagePage { total: number; pages: number; records: unknown[] }
 /** A row of Evolution's Contact table (DATABASE_SAVE_DATA_CONTACTS=true): the phone's address-book or push name. */
@@ -624,6 +637,15 @@ export interface WhatsAppGateway {
   downloadMedia(instance: string, rawMessage: unknown): Promise<DownloadedMedia>;
   /** URL of the contact's profile picture, or null when there is none. `address` as in waAddress (phone or '<lid>@lid'). */
   fetchProfilePicture(instance: string, address: string): Promise<string | null>;
+  /** '' removes the reaction (spec §3). */
+  sendReaction(instance: string, key: MessageKeyRef, emoji: string): Promise<void>;
+  deleteForEveryone(instance: string, key: MessageKeyRef): Promise<void>;
+  /** Text or caption of a message the office sent. Evolution needs the original in its own DB (DATABASE_SAVE_DATA_NEW_MESSAGE). */
+  editText(instance: string, key: MessageKeyRef, text: string): Promise<void>;
+  /** PNG, JPEG or WebP as raw base64; Evolution converts it to WebP. */
+  sendSticker(instance: string, phone: string, base64: string, quoted?: QuotedRef): Promise<SendResult>;
+  /** Replaces the instance's webhook URL and event list (createInstance only sets them at creation). */
+  setWebhook(instance: string, webhookUrl: string): Promise<void>;
   /** Evolution's stored messages with messageTimestamp in [gte, lte] (inclusive, whole seconds), newest first; `page` is 1-based. */
   findMessages(instance: string, q: { gte: Date; lte: Date; page: number; offset: number }): Promise<MessagePage>;
   /** Every Contact row Evolution keeps for the instance. */
@@ -638,7 +660,12 @@ export type InboundEvent =
       kind: MessageKind; body: string | null; hasMedia: boolean;
       mediaMime: string | null; mediaName: string | null;
       replyToExternalId: string | null; sentAt: Date; raw: unknown }
-  | { type: 'reaction'; instance: string; targetExternalId: string; emoji: string | null }
+  // fromMe: the office reacted (from its phone, or the echo of our own sendReaction). parse.ts always fills it.
+  | { type: 'reaction'; instance: string; targetExternalId: string; emoji: string | null; fromMe?: boolean }
+  // Deleted for everyone: by the contact, or (fromMe) by the office phone or our own deleteMessageForEveryone.
+  | { type: 'revoke'; instance: string; targetExternalId: string; fromMe: boolean }
+  // An edit; text null = WhatsApp's encrypted edit format, the new text is unknown.
+  | { type: 'edit'; instance: string; targetExternalId: string; fromMe: boolean; text: string | null }
   | { type: 'status'; instance: string; externalId: string; status: 'sent' | 'delivered' | 'read' | 'failed' }
   | { type: 'connection'; instance: string; status: ChannelStatus; phone: string | null } // phone from `wuid` (owner JID) via phoneFromJid, null when absent
   | { type: 'qrcode'; instance: string; qrBase64: string }
@@ -647,7 +674,7 @@ export type InboundEvent =
 
 - [ ] **Step 4: Implement the three Evolution calls**
 
-In `server/src/whatsapp/evolution.ts`, add to the header comment block, before the `import` line:
+In `server/src/whatsapp/evolution.ts`, add to the header comment block, before the `import` line (line 48):
 
 ```ts
 // - Routes: POST /chat/findMessages/:i (200, { messages: { total, pages, currentPage, records } }), POST /chat/findContacts/:i
@@ -658,7 +685,7 @@ In `server/src/whatsapp/evolution.ts`, add to the header comment block, before t
 //   expired media → 400 "Failed to fetch stream" after ~5.5 s (no working re-upload in 2.3.7).
 ```
 
-Replace the import line (line 71) with:
+Replace the import line (line 48, `import type { ChannelStatus, DownloadedMedia, QuotedRef, SendResult, WhatsAppGateway } from './types.js';`) with:
 
 ```ts
 import {
@@ -672,7 +699,7 @@ import {
 } from './types.js';
 ```
 
-Below `const WEBHOOK_EVENTS = …;` add:
+Below `const webhookConfig = …;` (line 55; `WEBHOOK_EVENTS` and `webhookConfig` above it stay unchanged) add:
 
 ```ts
 // Evolution keeps messageTimestamp as int4 seconds: a bound past 2038-01-19T03:14:07Z is an HTTP 500.
@@ -685,10 +712,10 @@ function toMedia(res: { base64?: string; mimetype?: string; fileName?: string } 
 }
 ```
 
-Replace the `call` function (lines 81-92) with:
+Replace the `call` function (lines 76-87) with (it keeps `'DELETE'`, used by `deleteForEveryone`):
 
 ```ts
-  async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = 90_000): Promise<T | null> {
+  async function call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown, timeoutMs = 90_000): Promise<T | null> {
     const res = await fetchImpl(base + path, {
       method,
       headers: { apikey: cfg.apiKey, 'content-type': 'application/json' },
@@ -702,7 +729,7 @@ Replace the `call` function (lines 81-92) with:
   }
 ```
 
-Replace `downloadMedia` and `fetchProfilePicture` (lines 158-173) with:
+Replace `downloadMedia` and `fetchProfilePicture` (lines 153-168; `sendReaction` … `setWebhook` after them stay) with:
 
 ```ts
     async downloadMedia(instance, rawMessage): Promise<DownloadedMedia> {
@@ -761,7 +788,7 @@ Replace `downloadMedia` and `fetchProfilePicture` (lines 158-173) with:
 
 - [ ] **Step 5: Extend the fake gateway**
 
-Replace `server/src/whatsapp/fake.ts` with:
+Replace `server/src/whatsapp/fake.ts` with (the message-action methods `sendReaction`, `deleteForEveryone`, `editText`, `sendSticker` and `setWebhook` are kept verbatim):
 
 ```ts
 import type { ChannelStatus, DownloadedMedia, EvolutionContact, SendResult, WhatsAppGateway } from './types.js';
@@ -854,6 +881,25 @@ export function createFakeGateway(): WhatsAppGateway & {
       guard();
       return { base64: PNG_1X1, mime: 'image/png' };
     },
+    async sendReaction(instance, key, emoji) {
+      guard();
+      sent.push({ method: 'sendReaction', instance, phone: key.address, payload: { key, emoji } });
+    },
+    async deleteForEveryone(instance, key) {
+      guard();
+      sent.push({ method: 'deleteForEveryone', instance, phone: key.address, payload: { key } });
+    },
+    async editText(instance, key, text) {
+      guard();
+      sent.push({ method: 'editText', instance, phone: key.address, payload: { key, text } });
+    },
+    async sendSticker(instance, phone, base64, quoted) {
+      return send('sendSticker', instance, phone, { base64, quoted });
+    },
+    async setWebhook(instance, webhookUrl) {
+      guard();
+      sent.push({ method: 'setWebhook', instance, payload: { webhookUrl } });
+    },
     // No guard(): this runs in the background after inbound messages and must not eat an error armed by failNext.
     async fetchProfilePicture(instance, address) {
       pictureLookups.push({ instance, address });
@@ -888,7 +934,7 @@ export function createFakeGateway(): WhatsAppGateway & {
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `npm test -w server -- test/whatsapp/evolution.test.ts test/whatsapp/fake.test.ts`
-Expected: PASS. The existing error-message assertions (`failed: 500 …`) still hold: the message text did not change.
+Expected: PASS. The existing error-message assertions (`failed: 500 …`, including the message-action ones) still hold: the message text did not change. A real Evolution failure now logs `GatewayError` where `messages/actions.ts` and `syncWebhooks` log `err.name`; their tests use the fake, whose errors stay plain `Error`s.
 
 Run: `npm run typecheck -w server`
 Expected: exit 0.
@@ -904,7 +950,7 @@ git commit -m "feat(server): findMessages, findContacts e mídia por key.id no g
 ### Task 3: Placing Evolution rows as history
 
 **Files:**
-- Modify: `server/src/messages/ingest.ts:17` and `:20` (exported types), `:104-105` (call site), `:204-228` (`resolveContact`)
+- Modify: `server/src/messages/ingest.ts:18` and `:23` (exported types), `:176-177` (call site), `:276-300` (`resolveContact`)
 - Create: `server/src/history/place.ts`
 - Create: `server/test/history/records.ts` (row builders shared by Tasks 3–8)
 - Test: `server/test/history/place.test.ts`
@@ -913,7 +959,7 @@ git commit -m "feat(server): findMessages, findContacts e mídia por key.id no g
 - Consumes: Task 1 columns `chats.history`, `messages.mediaStatus`, event kind `history_imported`; Task 2 gateway types (only through the fake in tests). Existing `parseEvolutionWebhook(body: unknown): InboundEvent[]` (`whatsapp/parse.ts`), `getDefaultSectorId(db: Db | Tx): Promise<string>` (`inbox/chats.ts`), `addEvent(db, chatId, kind, data, authorId)` (`inbox/events.ts`), `messagePreview(kind, body): string` (`messages/dto.ts`).
 - Produces (contract): `MessageEvent`, `Contact`, `resolveContact(tx, ev, name?)` returning `{ contact, created } | undefined`; `MEDIA_MAX_AGE_MS`, `ContactNames`, `ChannelRef`, `PlaceResult`, `realName`, `toHistoryEvents`, `placeRecords`, `writeHistoryEvents`. Test builders `rec`, `imageRec`, `sec`, `PHONE`, `PHONE_JID`, `LID`, `LID_JID`.
 
-Placement rules (spec §5.2–5.3), in the order `placeRecords` applies them: drop what §5.2 leaves out and rows without a positive `messageTimestamp`; drop ids already seen in this copy; sort the batch oldest first; skip ids the app already stores; resolve the contact (a digits-only push name is no name; else the name from Evolution's Contact table); skip blocked contacts; put the message in the contact's open chat on this channel, else in its history chat (created closed, `history = true`, default sector, no owner, `created_at` = first message, `closed_at` = last); insert with `created_at = sent_at` and `media_status` `queued` (≤ 21 days) or `expired`; move `last_message_at`/preview only forward; for history chats widen `created_at`/`closed_at`. After commit, one `chat.updated` per open chat touched.
+Placement rules (spec §5.2–5.3), in the order `placeRecords` applies them: drop what §5.2 leaves out, every non-`message` event the parser yields (`revoke`, `edit`, `reaction`: message actions stay live-only) and rows without a positive `messageTimestamp`; drop ids already seen in this copy; sort the batch oldest first; skip ids the app already stores; resolve the contact (a digits-only push name is no name; else the name from Evolution's Contact table); skip blocked contacts; put the message in the contact's open chat on this channel, else in its history chat (created closed, `history = true`, default sector, no owner, `created_at` = first message, `closed_at` = last); insert with `created_at = sent_at` and `media_status` `queued` (≤ 21 days) or `expired`; move `last_message_at`/preview only forward; for history chats widen `created_at`/`closed_at`. After commit, one `chat.updated` per open chat touched.
 
 - [ ] **Step 1: Create the row builders**
 
@@ -982,7 +1028,7 @@ Create `server/test/history/place.test.ts`:
 ```ts
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { botRuns, chatEvents, chats, contacts, messages } from '../../src/db/schema.js';
+import { botRuns, chatEvents, chats, contacts, messageEdits, messages } from '../../src/db/schema.js';
 import { placeRecords, realName, toHistoryEvents, writeHistoryEvents } from '../../src/history/place.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 import { insertChat, newContact } from '../inbox/fixtures.js';
@@ -1029,8 +1075,12 @@ describe('toHistoryEvents', () => {
       rec({ id: 'canal', at: t, jid: '120363111111111111@newsletter' }),
       rec({ id: 'apagada', at: t, messageType: 'protocolMessage', message: { protocolMessage: { type: 0, key: { id: 'ok' } } } }),
       rec({ id: 'album', at: t, messageType: 'associatedChildMessage', message: { associatedChildMessage: { message: { imageMessage: {} } } } }),
-      rec({ id: 'edicao', at: t, messageType: 'secretEncryptedMessage', message: { secretEncryptedMessage: { secretEncType: 2 } } }),
+      rec({
+        id: 'edicao', at: t, messageType: 'secretEncryptedMessage',
+        message: { secretEncryptedMessage: { secretEncType: 2, targetMessageKey: { id: 'ok' } } }, // the parser would yield an 'edit'
+      }),
       rec({ id: 'reacao', at: t, messageType: 'reactionMessage', message: { reactionMessage: { key: { id: 'ok' }, text: '👍' } } }),
+      rec({ id: 'reacao-minha', at: t, fromMe: true, messageType: 'reactionMessage', message: { reactionMessage: { key: { id: 'ok' }, text: '❤️' } } }),
       rec({ id: 'sem-hora', at: t, timestamp: undefined }),
       rec({ id: 'hora-zero', at: t, timestamp: 0 }),
     ]);
@@ -1130,6 +1180,32 @@ describe('placeRecords', () => {
     expect((await chatById(chatId)).unread).toBe(1);
   });
 
+  it('never applies an edit, a revoke or a reaction found in the history (Review Focus 6)', async () => {
+    const contactId = await newContact(ctx, { phone: PHONE });
+    const chatId = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, contactId });
+    await ctx.db.insert(messages).values({
+      chatId, channelId: s.channelId, direction: 'in', kind: 'text', body: 'original', externalId: 'alvo', status: 'sent',
+      sentAt: at('2026-10-10T12:00:00Z'),
+    });
+    const t = '2026-10-10T12:05:00Z';
+
+    const r = await place([
+      rec({ id: 'apaga', at: t, messageType: 'protocolMessage', message: { protocolMessage: { type: 0, key: { id: 'alvo' } } } }),
+      rec({
+        id: 'edita', at: t, messageType: 'secretEncryptedMessage',
+        message: { secretEncryptedMessage: { secretEncType: 2, targetMessageKey: { id: 'alvo' } } },
+      }),
+      rec({ id: 'reage', at: t, messageType: 'reactionMessage', message: { reactionMessage: { key: { id: 'alvo' }, text: '👍' } } }),
+      rec({ id: 'reage-eu', at: t, fromMe: true, messageType: 'reactionMessage', message: { reactionMessage: { key: { id: 'alvo' }, text: '❤️' } } }),
+    ]);
+
+    expect(r.inserted).toBe(0);
+    const [m] = await ctx.db.select().from(messages).where(eq(messages.externalId, 'alvo'));
+    expect(m).toMatchObject({ body: 'original', deletedAt: null, deletedSource: null, editedAt: null, reaction: null, officeReaction: null });
+    expect(await ctx.db.$count(messageEdits)).toBe(0);
+    expect(await ctx.db.$count(chatEvents)).toBe(0);
+  });
+
   it('a second copy of the same rows adds nothing', async () => {
     const rows = [rec({ id: 'h1', at: '2026-10-01T10:00:00Z' }), rec({ id: 'h2', at: '2026-10-02T10:00:00Z' })];
     expect((await place(rows)).inserted).toBe(2);
@@ -1199,26 +1275,26 @@ Expected: FAIL. The file fails to collect with `Failed to load url ../../src/his
 
 - [ ] **Step 4: Export `resolveContact` from ingest with the created flag and an optional name**
 
-In `server/src/messages/ingest.ts`, replace line 17 with:
+In `server/src/messages/ingest.ts`, replace line 18 (`type MessageEvent = …`) with:
 
 ```ts
 export type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
 ```
 
-replace line 20 with:
+replace line 23 (`type Contact = …`; the `RevokeEvent`/`EditEvent`/`MessageStatus` aliases between them stay private) with:
 
 ```ts
 export type Contact = typeof contacts.$inferSelect;
 ```
 
-replace lines 104-105 with:
+replace lines 176-177 (in `ingestMessage`) with:
 
 ```ts
       const contact = (await resolveContact(tx, ev))?.contact;
       if (!contact || contact.blocked) throw new Skip();
 ```
 
-and replace the whole `resolveContact` function (lines 204-228, with its doc comment) with:
+and replace the whole `resolveContact` function (lines 276-300, with its one-line doc comment) with:
 
 ```ts
 /**
@@ -1283,6 +1359,8 @@ export const MEDIA_MAX_AGE_MS = 21 * 24 * 60 * 60_000;
 /**
  * messageType values that are never a message of their own (§5.2): revokes/edits, album children, edits in the new
  * format and reactions. The parser already drops groups, status@broadcast, newsletters (no address) and the rest.
+ * Since message actions the parser turns secretEncryptedMessage into an 'edit' event and reactions (fromMe too) into
+ * 'reaction' events; toHistoryEvents keeps only 'message' events, so history never edits, deletes or reacts (spec §2).
  */
 const SKIP_TYPES = new Set(['protocolMessage', 'associatedChildMessage', 'secretEncryptedMessage', 'reactionMessage', 'editedMessage']);
 
@@ -1313,7 +1391,7 @@ export function realName(name: string | null | undefined): string | null {
 const stampOf = (r: unknown) => Number((r as { messageTimestamp?: unknown } | null)?.messageTimestamp);
 const typeOf = (r: unknown) => String((r as { messageType?: unknown } | null)?.messageType);
 
-/** Raw Evolution rows → message events, minus what §5.2 leaves out. */
+/** Raw Evolution rows → message events, minus what §5.2 leaves out (and every revoke/edit/reaction event). */
 export function toHistoryEvents(instance: string, records: unknown[]): MessageEvent[] {
   // A row without a positive timestamp would get the parser's "now" fallback and land as today's message.
   const kept = records.filter((r) => stampOf(r) > 0 && !SKIP_TYPES.has(typeOf(r)));
@@ -2100,12 +2178,12 @@ git commit -m "feat(server): junta contato só com LID ao contato com telefone q
 ### Task 6: History media: queue, "expirada" and "Baixar"
 
 **Files:**
-- Modify: `server/src/messages/dto.ts:9` (`MEDIA_KINDS` exported), `:51-54` (`mediaExpired`)
+- Modify: `server/src/messages/dto.ts:9` (`MEDIA_KINDS` exported), `:64` (`mediaExpired`)
 - Create: `server/src/history/media.ts`
-- Modify: `server/src/chats/routes.ts:14` (import), `:166-168` (new route next to resend)
-- Modify: `web/src/lib/api.ts:186-189` (`api.messages.downloadMedia`)
-- Modify: `web/src/components/conversation/MessageBubble.tsx:32-39` (`MediaView` opening), new `DownloadButton` (its imports — `useState`, `useQueryClient`, `api`, `applyWsEvent`, `errorMessage` — are already in the file)
-- Test: `server/test/history/media.test.ts`, `server/test/messages/dto.test.ts:40`, `server/test/realtime/hub.test.ts:160`, `web/src/components/conversation/MessageBubble.test.tsx`
+- Modify: `server/src/chats/routes.ts:7` (import, before `../inbox/chats.js`), `:188-190` (new route right after resend)
+- Modify: `web/src/lib/api.ts:198` (`api.messages.downloadMedia`, after `mediaUrl`; the message-action calls stay)
+- Modify: `web/src/components/conversation/MessageBubble.tsx:37-44` (`MediaView` opening), new `DownloadButton` (its imports — `useState`, `useQueryClient`, `api`, `applyWsEvent`, `errorMessage` — are already in the file)
+- Test: `server/test/history/media.test.ts`, `server/test/messages/dto.test.ts:41`, `server/test/realtime/hub.test.ts:160`, `web/src/components/conversation/MessageBubble.test.tsx`
 
 **Interfaces:**
 - Consumes: Task 1 `messages.mediaStatus`, `MessageDto.mediaExpired`; Task 2 `ctx.wa.downloadMediaById`, `GatewayError`, fake `mediaById`/`mediaLookups`; Task 3 `MEDIA_MAX_AGE_MS`; Task 4 `errorTag`; existing `saveMedia(mediaDir, data, mime, originalName?)` (`messages/media.ts`), `MEDIA_UNAVAILABLE` (`messages/ingest.ts`), `getChatForUser` (`inbox/chats.ts`), `toMessageDto`, `applyWsEvent`, `errorMessage`.
@@ -2162,7 +2240,10 @@ describe('downloadMessageMedia', () => {
     expect(await downloadMessageMedia(ctx, id)).toBe('saved');
 
     const m = await row(id);
-    expect(m).toMatchObject({ mediaStatus: null, error: null, mediaMime: 'image/png', mediaSize: Buffer.from(PNG, 'base64').length });
+    expect(m).toMatchObject({
+      mediaStatus: null, error: null, mediaMime: 'image/png', mediaSize: Buffer.from(PNG, 'base64').length,
+      mediaSha256: expect.stringMatching(/^[0-9a-f]{64}$/), // like live media: the recent-stickers list dedupes by it
+    });
     expect((await readFile(join(ctx.config.mediaDir, m.mediaPath!))).toString('base64')).toBe(PNG);
     expect(ctx.wa.mediaLookups).toEqual([{ instance: s.instance, externalId: 'img1' }]);
     expect(ctx.hub.events).toContainEqual({ type: 'message.updated', chatId, messageId: id });
@@ -2287,18 +2368,11 @@ describe('POST /api/messages/:id/media ("Baixar")', () => {
 });
 ```
 
-In `server/test/messages/dto.test.ts`, the full `toEqual` literal (line 40) gains `mediaExpired: false,` after `mediaUnavailable: false,`. In `server/test/realtime/hub.test.ts`, the `message` literal (line 160) gains `mediaExpired: false,` after `mediaUnavailable: false,`.
+In `server/test/messages/dto.test.ts`, the full `toEqual` literal (line 41) gains `mediaExpired: false,` after `mediaUnavailable: false,` (its message-action fields `officeReaction`, `deleted`, `edited`, `forwarded` stay). In `server/test/realtime/hub.test.ts`, the `message` literal (line 160) gains `mediaExpired: false,` after `mediaUnavailable: false,`.
 
 - [ ] **Step 2: Write the failing web test**
 
-In `web/src/components/conversation/MessageBubble.test.tsx`, change the first imports to:
-
-```tsx
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-```
-
-and add at the end of the file:
+In `web/src/components/conversation/MessageBubble.test.tsx`, the imports (`afterEach`, `vi`, `fireEvent`, `waitFor`), the file-level `afterEach` (cleanup + `vi.unstubAllGlobals()`), `stubFetch`/`calls`, `base` and `renderBubble(m, opts?)` already exist (message actions). Add at the end of the file:
 
 ```tsx
 describe('MessageBubble media that is not on the server', () => {
@@ -2306,7 +2380,6 @@ describe('MessageBubble media that is not on the server', () => {
     ...base, direction: 'in', kind: 'image', body: null, media: null, mediaUnavailable: true,
     authorId: null, authorName: null, authorAvatarUrl: null,
   };
-  afterEach(() => vi.unstubAllGlobals());
 
   it('says the file is gone from WhatsApp and offers no download', () => {
     const c = renderBubble({ ...missing, mediaExpired: true });
@@ -2315,21 +2388,16 @@ describe('MessageBubble media that is not on the server', () => {
   });
 
   it('"Baixar" asks the server for a file that is not downloaded yet', async () => {
-    const fetchMock = vi.fn<typeof fetch>(
-      async () =>
-        new Response(JSON.stringify({ ...missing, media: { url: '/api/media/m1', mime: 'image/png', name: null, size: 70 }, mediaUnavailable: false }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch({
+      'POST /api/messages/m1/media': {
+        ...missing, media: { url: '/api/media/m1', mime: 'image/png', name: null, size: 70 }, mediaUnavailable: false,
+      },
+    });
     renderBubble({ ...missing, mediaExpired: false });
 
     fireEvent.click(screen.getByRole('button', { name: 'Baixar' }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(fetchMock.mock.calls[0]![0]).toBe('/api/messages/m1/media');
-    expect(fetchMock.mock.calls[0]![1]?.method).toBe('POST');
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/messages/m1/media', body: undefined }));
   });
 });
 ```
@@ -2350,7 +2418,7 @@ In `server/src/messages/dto.ts`, replace line 9 with:
 export const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 ```
 
-and replace line 54 (`mediaUnavailable: …,`) with:
+and replace line 64 (`mediaUnavailable: …,`) with:
 
 ```ts
     mediaUnavailable: row.mediaPath == null && MEDIA_KINDS.has(row.kind),
@@ -2403,7 +2471,10 @@ export async function downloadMessageMedia(ctx: AppCtx, messageId: string): Prom
     const saved = await saveMedia(ctx.config.mediaDir, Buffer.from(media.base64, 'base64'), media.mime, name);
     const [done] = await ctx.db
       .update(messages)
-      .set({ mediaPath: saved.path, mediaSize: saved.size, mediaMime: media.mime, mediaName: name, mediaStatus: null, error: null })
+      .set({
+        mediaPath: saved.path, mediaSize: saved.size, mediaMime: media.mime, mediaName: name, mediaSha256: saved.sha256,
+        mediaStatus: null, error: null,
+      })
       .where(stillMissing)
       .returning({ id: messages.id });
     if (!done) {
@@ -2467,13 +2538,13 @@ export async function downloadMediaForUser(ctx: AppCtx, user: AuthUser, messageI
 }
 ```
 
-In `server/src/chats/routes.ts`, add to the imports:
+In `server/src/chats/routes.ts`, add to the imports, before `import { assumeChat, … } from '../inbox/chats.js';` (line 7):
 
 ```ts
 import { downloadMediaForUser } from '../history/media.js';
 ```
 
-and after the resend route (line 168), inside the same `app.register` scope:
+and right after the resend route (lines 188-190, before the `reaction` route), inside the same `app.register` scope:
 
 ```ts
 
@@ -2483,18 +2554,14 @@ and after the resend route (line 168), inside the same `app.register` scope:
 
 - [ ] **Step 6: The bubble: expired text and "Baixar"**
 
-In `web/src/lib/api.ts`, replace the `messages` block (lines 186-189) with:
+In `web/src/lib/api.ts`, in the `messages` block (lines 196-208), add after `mediaUrl: …,` (line 198; `react`, `remove`, `edit`, `edits` and `forward` below it stay):
 
 ```ts
-  messages: {
-    resend: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/resend`),
-    mediaUrl: (messageId: string) => `/api/media/${enc(messageId)}`,
     /** "Baixar": one download try for a media message without a file (history spec §5.5). */
     downloadMedia: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/media`),
-  },
 ```
 
-In `web/src/components/conversation/MessageBubble.tsx`, replace the `MediaView` opening (from `function MediaView({ m }: { m: MessageDto }) {` through the `mediaUnavailable` block, lines 32-39) with:
+In `web/src/components/conversation/MessageBubble.tsx`, replace the `MediaView` opening (from `function MediaView({ m }: { m: MessageDto }) {` through the `mediaUnavailable` block, lines 37-44) with:
 
 ```tsx
 /** §5.5: one download try; the answer replaces the message in the timeline cache. */
@@ -2576,9 +2643,9 @@ git commit -m "feat: fila de mídia do histórico, estado expirada e botão Baix
 **Files:**
 - Create: `server/src/history/imports.ts`
 - Create: `server/src/history/jobs.ts`
-- Modify: `server/src/channels/service.ts:1-8` (imports), `:32-39` (`toChannelDto`, `listChannels`, new `loadChannelDto`), `:82-99` (`setChannelStatus`)
-- Modify: `server/src/realtime/hub.ts:1-6` (imports), `:91-99` (`publishChannel`)
-- Test: `server/test/history/jobs.test.ts`; update `server/test/channels/routes.test.ts:30-35` and `:57`, `server/test/channels/service.test.ts:41`, `server/test/realtime/hub.test.ts:184`
+- Modify: `server/src/channels/service.ts:1-8` (imports), `:32-39` (`toChannelDto`, `listChannels`, new `loadChannelDto`), `:87-104` (`setChannelStatus`); `webhookUrl`, `createChannel`, `syncChannelStatuses` and `syncWebhooks` stay as they are
+- Modify: `server/src/realtime/hub.ts:1-7` (imports), `:87-96` (`publishChannel`)
+- Test: `server/test/history/jobs.test.ts`; update `server/test/channels/routes.test.ts:30-35` and `:57`, `server/test/channels/service.test.ts:42`, `server/test/realtime/hub.test.ts:185`
 
 **Interfaces:**
 - Consumes: Task 1 `historyImports`, `channels.historyPeriod/disconnectedAt`, `HistoryImportDto`; Task 4 `copyRange`, `errorTag`; Task 3 builders; existing `getChannelQr`/`setChannelQr` (`channels/service.ts`), `conflict`, `HttpError`.
@@ -2770,8 +2837,10 @@ describe('channel DTO', () => {
 
 Update the three existing literals that list a whole `ChannelDto`:
 - `server/test/channels/routes.test.ts:30-35`: the `toContainEqual` object becomes `{ id: seed.channelId, name: expect.any(String), status: expect.stringMatching(/^(disconnected|connecting|connected)$/), phone: null, historyPeriod: '3m', disconnectedAt: null, historyImport: null }`.
-- `server/test/channels/routes.test.ts:57` and `server/test/channels/service.test.ts:41`: `{ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null, historyPeriod: '3m', disconnectedAt: null, historyImport: null }`.
-- `server/test/realtime/hub.test.ts:184`: `channel: { id: row.id, name: row.name, status: 'connected', phone: '5565999990000', historyPeriod: '3m', disconnectedAt: null, historyImport: null }`.
+- `server/test/channels/routes.test.ts:57` and `server/test/channels/service.test.ts:42`: `{ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null, historyPeriod: '3m', disconnectedAt: null, historyImport: null }`.
+- `server/test/realtime/hub.test.ts:185`: `channel: { id: row.id, name: row.name, status: 'connected', phone: '5565999990000', historyPeriod: '3m', disconnectedAt: null, historyImport: null }`.
+
+(The `syncWebhooks` test at the end of `service.test.ts` stays untouched.)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -2962,7 +3031,7 @@ export async function loadChannelDto(db: Db | Tx, channelId: string): Promise<Ch
 }
 ```
 
-Replace `setChannelStatus` with its doc comment (lines 82-99) with:
+Replace `setChannelStatus` with its doc comment (lines 87-104, between `getChannelQrById` and `syncChannelStatuses`) with:
 
 ```ts
 /**
@@ -2999,7 +3068,7 @@ export async function setChannelStatus(ctx: AppCtx, instance: string, status: Ch
 }
 ```
 
-In `server/src/realtime/hub.ts`, replace lines 1-6 (imports) with:
+In `server/src/realtime/hub.ts`, replace lines 1-7 (imports; `channels` leaves the schema import, `loadChannelDto` reads it now) with:
 
 ```ts
 import { eq } from 'drizzle-orm';
@@ -3012,7 +3081,7 @@ import { canSee, loadAuthUser, type AuthUser } from '../inbox/visibility.js';
 import { toMessageDto } from '../messages/dto.js';
 ```
 
-and replace `publishChannel` (lines 91-99) with:
+and replace `publishChannel` (lines 87-96) with:
 
 ```ts
     async publishChannel(channelId) {
@@ -3045,7 +3114,7 @@ git commit -m "feat(server): importação do histórico (automática após o QR,
 
 **Files:**
 - Modify: `server/src/history/jobs.ts` (imports; append `BACKFILL_EVERY_MS`, `runBackfill`, `createHistoryWorker`)
-- Modify: `server/src/index.ts:10-11` (import), `:205-215` (start and stop)
+- Modify: `server/src/index.ts:12` (import), `:56` (start), `:59-65` (stop in the signal handler); the boot calls `syncChannelStatuses` and `syncWebhooks` (lines 42-46) stay as they are
 - Test: `server/test/history/backfill.test.ts`
 
 **Interfaces:**
@@ -3309,13 +3378,13 @@ export function createHistoryWorker(ctx: AppCtx, opts: { intervalMs?: number; me
 
 - [ ] **Step 4: Wire it into the boot**
 
-In `server/src/index.ts`, add after `import { createAvatarSweep } from './contacts/avatar.js';`:
+In `server/src/index.ts`, add after `import { createAvatarSweep } from './contacts/avatar.js';` (line 12):
 
 ```ts
 import { createHistoryWorker } from './history/jobs.js';
 ```
 
-After `avatarSweep.start();` add:
+After `avatarSweep.start();` (line 56) add:
 
 ```ts
 
@@ -3325,7 +3394,7 @@ const history = createHistoryWorker(ctx);
 history.start();
 ```
 
-and inside the signal handler, after `void avatarSweep.stop();`, add:
+and inside the signal handler, after `void avatarSweep.stop();` (line 62), add:
 
 ```ts
     void history.stop();
@@ -3351,7 +3420,7 @@ git commit -m "feat(server): recuperação a cada 5 min com folga de 30 min e wo
 ### Task 9: Channel routes: period on connect and "Importar histórico"
 
 **Files:**
-- Modify: `server/src/channels/service.ts:3` (import `HistoryPeriod`), `connectChannel` (lines 63-73 before Task 7's edits), new `importChannelHistory`
+- Modify: `server/src/channels/service.ts:3` (import `HistoryPeriod`), `connectChannel` (lines 68-78 at the start of this plan; Task 7's edits move it down), new `importChannelHistory`
 - Modify: `server/src/channels/routes.ts` (whole file shown)
 - Test: `server/test/channels/routes.test.ts`
 
@@ -3541,7 +3610,7 @@ git commit -m "feat(server): período do histórico no conectar e rota Importar 
 - Modify: `server/src/inbox/visibility.ts:17-45`
 - Modify: `server/src/inbox/queries.ts:74` (`toChatListItem`), `:97` (`listChats`)
 - Modify: `server/src/inbox/chats.ts:17` (constant), `setChatPrivacy` (`:175-177`), `reopenChat` (`:223-225`)
-- Modify: `server/src/messages/send.ts` (`addNote`, `:356-357`, and its import of `inbox/chats.js`)
+- Modify: `server/src/messages/send.ts` (`addNote`, `:406-407`, and its import of `inbox/chats.js`, line 11)
 - Test: `server/test/inbox/visibility.test.ts`, `server/test/chats/list-and-timeline.test.ts`, `server/test/inbox/chats-actions.test.ts`, `server/test/realtime/hub.test.ts:82-96`
 
 **Interfaces:**
@@ -3714,13 +3783,13 @@ and in `reopenChat`, right after `const chat = await getChatForUser(ctx, user, c
   if (chat.history) throw conflict(HISTORY_READ_ONLY);
 ```
 
-In `server/src/messages/send.ts`, add `HISTORY_READ_ONLY` to the existing import from `'../inbox/chats.js'`, and in `addNote`, right after `const chat = await getChatForUser(ctx, user, chatId);`, add:
+In `server/src/messages/send.ts`, change the import from `'../inbox/chats.js'` (line 11) to `import { HISTORY_READ_ONLY, getChatForUser, type ChatRow } from '../inbox/chats.js';`, and in `addNote` (line 406), right after `const chat = await getChatForUser(ctx, user, chatId);`, add:
 
 ```ts
   if (chat.history) throw conflict(HISTORY_READ_ONLY);
 ```
 
-(`conflict` is already imported in `send.ts`; it is used by `sendAgentMessage`.)
+(`conflict` is already imported in `send.ts`; it is used by `sendAgentMessage`.) Message actions need nothing here: `messages/actions.ts` already answers 409 "Conversa finalizada" for any chat that is not open (react, delete, edit, forward from it), and a history chat is always closed; the bubble menu is hidden there too (`chatOpen` is false).
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -3745,7 +3814,7 @@ git commit -m "feat(server): conversas de histórico visíveis a todos, só leit
 ### Task 11: Web Canais: period, "Importar histórico", progress and QR polling
 
 **Files:**
-- Modify: `web/src/lib/api.ts:2-31` (import `HistoryPeriod`), `:220-224` (`api.channels`)
+- Modify: `web/src/lib/api.ts:2-33` (import `HistoryPeriod`), `:242-246` (`api.channels`)
 - Modify: `web/src/pages/settings/ChannelsSettings.tsx` (whole file shown)
 - Test: `web/src/pages/settings/ChannelsSettings.test.tsx` (create)
 
@@ -3886,7 +3955,7 @@ Expected: FAIL. `importText` is not exported (`TypeError: importText is not a fu
 
 - [ ] **Step 3: The API calls**
 
-In `web/src/lib/api.ts`, add `HistoryPeriod,` to the `@talk/shared` type import (between `GraphProblem,` and `ManualBotDto,`), and replace the `channels` block (lines 220-224) with:
+In `web/src/lib/api.ts`, add `HistoryPeriod,` to the `@talk/shared` type import (between `GraphProblem,` and `ManualBotDto,`), and replace the `channels` block (lines 242-246) with:
 
 ```ts
   channels: {
@@ -4127,7 +4196,7 @@ git commit -m "feat(web): período e Importar histórico em Canais, progresso ao
 - Modify: `web/src/pages/Inbox.tsx:58-62` (channels query), `:203-212` (prop)
 - Modify: `web/src/lib/format.ts:36-41` (`contactLabel`)
 - Modify: `web/src/components/conversation/ConversationHeader.tsx` (title, status label, "Reabrir")
-- Modify: `web/src/components/conversation/ConversationView.tsx:269-274` (`ClosedFooter` text)
+- Modify: `web/src/components/conversation/ConversationView.tsx:43` (`ClosedFooter` text)
 - Test: `web/src/components/layout/ChannelBanner.test.tsx` (create), `web/src/pages/Inbox.test.tsx`, `web/src/lib/format-inbox.test.ts:14`, `web/src/components/conversation/ConversationHeader.test.tsx`
 
 **Interfaces:**
@@ -4571,3 +4640,4 @@ git commit -m "docs: histórico do WhatsApp no README, LGPD e limpeza manual na 
 - **Down banner (§7)** replaces the old global red banner (shown to everyone for any non-connected state) and stays above every page, so it also shows in the inbox; admins only, as the spec says.
 - **Search (§8)** = the inbox search: with text in the Finalizados search, history chats are listed.
 - Copy the spec does not give, written here: the period note, the failure line in Canais, the 502 on "Baixar", the read-only footer and header label, `HISTORY_READ_ONLY`.
+- **Message actions vs. history (added when develop brought "ações de mensagem"; the spec predates it and is silent):** a copy never applies the `revoke`/`edit`/`reaction` events the parser now yields (spec §2 keeps "edição/remoção aplicadas a mensagens antigas" out, §5.2 "nunca atualiza"). A message that Evolution stores already edited or deleted is copied as Evolution holds it (current text, no "editada"/"apagada" mark, no `message_edits` row), and a revoke or edit that happened while the app was down is not recovered by the back-fill. Live webhooks still apply edits and deletes to history-copied rows, since they match by `external_id`. History chats are closed, so the message-action routes already refuse them (409 "Conversa finalizada"). Downloaded history media fills `media_sha256` like live media, so history stickers join the recent-stickers list of whoever can see the chat (every user, for history chats).
