@@ -11,6 +11,8 @@ export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'
 export const RECENT_STICKERS_LIMIT = 40;
 export const STICKER_MAX_BYTES = 1024 * 1024;
 export const DELETED_REASON = 'Mensagem apagada';
+/** Spec 2026-10-19 §5: the "Favoritas" list of one chat shows at most this many. */
+export const FAVORITES_LIMIT = 200;
 
 /** The fields the rules read. A MessageDto fits, and so does a messages row passed as `{ ...row, deleted: row.deletedAt }`. */
 export interface ActionTarget {
@@ -79,4 +81,22 @@ export function isSingleEmoji(s: string): boolean {
   const graphemes = [...new Intl.Segmenter('pt-BR', { granularity: 'grapheme' }).segment(s)];
   // ponytail: keycaps (1️⃣) and other non-pictographic emoji are refused; widen the class if someone misses one
   return graphemes.length === 1 && /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
+}
+
+const NOT_A_NOTE = 'Esta mensagem não é uma nota';
+
+/** Spec 2026-10-19 §3: only the author edits a note, any time; nothing goes to WhatsApp. */
+export function noteEditBlock(m: ActionTarget, userId: string | null): ActionBlock | null {
+  if (m.kind !== 'note') return block(NOT_A_NOTE);
+  if (m.authorId === null || m.authorId !== userId) return block('Só quem escreveu a nota pode editá-la');
+  return null;
+}
+
+/** Spec 2026-10-19 §3: the author or an admin deletes a note for the whole team. */
+export function noteDeleteBlock(m: ActionTarget, userId: string | null, isAdmin: boolean): ActionBlock | null {
+  if (m.kind !== 'note') return block(NOT_A_NOTE);
+  if (!isAdmin && (m.authorId === null || m.authorId !== userId)) {
+    return block('Só quem escreveu a nota ou um administrador pode apagá-la');
+  }
+  return null;
 }

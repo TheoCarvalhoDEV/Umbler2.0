@@ -195,3 +195,11 @@ describe('message action texts', () => {
     expect(editedTag({ at: when, source: 'phone', newTextUnavailable: false })).toBe('editada pelo celular');
   });
 });
+
+describe('note texts (spec 2026-10-19 §3)', () => {
+  it('names who deleted a note', () => {
+    const names = new Map<string, string>();
+    expect(eventText(event({ kind: 'note_deleted', authorName: 'Bia' }), names)).toBe('Nota apagada por Bia');
+    expect(eventText(event({ kind: 'note_deleted' }), names)).toBe('Nota apagada');
+  });
+});

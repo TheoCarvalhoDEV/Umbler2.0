@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DELETE_WINDOW_MS, EDIT_WINDOW_MS, deleteBlock, editBlock, forwardBlock, isSingleEmoji, reactBlock, replyBlock,
-  type ActionTarget,
+  DELETE_WINDOW_MS, EDIT_WINDOW_MS, deleteBlock, editBlock, forwardBlock, isSingleEmoji, noteDeleteBlock, noteEditBlock,
+  reactBlock, replyBlock, type ActionTarget,
 } from '@talk/shared';
 
 const NOW = Date.parse('2026-10-16T12:00:00.000Z');
@@ -74,5 +74,27 @@ describe('message action rules', () => {
   it('accepts exactly one emoji', () => {
     for (const e of ['👍', '❤️', '😂', '🙏', '👍🏽', '👨‍👩‍👧', '🇧🇷']) expect(isSingleEmoji(e)).toBe(true);
     for (const e of ['', 'a', '👍👍', 'ok👍', '1', ' ']) expect(isSingleEmoji(e)).toBe(false);
+  });
+});
+
+describe('note rules (spec 2026-10-19 §3)', () => {
+  const note = (over: Partial<ActionTarget> = {}) => out({ kind: 'note', ...over });
+  const notAuthor = { reason: 'Só quem escreveu a nota pode editá-la', expired: false };
+  const notANote = { reason: 'Esta mensagem não é uma nota', expired: false };
+
+  it('only the author edits a note, with no time limit', () => {
+    expect(noteEditBlock(note({ sentAt: ago(30 * 24 * 3_600_000) }), 'u1')).toBeNull();
+    expect(noteEditBlock(note(), 'u2')).toEqual(notAuthor);
+    expect(noteEditBlock(note({ authorId: null }), null)).toEqual(notAuthor);
+    expect(noteEditBlock(out(), 'u1')).toEqual(notANote);
+  });
+
+  it('the author or an admin deletes a note; nobody deletes a message that is not a note through it', () => {
+    expect(noteDeleteBlock(note(), 'u1', false)).toBeNull();
+    expect(noteDeleteBlock(note(), 'u2', true)).toBeNull();
+    expect(noteDeleteBlock(note(), 'u2', false)).toEqual({
+      reason: 'Só quem escreveu a nota ou um administrador pode apagá-la', expired: false,
+    });
+    expect(noteDeleteBlock(out(), 'u1', true)).toEqual(notANote);
   });
 });

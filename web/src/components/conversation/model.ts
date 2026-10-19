@@ -109,6 +109,8 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
       return `Histórico do WhatsApp importado: ${Number(e.data.count ?? 0).toLocaleString('pt-BR')} mensagens`;
     case 'contact_merged':
       return 'Contato sem número juntado a este contato';
+    case 'note_deleted':
+      return `Nota apagada${by}`;
   }
 }
 

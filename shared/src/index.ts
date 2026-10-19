@@ -3,6 +3,7 @@
 // TypeScript source directly. Use `import type` for everything except the values re-exported below.
 import type { BotRunningBehavior, NotificationDto } from './bots.js';
 import type { MessageChangeSource } from './message-actions.js';
+import type { UserPreferences } from './preferences.js';
 export { TAG_COLORS, tagColorHex } from './palette.js';
 export {
   BLOCK_TYPES, WEEKDAYS, WEEKDAY_LABELS, DEFAULT_TIMEZONE, RULE_OPERATOR_LABELS, NATIVE_CONTACT_FIELDS, BLOCK_CATALOG,
@@ -11,13 +12,18 @@ export {
 } from './bots.js';
 export type * from './bots.js';
 export {
-  EDIT_WINDOW_MS, DELETE_WINDOW_MS, QUICK_REACTIONS, RECENT_STICKERS_LIMIT, STICKER_MAX_BYTES, DELETED_REASON,
-  reactBlock, replyBlock, editBlock, deleteBlock, forwardBlock, isSingleEmoji,
+  EDIT_WINDOW_MS, DELETE_WINDOW_MS, QUICK_REACTIONS, RECENT_STICKERS_LIMIT, STICKER_MAX_BYTES, DELETED_REASON, FAVORITES_LIMIT,
+  reactBlock, replyBlock, editBlock, deleteBlock, forwardBlock, isSingleEmoji, noteEditBlock, noteDeleteBlock,
 } from './message-actions.js';
 export type * from './message-actions.js';
+export { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES } from './preferences.js';
+export type * from './preferences.js';
+export { SEARCH_MIN_CHARS, SEARCH_MAX_CHARS, SEARCH_LIMIT, FOLD_FROM, FOLD_TO, foldText } from './search.js';
 
 export type Role = 'admin' | 'agent';
-export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[]; seeAllSectors: boolean; avatarUrl: string | null }
+export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[]; seeAllSectors: boolean; avatarUrl: string | null;
+  // spec 2026-10-19 §6, optional so existing literals compile; the server always fills it (Task 5)
+  preferences?: UserPreferences }
 // openChats: only GET /api/sectors fills it (open chats in the sector, every agent's).
 export interface SectorDto { id: string; name: string; position: number; isDefault: boolean; openChats?: number }
 export interface TagDto { id: string; name: string; emoji: string | null; color: string; position: number }
@@ -46,18 +52,23 @@ export interface MessageDto { id: string; chatId: string; direction: 'in' | 'out
   edited?: { at: string; source: MessageChangeSource; newTextUnavailable: boolean } | null;
   forwarded?: boolean;
   // history media (spec 2026-10-16 historico §5.5), optional for the same reason; toMessageDto always fills it (history Task 6)
-  mediaExpired?: boolean }
+  mediaExpired?: boolean;
+  // the team's shared star (spec 2026-10-19 §5), optional for the same reason; toMessageDto always fills it (Task 2)
+  favorite?: { at: string; byName: string | null } | null }
 export interface ChatEventDto { id: string; chatId: string; kind: ChatEventKind; data: Record<string, unknown>; authorName: string | null; createdAt: string }
 export type ChatEventKind =
   | 'created' | 'assigned' | 'transferred' | 'closed' | 'reopened' | 'privacy_changed' | 'triage_routed'
   | 'bot_started' | 'bot_finished' | 'bot_stopped' | 'bot_failed' | 'bot_transferred' | 'bot_note'
   | 'message_deleted' | 'message_edited' // data: { messageId, source: MessageChangeSource }
-  | 'history_imported' | 'contact_merged'; // data: { count } | {}
+  | 'history_imported' | 'contact_merged' // data: { count } | {}
+  | 'note_deleted'; // data: {} (spec 2026-10-19 §3); the event author is who deleted the note
 export type TimelineItem = ({ type: 'message' } & MessageDto) | ({ type: 'event' } & ChatEventDto);
 /** GET /api/messages/:id/edits: the text before each edit, newest first. */
 export interface MessageEditDto { id: string; previousBody: string | null; source: MessageChangeSource; editedByName: string | null; newTextUnavailable: boolean; editedAt: string }
 /** GET /api/stickers/recent (spec §6). */
 export interface RecentStickerDto { messageId: string; url: string }
+/** GET /api/chats/:id/search (spec 2026-10-19 §4): one hit, newest first. */
+export interface MessageSearchHit { messageId: string; kind: MessageDto['kind']; direction: 'in' | 'out'; snippet: string; sentAt: string }
 export interface ContactDto { id: string; name: string | null; phone: string | null; lid: string | null; email: string | null; landline: string | null; address: Record<string, string> | null; blocked: boolean; tagIds: string[]; fields: Record<string, string>; createdAt: string; avatarUrl: string | null }
 export interface ContactNoteDto { id: string; body: string; pinned: boolean; authorName: string | null; createdAt: string }
 export interface CustomFieldDto { id: string; name: string; kind: 'text' | 'number' | 'date' | 'cpf' | 'cnpj'; position: number }
