@@ -79,7 +79,7 @@ export function Timeline({
   }
 
   return (
-    <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto bg-sidebar py-3">
+    <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto bg-sunken px-2 py-4">
       {timeline.isFetchingNextPage && <p className="py-2 text-center text-xs text-muted">Carregando mensagens anteriores…</p>}
       {timeline.isPending && <p className="py-6 text-center text-sm text-muted">Carregando…</p>}
       {timeline.isError && <p className="py-6 text-center text-sm text-danger">Não foi possível carregar a conversa.</p>}
@@ -87,7 +87,7 @@ export function Timeline({
         if (row.kind === 'date') {
           return (
             <div key={row.key} className="my-3 flex justify-center">
-              <span className="rounded-full bg-panel px-3 py-0.5 text-xs text-muted shadow-sm">{row.label}</span>
+              <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs font-semibold text-muted">{row.label}</span>
             </div>
           );
         }

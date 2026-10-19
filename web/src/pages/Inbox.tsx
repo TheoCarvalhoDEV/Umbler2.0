@@ -108,9 +108,9 @@ export function Inbox() {
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="flex w-96 shrink-0 flex-col border-r border-border">
-        <div className="flex items-center gap-2 px-3 pt-3">
-          <h1 className="mr-auto text-lg font-semibold">Conversas</h1>
+      <aside className="flex w-[360px] shrink-0 flex-col border-r border-border bg-surface">
+        <div className="flex items-center gap-1 pt-4 pr-3 pl-5">
+          <h1 className="mr-auto text-xl font-semibold tracking-tight">Conversas</h1>
           {me?.role === 'admin' && (
             <button
               type="button"
@@ -119,7 +119,7 @@ export function Inbox() {
               title={me.seeAllSectors ? 'Vendo todos os setores' : 'Vendo só os seus setores'}
               disabled={view.isPending}
               onClick={() => view.mutate(!me.seeAllSectors)}
-              className={`rounded p-1.5 hover:bg-sidebar-hover ${me.seeAllSectors ? 'text-link' : 'text-muted'}`}
+              className={`flex size-10 items-center justify-center rounded-lg hover:bg-sidebar-hover ${me.seeAllSectors ? 'bg-primary-soft text-link' : 'text-muted'}`}
             >
               {me.seeAllSectors ? <Eye size={20} /> : <EyeSlash size={20} />}
             </button>
@@ -129,13 +129,13 @@ export function Inbox() {
             aria-label="Nova conversa"
             title="Nova conversa"
             onClick={() => setShowNew(true)}
-            className="rounded p-1.5 hover:bg-sidebar-hover"
+            className="flex h-9 items-center gap-1.5 rounded-lg bg-primary pr-3 pl-2.5 text-sm font-semibold text-white hover:bg-primary-hover"
           >
-            <Plus size={20} />
+            <Plus size={16} weight="bold" aria-hidden /> Nova
           </button>
         </div>
 
-        <div role="tablist" className="mt-2 flex border-b border-border">
+        <div role="tablist" className="mx-4 mt-3 flex gap-0.5 rounded-xl bg-panel p-[3px]">
           {TABS.map(({ tab: t, label }) => (
             <button
               key={t}
@@ -143,15 +143,15 @@ export function Inbox() {
               role="tab"
               aria-selected={tab === t}
               onClick={() => setTab(t)}
-              className={`flex flex-1 items-center justify-center gap-1 py-2 text-sm ${
-                tab === t ? 'border-b-2 border-primary font-medium text-fg' : 'text-muted hover:text-fg'
+              className={`flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg text-sm ${
+                tab === t ? 'bg-surface font-semibold text-fg shadow-sm' : 'font-medium text-muted hover:text-fg'
               }`}
             >
               {label}
               {badges[t] > 0 && (
                 <span
                   aria-label={`Conversas não lidas: ${badges[t]}`}
-                  className="rounded-full bg-primary px-1.5 text-xs font-semibold text-white"
+                  className={`min-w-5 rounded-full px-1.5 text-[11px] font-bold ${t === 'waiting' ? 'bg-brass-soft text-brass' : 'bg-primary text-white'}`}
                 >
                   {badges[t]}
                 </span>
@@ -160,8 +160,8 @@ export function Inbox() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2 p-3">
-          <label className="flex flex-1 items-center gap-2 rounded bg-panel px-2 focus-within:ring-2 focus-within:ring-primary">
+        <div className="flex items-center gap-2 px-4 pt-3 pb-2">
+          <label className="flex h-10 flex-1 items-center gap-2 rounded-lg border border-border bg-surface px-3 focus-within:ring-2 focus-within:ring-primary">
             <MagnifyingGlass aria-hidden="true" className="text-muted" />
             <input
               type="search"
@@ -177,9 +177,14 @@ export function Inbox() {
             aria-label="Filtrar conversas"
             aria-expanded={showFilters}
             onClick={() => setShowFilters((v) => !v)}
-            className={`relative rounded p-1.5 hover:bg-sidebar-hover ${activeFilters ? 'text-link' : 'text-muted'}`}
+            className={`relative flex size-10 items-center justify-center rounded-lg border border-border hover:bg-sidebar-hover ${activeFilters ? 'text-link' : 'text-muted'}`}
           >
-            <Funnel size={20} weight={activeFilters ? 'fill' : 'regular'} />
+            <Funnel size={18} weight={activeFilters ? 'fill' : 'regular'} />
+            {activeFilters > 0 && (
+              <span aria-hidden className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
+                {activeFilters}
+              </span>
+            )}
           </button>
         </div>
 
@@ -198,7 +203,7 @@ export function Inbox() {
           </p>
         )}
 
-        <ul className="min-h-0 flex-1 overflow-y-auto" onScroll={onScroll}>
+        <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2" onScroll={onScroll}>
           {me?.role === 'admin' && !me.seeAllSectors && me.sectorIds.length === 0 && (
             <li className="px-4 pb-4 text-sm text-muted">
               Você não está em nenhum setor. Ative “Ver todos os setores” para ver as conversas do escritório.

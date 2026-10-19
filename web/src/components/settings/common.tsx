@@ -18,15 +18,15 @@ export function useSend(...refresh: QueryKey[]) {
   });
 }
 
-export const btn = 'rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover disabled:opacity-50';
-export const btnPrimary = 'rounded bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50';
-export const field = 'mt-1 w-full rounded border border-field px-2 py-1.5 text-sm';
+export const btn = 'rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-sidebar-hover disabled:opacity-50';
+export const btnPrimary = 'rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50';
+export const field = 'mt-1 w-full rounded-lg border border-field bg-surface px-3 py-2 text-sm';
 
 export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="max-w-3xl">
-      <header className="mb-4 flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold">{title}</h1>
+      <header className="mb-6 flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {action}
       </header>
       {children}

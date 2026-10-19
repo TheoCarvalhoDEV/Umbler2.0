@@ -152,3 +152,56 @@ it('contact history lists only the chats the user can see', async () => {
   expect(await history(admin)).toEqual([inA.id, inB.id].sort());
   expect((await call('GET', `/api/contacts/${crypto.randomUUID()}/chats`, agentA)).statusCode).toBe(404);
 });
+
+it('finds a contact by CPF digits and filters blocked ones', async () => {
+  const a = await createContact({ name: 'Ana', phone: '5565999996601' });
+  const b = await createContact({ name: 'Beto', phone: '5565999996602' });
+  const cpf = (await call('POST', '/api/custom-fields', admin, { name: 'CPF', kind: 'cpf' })).json();
+  const note = (await call('POST', '/api/custom-fields', admin, { name: 'Pasta', kind: 'text' })).json();
+  await call('PUT', `/api/contacts/${a.id}/fields`, agentA, { [cpf.id]: '123.456.789-09' });
+  await call('PUT', `/api/contacts/${b.id}/fields`, agentA, { [note.id]: '12345678909' }); // not a CPF field
+  await call('POST', `/api/contacts/${b.id}/block`, agentA, { blocked: true });
+
+  for (const q of ['12345678909', '123.456.789-09', '456.789']) {
+    expect(ids((await call('GET', `/api/contacts?q=${encodeURIComponent(q)}`, agentA)).json().items), q).toEqual([a.id]);
+  }
+  expect(ids((await call('GET', '/api/contacts?blocked=true', agentA)).json().items)).toEqual([b.id]);
+  expect(ids((await call('GET', '/api/contacts?blocked=false', agentA)).json().items)).toEqual([a.id]);
+  expect((await call('GET', '/api/contacts?blocked=talvez', agentA)).statusCode).toBe(400);
+});
+
+it('exports the filtered contacts as CSV for admins only', async () => {
+  const a = await createContact({ name: '=HYPERLINK("x")', phone: '5565999997701' });
+  await createContact({ name: 'Bloqueada; "Sra"', phone: '5565999997702' });
+  const cpf = (await call('POST', '/api/custom-fields', admin, { name: 'CPF', kind: 'cpf' })).json();
+  const tag = (await call('POST', '/api/tags', admin, { name: 'Cliente', color: '#22c55e' })).json();
+  await call('PUT', `/api/contacts/${a.id}/fields`, agentA, { [cpf.id]: '123.456.789-09' });
+  await call('PUT', `/api/contacts/${a.id}/tags`, agentA, { tagIds: [tag.id] });
+
+  expect((await call('GET', '/api/contacts/export.csv', agentA)).statusCode).toBe(403);
+  const res = await call('GET', '/api/contacts/export.csv', admin);
+  expect(res.statusCode).toBe(200);
+  expect(res.headers['content-type']).toContain('text/csv');
+  expect(res.headers['content-disposition']).toContain('contatos.csv');
+  const [header, ...rows] = res.body.replace(/^﻿/, '').trimEnd().split('\r\n');
+  expect(header).toBe('Nome;Telefone;E-mail;Telefone fixo;Etiquetas;CPF;Bloqueado;Criado em');
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatch(/^"'=HYPERLINK\(""x""\)";5565999997701;;;Cliente;123\.456\.789-09;Não;\d{4}-\d{2}-\d{2}$/);
+  expect(rows[1]).toMatch(/^"Bloqueada; ""Sra""";5565999997702;/);
+
+  const filtered = await call('GET', `/api/contacts/export.csv?tagId=${tag.id}`, admin);
+  expect(filtered.body.trimEnd().split('\r\n')).toHaveLength(2);
+});
+
+it('lists each sector with its open chat count', async () => {
+  const c = await createContact({ name: 'Paula', phone: '5565999998801' });
+  const init = (sectorId: string) => ({ sectorId, ownerId: null, waiting: false, triagePending: false, createdBy: null });
+  const { chat } = await findOrOpenChat(ctx.db, { contactId: c.id, channelId: seed.channelId, init: init(seed.sectorA) });
+  const counts = async () =>
+    Object.fromEntries(
+      (await call('GET', '/api/sectors', agentA)).json().map((s: { id: string; openChats: number }) => [s.id, s.openChats]),
+    );
+  expect(await counts()).toMatchObject({ [seed.sectorA]: 1, [seed.sectorB]: 0 });
+  await ctx.db.update(chats).set({ state: 'closed', closedAt: new Date() }).where(eq(chats.id, chat.id));
+  expect(await counts()).toMatchObject({ [seed.sectorA]: 0 });
+});

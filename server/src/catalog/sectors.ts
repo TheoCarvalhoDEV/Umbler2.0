@@ -1,4 +1,4 @@
-import { and, asc, eq, ne } from 'drizzle-orm';
+import { and, asc, count, eq, ne } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { SectorDto } from '@talk/shared';
@@ -24,8 +24,12 @@ const toDto = (s: typeof sectors.$inferSelect): SectorDto => ({
 
 export function registerSectorRoutes(app: FastifyInstance, ctx: AppCtx): void {
   app.get('/api/sectors', async () => {
-    const rows = await ctx.db.select().from(sectors).orderBy(asc(sectors.position), asc(sectors.name));
-    return rows.map(toDto);
+    const [rows, open] = await Promise.all([
+      ctx.db.select().from(sectors).orderBy(asc(sectors.position), asc(sectors.name)),
+      ctx.db.select({ sectorId: chats.sectorId, n: count() }).from(chats).where(eq(chats.state, 'open')).groupBy(chats.sectorId),
+    ]);
+    const openBy = new Map(open.map((o) => [o.sectorId, o.n]));
+    return rows.map((s) => ({ ...toDto(s), openChats: openBy.get(s.id) ?? 0 }));
   });
 
   app.post('/api/sectors', async (req) => {

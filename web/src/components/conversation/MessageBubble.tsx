@@ -147,7 +147,11 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
       : m.direction === 'out'
         ? (m.authorName ?? 'Celular ou sistema') // authorId null = sent from the phone or by the triage
         : null;
-  const tone = isNote ? 'bg-yellow-200 text-zinc-900' : m.direction === 'out' ? 'bg-primary/25 text-fg' : 'bg-bubble-in text-fg';
+  const tone = isNote
+    ? 'rounded-xl border border-dashed border-note-line bg-note text-note-fg'
+    : m.direction === 'out'
+      ? 'rounded-2xl rounded-tr-sm bg-bubble-out text-fg'
+      : 'rounded-2xl rounded-tl-sm bg-bubble-in text-fg shadow-sm';
   // me is loaded before any chat renders (RequireAuth); read it without subscribing
   const meId = qc.getQueryData<Me | null>(qk.me)?.id ?? null;
   const items = menuItems(m, meId, chatOpen, Date.now());
@@ -246,7 +250,7 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
           e.preventDefault();
           setMenuOpen(true);
         }}
-        className={`relative max-w-[75%] rounded-lg px-3 py-2 shadow-sm ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''}`}
+        className={`relative max-w-[70%] px-3 py-2 ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''}`}
       >
         {label && (
           <p className="mb-1 flex items-center gap-1 text-xs font-semibold opacity-75">

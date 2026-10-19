@@ -18,7 +18,8 @@ export type * from './message-actions.js';
 
 export type Role = 'admin' | 'agent';
 export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[]; seeAllSectors: boolean; avatarUrl: string | null }
-export interface SectorDto { id: string; name: string; position: number; isDefault: boolean }
+// openChats: only GET /api/sectors fills it (open chats in the sector, every agent's).
+export interface SectorDto { id: string; name: string; position: number; isDefault: boolean; openChats?: number }
 export interface TagDto { id: string; name: string; emoji: string | null; color: string; position: number }
 export interface UserDto { id: string; name: string; email: string; role: Role; signature: string | null; active: boolean; sectorIds: string[]; avatarUrl: string | null }
 export type HistoryPeriod = '3m' | '12m' | 'all';

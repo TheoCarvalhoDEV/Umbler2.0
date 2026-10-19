@@ -3,11 +3,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
 import { contacts } from '../db/schema.js';
+import { forbidden } from '../lib/http-error.js';
 import { sendAvatarFile } from '../media/avatar-files.js';
 import {
   createContact,
   createContactNote,
   deleteContactNote,
+  exportContactsCsv,
   getContact,
   listContactChats,
   listContactNotes,
@@ -40,9 +42,15 @@ const contactFields = {
 };
 const CreateBody = z.object({ ...contactFields, phone: z.string().min(1).max(40) });
 const PatchBody = z.object({ ...contactFields, phone: z.string().min(1).max(40).optional() });
-const ListQuery = z.object({
+const FilterQuery = z.object({
   q: z.string().max(100).optional(),
   tagId: z.uuid().optional(),
+  blocked: z
+    .enum(['true', 'false'])
+    .transform((v) => v === 'true')
+    .optional(),
+});
+const ListQuery = FilterQuery.extend({
   cursor: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
@@ -56,6 +64,16 @@ const NotePatch = z
 
 export function registerContactRoutes(app: FastifyInstance, ctx: AppCtx): void {
   app.get('/api/contacts', async (req) => listContacts(ctx.db, ListQuery.parse(req.query)));
+
+  // Admin only: it hands over the whole client base (LGPD).
+  app.get('/api/contacts/export.csv', async (req, reply) => {
+    if (req.user.role !== 'admin') throw forbidden();
+    const csv = await exportContactsCsv(ctx.db, FilterQuery.parse(req.query));
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', 'attachment; filename="contatos.csv"')
+      .send(csv);
+  });
 
   app.post('/api/contacts', async (req) => createContact(ctx, CreateBody.parse(req.body)));
 
