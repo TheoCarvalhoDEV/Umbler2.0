@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { chats, settings } from '../../src/db/schema.js';
+import { chats, settings, userSectors } from '../../src/db/schema.js';
 import { assumeChat, closeChat, reopenChat, setChatPrivacy, transferChat } from '../../src/inbox/chats.js';
+import { addNote } from '../../src/messages/send.js';
 import { canSee } from '../../src/inbox/visibility.js';
 import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
 import { eventsOf, insertChat, newContact, statusOf } from './fixtures.js';
@@ -211,8 +212,31 @@ describe('reopenChat', () => {
     expect(await statusOf(reopenChat(ctx, s.agentA, closed))).toBe(409);
   });
 
+  it('the 409 tells an admin without "ver todos" how to reach the other chat; agents keep the plain message', async () => {
+    const contactId = await newContact(ctx);
+    const closed = await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorA, state: 'closed' });
+    await insertChat(ctx, { contactId, channelId: s.channelId, sectorId: s.sectorB });
+    await ctx.db.insert(userSectors).values({ userId: s.admin.id, sectorId: s.sectorA });
+    const admin = { ...s.admin, sectorIds: [s.sectorA] };
+    await expect(reopenChat(ctx, s.agentA, closed)).rejects.toMatchObject({ status: 409, message: 'Este contato já está em atendimento em outro setor.' });
+    await expect(reopenChat(ctx, admin, closed)).rejects.toMatchObject({ status: 409, message: 'Já existe uma conversa aberta com este contato que você não pode ver. Ative “Ver todos os setores” para acessá-la.' });
+  });
+
   it('409 when the chat is already open', async () => {
     const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
     expect(await statusOf(reopenChat(ctx, s.agentA, id))).toBe(409);
+  });
+});
+
+describe('history chats are read-only (§8)', () => {
+  it('cannot be reopened, transferred, made private or get a note', async () => {
+    const id = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, state: 'closed', history: true });
+    await enableSeeAll(ctx, s.admin);
+    expect(await statusOf(reopenChat(ctx, s.admin, id))).toBe(409);
+    expect(await statusOf(setChatPrivacy(ctx, s.admin, id, true))).toBe(409);
+    expect(await statusOf(transferChat(ctx, s.agentA, id, { sectorId: s.sectorA }))).toBe(409);
+    expect(await statusOf(addNote(ctx, s.agentA, id, 'nota'))).toBe(409);
+    const [chat] = await ctx.db.select().from(chats).where(eq(chats.id, id));
+    expect(chat).toMatchObject({ state: 'closed', private: false, history: true });
   });
 });

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import type { ChatListItem, Me } from '@talk/shared';
+import type { ChannelDto, ChatListItem, Me } from '@talk/shared';
 import { Inbox } from './Inbox';
 
 const chatA: ChatListItem = {
@@ -38,7 +38,10 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 }
 
+let channelsReply: ChannelDto[] = [];
+
 beforeEach(() => {
+  channelsReply = [];
   calls.length = 0;
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost');
@@ -53,6 +56,7 @@ beforeEach(() => {
     if (url.pathname === '/api/auth/me/view' && method === 'PUT') {
       return json({ ...adminMe, seeAllSectors: JSON.parse(String(init?.body)).seeAllSectors });
     }
+    if (url.pathname === '/api/channels') return json(channelsReply);
     if (url.pathname === '/api/chats') {
       return json({ items: url.searchParams.get('tab') === 'inbox' ? [chatA, chatB] : [], nextCursor: null });
     }
@@ -156,6 +160,27 @@ it('shows an error banner when toggling the view fails', async () => {
   expect((await screen.findByRole('alert')).textContent).toBe('Não foi possível alterar a visualização. Tente novamente.');
 });
 
+it('a new toggle error replaces an older pin error, and a later success clears the banner', async () => {
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  const base = fetch as unknown as (i: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  let viewFails = true;
+  vi.stubGlobal('fetch', vi.fn(async (i: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(i);
+    if (path === '/api/chats/a/pin') return json({ error: 'cheio' }, 409);
+    if (path === '/api/auth/me/view' && viewFails) return json({ error: 'falhou' }, 500);
+    return base(i, init);
+  }));
+  fireEvent.click(screen.getAllByLabelText('Opções da conversa')[0]);
+  fireEvent.click(screen.getByText('Desafixar'));
+  expect((await screen.findByRole('alert')).textContent).toContain('Você já fixou 3 conversas');
+  fireEvent.click(screen.getByRole('button', { name: 'Ver todos os setores' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Não foi possível alterar a visualização. Tente novamente.'));
+  viewFails = false;
+  fireEvent.click(screen.getByRole('button', { name: 'Ver todos os setores' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
 it('hints a sectorless admin to enable "Ver todos os setores", even with a non-empty list', async () => {
   renderInbox({ ...adminMe, sectorIds: [] });
   await screen.findByText('Ana Souza');
@@ -173,4 +198,21 @@ it('does not show the sectorless hint to an admin with sectors', async () => {
   fireEvent.click(await screen.findByRole('tab', { name: /Esperando/ }));
   await screen.findByText('Nenhuma conversa');
   expect(screen.queryByText(/Você não está em nenhum setor/)).toBeNull();
+});
+
+it('shows the channel name on the cards when there is more than one channel (§7)', async () => {
+  channelsReply = [
+    { id: 'ch1', name: 'Escritório', status: 'connected', phone: null },
+    { id: 'ch2', name: 'Financeiro WhatsApp', status: 'connected', phone: null },
+  ];
+  renderInbox(adminMe);
+  expect(await screen.findAllByText('Escritório')).toHaveLength(2); // chats a and b are both on ch1
+});
+
+it('shows no channel name with a single channel', async () => {
+  channelsReply = [{ id: 'ch1', name: 'Escritório', status: 'connected', phone: null }];
+  const client = renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  await waitFor(() => expect(client.getQueryData(['channels'])).toHaveLength(1));
+  expect(screen.queryByText('Escritório')).toBeNull();
 });

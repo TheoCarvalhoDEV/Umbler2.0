@@ -1,12 +1,12 @@
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { MessageDto } from '@talk/shared';
 import type { Db, Tx } from '../db/client.js';
-import { messages, users } from '../db/schema.js';
+import { botRuns, bots, messageEdits, messages, users } from '../db/schema.js';
 import { userAvatarUrl } from '../media/avatar-files.js';
 
 type MessageRow = typeof messages.$inferSelect;
 
-const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
+export const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
 
 const PREVIEW_LABEL: Record<MessageDto['kind'], string> = {
   text: '',
@@ -35,6 +35,19 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
   const [reply] = row.replyToId
     ? await db.select({ id: messages.id, body: messages.body, kind: messages.kind }).from(messages).where(eq(messages.id, row.replyToId))
     : [];
+  const [bot] = row.botRunId
+    ? await db.select({ name: bots.name }).from(botRuns).innerJoin(bots, eq(bots.id, botRuns.botId)).where(eq(botRuns.id, row.botRunId))
+    : [];
+  // Only deleted/edited rows pay for these lookups.
+  const [deleter] = row.deletedBy ? await db.select({ name: users.name }).from(users).where(eq(users.id, row.deletedBy)) : [];
+  const [lastEdit] = row.editedAt
+    ? await db
+        .select({ source: messageEdits.source, newTextUnavailable: messageEdits.newTextUnavailable })
+        .from(messageEdits)
+        .where(eq(messageEdits.messageId, row.id))
+        .orderBy(desc(messageEdits.editedAt))
+        .limit(1)
+    : [];
 
   return {
     id: row.id,
@@ -49,6 +62,8 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
     // when the download fails; while a download is still running this is briefly true and the
     // message.updated that follows the download carries the file.
     mediaUnavailable: row.mediaPath == null && MEDIA_KINDS.has(row.kind),
+    // §5.5: WhatsApp no longer has the file (history older than 3 weeks, or a 400 on download); never retried
+    mediaExpired: row.mediaStatus === 'expired',
     authorId: row.authorId,
     authorName: author?.name ?? null,
     authorAvatarUrl: author ? userAvatarUrl(author) : null,
@@ -57,5 +72,19 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
     status: row.status,
     error: row.error,
     sentAt: row.sentAt.toISOString(),
+    botRunId: row.botRunId,
+    botName: bot?.name ?? null,
+    officeReaction: row.officeReaction,
+    deleted: row.deletedAt
+      ? { at: row.deletedAt.toISOString(), source: row.deletedSource ?? 'office', byName: deleter?.name ?? null }
+      : null,
+    edited: row.editedAt
+      ? {
+          at: row.editedAt.toISOString(),
+          source: lastEdit?.source ?? 'office',
+          newTextUnavailable: lastEdit?.newTextUnavailable ?? false,
+        }
+      : null,
+    forwarded: row.forwardedFromId !== null,
   };
 }

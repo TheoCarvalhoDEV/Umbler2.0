@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, request } from './api';
+import { api, ApiError, botRunningRuns, graphProblems, request } from './api';
 
 const json = (status: number, body?: unknown) =>
   new Response(body === undefined ? null : JSON.stringify(body), {
@@ -118,5 +118,96 @@ describe('api helpers', () => {
       'PUT /api/chats/c1/pin',
       'DELETE /api/chats/c1/pin',
     ]);
+  });
+});
+describe('bot client', () => {
+  it('keeps the error body in ApiError.data and reads the BOT_RUNNING runs from it', async () => {
+    const body = { error: 'O chatbot está em execução nesta conversa', code: 'BOT_RUNNING', runs: [{ id: 'r1', botName: 'Fluxo' }] };
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => json(409, body)));
+    const err = await api.chats.sendText('c1', { text: 'oi', signature: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 409, message: body.error, data: body });
+    expect(botRunningRuns(err)).toEqual(body.runs);
+    expect(graphProblems(err)).toBeNull();
+  });
+
+  it('reads graph problems from a 400 and ignores every other error', async () => {
+    const problems = [{ nodeId: 'n1', message: 'Bloco sem entrada' }];
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => json(400, { error: 'O fluxo tem problemas', problems })));
+    const err = await api.bots.saveVersion('b1', { graph: { nodes: [], edges: [] }, publish: true }).catch((e: unknown) => e);
+    expect(graphProblems(err)).toEqual(problems);
+    expect(botRunningRuns(err)).toBeNull();
+    expect(botRunningRuns(new ApiError(409, 'Conflito'))).toBeNull();
+    expect(botRunningRuns(new ApiError(409, 'Conflito', undefined, null))).toBeNull();
+    expect(graphProblems(new Error('x'))).toBeNull();
+  });
+
+  it('sends botAction in the JSON of text and transfer, and before the file in multipart', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, { id: 'm1' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.chats.sendText('c1', { text: 'oi', signature: false, botAction: 'stop' });
+    await api.chats.transfer('c1', { sectorId: 's1', botAction: 'keep' });
+    await api.chats.sendFile('c1', { file: new File(['x'], 'a.pdf', { type: 'application/pdf' }), signature: true, botAction: 'keep' });
+    expect(fetchMock.mock.calls[0]![1]?.body).toBe('{"text":"oi","signature":false,"botAction":"stop"}');
+    expect(fetchMock.mock.calls[1]![1]?.body).toBe('{"sectorId":"s1","botAction":"keep"}');
+    const form = fetchMock.mock.calls[2]![1]?.body as FormData;
+    expect([...form.keys()]).toEqual(['signature', 'botAction', 'file']);
+    expect(form.get('botAction')).toBe('keep');
+  });
+
+  it('calls the bot routes with the right method, path and body', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    const graph = { nodes: [], edges: [] };
+    await api.bots.importBot({ name: 'Cobrança', graph });
+    await api.bots.setStatus('b1', 'active');
+    await api.bots.duplicate('b1');
+    await api.bots.version('b1', 3);
+    await api.botRuns.start('c1', 'b1');
+    await api.botRuns.stop('r1');
+    await api.bots.uploadMedia(new File(['png'], 'logo.png', { type: 'image/png' }));
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)}`)).toEqual([
+      'POST /api/bots/import',
+      'POST /api/bots/b1/status',
+      'POST /api/bots/b1/duplicate',
+      'GET /api/bots/b1/versions/3',
+      'POST /api/chats/c1/bot-runs',
+      'POST /api/bot-runs/r1/stop',
+      'POST /api/bots/media',
+    ]);
+    expect(fetchMock.mock.calls[0]![1]?.body).toBe(JSON.stringify({ name: 'Cobrança', graph }));
+    expect(fetchMock.mock.calls[1]![1]?.body).toBe('{"status":"active"}');
+    expect(fetchMock.mock.calls[4]![1]?.body).toBe('{"botId":"b1"}');
+    expect(((fetchMock.mock.calls[6]![1]?.body as FormData).get('file') as File).name).toBe('logo.png');
+    expect(api.bots.exportUrl('b 1')).toBe('/api/bots/b%201/export');
+  });
+
+  it('calls the message action routes with the right method, path and body', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.messages.react('m1', '👍');
+    await api.messages.remove('m1');
+    await api.messages.edit('m1', 'novo');
+    await api.messages.edits('m1');
+    await api.messages.forward('m1', { contactId: 'k1' });
+    await api.chats.sendSticker('c1', { stickerFromMessageId: 'm2' });
+    await api.stickers.recent();
+    await api.chats.sendFile('c1', { file: new File(['png'], 'f.png', { type: 'image/png' }), signature: false, asSticker: true });
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)}`)).toEqual([
+      'POST /api/messages/m1/reaction',
+      'DELETE /api/messages/m1',
+      'PATCH /api/messages/m1',
+      'GET /api/messages/m1/edits',
+      'POST /api/messages/m1/forward',
+      'POST /api/chats/c1/messages',
+      'GET /api/stickers/recent',
+      'POST /api/chats/c1/messages',
+    ]);
+    expect(fetchMock.mock.calls[0]![1]?.body).toBe('{"emoji":"👍"}');
+    expect(fetchMock.mock.calls[1]![1]?.body).toBeUndefined();
+    expect(fetchMock.mock.calls[2]![1]?.body).toBe('{"text":"novo"}');
+    expect(fetchMock.mock.calls[4]![1]?.body).toBe('{"contactId":"k1"}');
+    expect(fetchMock.mock.calls[5]![1]?.body).toBe('{"stickerFromMessageId":"m2"}');
+    expect([...(fetchMock.mock.calls[7]![1]?.body as FormData).keys()]).toEqual(['signature', 'asSticker', 'file']);
   });
 });

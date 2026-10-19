@@ -3,7 +3,10 @@ import { and, asc, eq, gt, isNull, type SQL } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { channels, chatPins, chats, contacts, sectors, settings, users } from '../db/schema.js';
-import { badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
+import { HttpError, badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
+import { BlockError } from '../bots/block-error.js';
+import type { BotActor } from '../bots/registry.js';
+import { sendSystemMessage } from '../messages/send.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
 import { addEvent, type ChatEventKind } from './events.js';
 import { canSee, visibleChatsWhere, type AuthUser } from './visibility.js';
@@ -11,8 +14,17 @@ import { canSee, visibleChatsWhere, type AuthUser } from './visibility.js';
 export type ChatRow = typeof chats.$inferSelect;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** History spec §8: imported history chats are read-only. */
+export const HISTORY_READ_ONLY = 'Conversa de histórico do WhatsApp: só leitura.';
+
 const STALE = 'A conversa foi alterada por outra pessoa. Recarregue e tente de novo.';
-const BUSY_ELSEWHERE = 'Este contato já está em atendimento em outro setor.';
+/** 409 for an open chat the user cannot see. An admin only lacks "ver todos" (with it he sees every chat). */
+const busyElsewhere = (user: AuthUser) =>
+  conflict(
+    user.role === 'admin'
+      ? 'Já existe uma conversa aberta com este contato que você não pode ver. Ative “Ver todos os setores” para acessá-la.'
+      : 'Este contato já está em atendimento em outro setor.',
+  );
 
 /**
  * Returns the open chat for (contact, channel), creating it if none exists.
@@ -117,7 +129,7 @@ async function activeUserExists(db: Db | Tx, id: string): Promise<boolean> {
   return !!row;
 }
 
-async function getClosingMessage(db: Db | Tx): Promise<string> {
+export async function getClosingMessage(db: Db | Tx): Promise<string> {
   const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'closing_message'));
   return typeof row?.value === 'string' ? row.value.trim() : '';
 }
@@ -165,6 +177,7 @@ export async function transferChat(
 
 export async function setChatPrivacy(ctx: AppCtx, user: AuthUser, chatId: string, isPrivate: boolean): Promise<ChatRow> {
   const chat = await getChatForUser(ctx, user, chatId);
+  if (chat.history) throw conflict(HISTORY_READ_ONLY);
   if (user.role !== 'admin' && chat.ownerId !== user.id) {
     throw forbidden('Só o dono da conversa ou um administrador pode alterar a privacidade.');
   }
@@ -213,13 +226,14 @@ export async function closeChat(
 
 export async function reopenChat(ctx: AppCtx, user: AuthUser, chatId: string): Promise<ChatRow> {
   const chat = await getChatForUser(ctx, user, chatId);
+  if (chat.history) throw conflict(HISTORY_READ_ONLY);
   if (chat.state !== 'closed') throw conflict('A conversa já está aberta.');
   const [other] = await ctx.db
     .select()
     .from(chats)
     .where(and(eq(chats.contactId, chat.contactId), eq(chats.channelId, chat.channelId), eq(chats.state, 'open')));
   if (other) {
-    if (!canSee(user, other)) throw conflict(BUSY_ELSEWHERE);
+    if (!canSee(user, other)) throw busyElsewhere(user);
     return other;
   }
   // ponytail: a chat opened between this check and the UPDATE trips the partial unique index (500);
@@ -288,13 +302,17 @@ async function resolveContactId(tx: Tx, input: { contactId?: string; phone?: str
 export async function startChat(
   ctx: AppCtx,
   user: AuthUser,
-  input: { contactId?: string; phone?: string; name?: string; sectorId?: string },
+  input: { contactId?: string; phone?: string; name?: string; sectorId?: string; channelId?: string },
 ): Promise<ChatRow> {
   if (input.sectorId !== undefined && !(await sectorExists(ctx.db, input.sectorId))) throw badRequest('Setor inválido.');
   const sectorId = input.sectorId ?? (await getDefaultSectorId(ctx.db));
-  // ponytail: one WhatsApp number today; take the oldest channel. Add channelId to the input when a second number exists.
-  const [channel] = await ctx.db.select({ id: channels.id }).from(channels).orderBy(asc(channels.createdAt)).limit(1);
-  if (!channel) throw conflict('Nenhum canal de WhatsApp cadastrado.');
+  // channelId: a forward keeps the source message's number. Otherwise the oldest channel (one WhatsApp number today).
+  const [channel] = input.channelId
+    ? UUID_RE.test(input.channelId)
+      ? await ctx.db.select({ id: channels.id }).from(channels).where(eq(channels.id, input.channelId))
+      : []
+    : await ctx.db.select({ id: channels.id }).from(channels).orderBy(asc(channels.createdAt)).limit(1);
+  if (!channel) throw input.channelId ? badRequest('Canal inválido.') : conflict('Nenhum canal de WhatsApp cadastrado.');
 
   const { chat, created } = await ctx.db.transaction(async (tx) => {
     const contactId = await resolveContactId(tx, input);
@@ -304,7 +322,97 @@ export async function startChat(
       init: { sectorId, ownerId: user.id, waiting: false, triagePending: false, createdBy: user.id },
     });
   });
-  if (!created && !canSee(user, chat)) throw conflict(BUSY_ELSEWHERE);
+  if (!created && !canSee(user, chat)) throw busyElsewhere(user);
   if (created) await ctx.hub.publishChat(chat.id);
   return chat;
+}
+
+// ---------- the chatbot acting as the system (spec §5.6) ----------
+// No canSee: the bot is not a user. Every event has authorId null and carries botId/botName/runId;
+// updateChat publishes chat.updated after commit, so each viewer's sector barrier still applies.
+// Failures throw BlockError so the run takes the block's `error` edge with a readable reason.
+
+const actorData = (a: BotActor) => ({ botId: a.botId, botName: a.botName, runId: a.runId });
+
+async function chatForBot(ctx: AppCtx, chatId: string, mustBeOpen: boolean): Promise<ChatRow> {
+  const [chat] = await ctx.db.select().from(chats).where(eq(chats.id, chatId));
+  if (!chat) throw new BlockError('Conversa não encontrada');
+  if (mustBeOpen && chat.state !== 'open') throw new BlockError('A conversa está finalizada');
+  return chat;
+}
+
+/** updateChat, with the 409 STALE (someone changed the chat mid-step) turned into a BlockError. */
+async function updateChatAsBot(
+  ctx: AppCtx,
+  chatId: string,
+  expected: SQL | undefined,
+  set: Partial<typeof chats.$inferInsert>,
+  event: { kind: ChatEventKind; data: Record<string, unknown> },
+): Promise<ChatRow> {
+  try {
+    return await updateChat(ctx, chatId, expected, set, { ...event, authorId: null });
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 409) throw new BlockError('A conversa foi alterada durante o chatbot');
+    throw e;
+  }
+}
+
+/** ownerId undefined = keep the owner; null clears it (and privacy, like a manual transfer). Always ends triage. */
+export async function transferChatAsBot(
+  ctx: AppCtx,
+  actor: BotActor,
+  chatId: string,
+  to: { sectorId?: string; ownerId?: string | null },
+): Promise<ChatRow> {
+  const chat = await chatForBot(ctx, chatId, true);
+  if (to.sectorId !== undefined && !(await sectorExists(ctx.db, to.sectorId))) throw new BlockError('Setor não encontrado');
+  if (to.ownerId && !(await activeUserExists(ctx.db, to.ownerId))) throw new BlockError('Atendente não encontrado ou inativo');
+  const sectorId = to.sectorId ?? chat.sectorId;
+  const ownerId = to.ownerId === undefined ? chat.ownerId : to.ownerId;
+  return updateChatAsBot(
+    ctx,
+    chatId,
+    and(eq(chats.state, 'open'), eq(chats.sectorId, chat.sectorId), sameOwner(chat.ownerId)),
+    ownerId === null ? { sectorId, ownerId, private: false, triagePending: false } : { sectorId, ownerId, triagePending: false },
+    {
+      kind: 'bot_transferred',
+      data: { ...actorData(actor), fromSectorId: chat.sectorId, toSectorId: sectorId, fromOwnerId: chat.ownerId, toOwnerId: ownerId },
+    },
+  );
+}
+
+export async function setChatPrivacyAsBot(ctx: AppCtx, actor: BotActor, chatId: string, isPrivate: boolean): Promise<ChatRow> {
+  const chat = await chatForBot(ctx, chatId, false);
+  if (chat.private === isPrivate) return chat;
+  if (isPrivate && chat.ownerId === null) throw new BlockError('A conversa não tem atendente');
+  return updateChatAsBot(
+    ctx,
+    chatId,
+    and(eq(chats.private, chat.private), sameOwner(chat.ownerId)),
+    { private: isPrivate },
+    { kind: 'privacy_changed', data: { private: isPrivate, ...actorData(actor) } },
+  );
+}
+
+/** Sends closingText (when non-null) as the bot BEFORE the UPDATE; a failed send keeps the chat open, like closeChat. */
+export async function closeChatAsBot(
+  ctx: AppCtx,
+  actor: BotActor,
+  chatId: string,
+  opts: { closingText: string | null },
+): Promise<ChatRow> {
+  const chat = await chatForBot(ctx, chatId, true);
+  let closingMessageSent = false;
+  if (opts.closingText) {
+    const sent = await sendSystemMessage(ctx, chat, { text: opts.closingText, botRunId: actor.runId });
+    if (!sent.ok) throw new BlockError('Mensagem de encerramento não enviada');
+    closingMessageSent = true;
+  }
+  return updateChatAsBot(
+    ctx,
+    chatId,
+    eq(chats.state, 'open'),
+    { state: 'closed', closedAt: new Date(), waiting: false, triagePending: false },
+    { kind: 'closed', data: { closingMessageSent, ...actorData(actor) } },
+  );
 }

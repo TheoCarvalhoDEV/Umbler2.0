@@ -10,6 +10,7 @@ import { CustomFieldsSettings } from './CustomFieldsSettings';
 import { QuickAnswersSettings } from './QuickAnswersSettings';
 import { TriageSettings } from './TriageSettings';
 import { ChatSettings } from './ChatSettings';
+import { BotsSettings } from './bots/BotsSettings';
 
 const SECTIONS: Array<{ path: string; label: string; adminOnly: boolean; page: ComponentType }> = [
   { path: 'perfil', label: 'Perfil', adminOnly: false, page: ProfileSettings },
@@ -20,6 +21,7 @@ const SECTIONS: Array<{ path: string; label: string; adminOnly: boolean; page: C
   { path: 'campos', label: 'Campos personalizados', adminOnly: true, page: CustomFieldsSettings },
   { path: 'respostas-rapidas', label: 'Respostas rápidas', adminOnly: false, page: QuickAnswersSettings },
   { path: 'triagem', label: 'Triagem', adminOnly: true, page: TriageSettings },
+  { path: 'chatbots', label: 'Chatbots', adminOnly: true, page: BotsSettings },
   { path: 'conversas', label: 'Conversas', adminOnly: true, page: ChatSettings },
 ];
 

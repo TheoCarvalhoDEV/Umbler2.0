@@ -51,13 +51,17 @@ export function Inbox() {
   const [filters, setFilters] = useState<InboxFilters>(EMPTY_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [pinError, setPinError] = useState<string | null>(null);
-  const [viewError, setViewError] = useState<string | null>(null);
+  // one banner for all row/header actions: the last error wins, any success clears it
+  const [actionError, setActionError] = useState<string | null>(null);
   const me = useMe().data;
 
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
   const users = useQuery({ queryKey: qk.users, queryFn: api.users.list });
   const tags = useQuery({ queryKey: qk.tags, queryFn: api.tags.list });
+  const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
+  const channelList = channels.data ?? [];
+  // History spec §7: the channel shows on the card only when there is more than one
+  const channelName = new Map<string, string>(channelList.length > 1 ? channelList.map((c): [string, string] => [c.id, c.name]) : []);
   const sectorName = new Map((sectors.data ?? []).map((s) => [s.id, s.name]));
   const userById = new Map((users.data ?? []).map((u) => [u.id, u]));
   const badges: Record<ChatTab, number> = { inbox: useUnreadChats('inbox'), waiting: useUnreadChats('waiting'), closed: 0 };
@@ -68,12 +72,12 @@ export function Inbox() {
   const pin = useMutation({
     mutationFn: (chat: ChatItem) => api.chats.pin(chat.id, !chat.pinned),
     onSuccess: () => {
-      setPinError(null);
+      setActionError(null);
       // pins are per user: refetch this user's lists (pinned chats sort first)
       return qc.invalidateQueries({ queryKey: qk.chatLists });
     },
     onError: (err) =>
-      setPinError(
+      setActionError(
         err instanceof ApiError && err.status === 409
           ? 'Você já fixou 3 conversas. Desafixe uma para fixar outra.'
           : err instanceof Error
@@ -85,9 +89,9 @@ export function Inbox() {
   // Admin-only "Ver todos os setores": the server re-reads it on every request, so refetch what it filters.
   const view = useMutation({
     mutationFn: api.auth.setView,
-    onError: () => setViewError('Não foi possível alterar a visualização. Tente novamente.'),
+    onError: () => setActionError('Não foi possível alterar a visualização. Tente novamente.'),
     onSuccess: (next) => {
-      setViewError(null);
+      setActionError(null);
       qc.setQueryData(qk.me, next);
       return Promise.all([qc.invalidateQueries({ queryKey: qk.chats }), qc.invalidateQueries({ queryKey: qk.contacts })]);
     },
@@ -188,9 +192,9 @@ export function Inbox() {
             tags={tags.data ?? []}
           />
         )}
-        {(pinError ?? viewError) && (
+        {actionError && (
           <p role="alert" className="mx-3 mb-2 rounded bg-danger/15 px-3 py-2 text-sm text-danger">
-            {pinError ?? viewError}
+            {actionError}
           </p>
         )}
 
@@ -206,6 +210,7 @@ export function Inbox() {
               chat={c}
               active={c.id === activeId}
               sectorName={sectorName.get(c.sectorId) ?? null}
+              channelName={channelName.get(c.channelId) ?? null}
               owner={c.ownerId ? (userById.get(c.ownerId) ?? null) : null}
               onOpen={() => navigate(`/chats/${c.id}`)}
               onTogglePin={() => pin.mutate(c)}

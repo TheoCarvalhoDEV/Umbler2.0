@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
 import { ApiError } from '../../lib/api';
-import { buildTimelineRows, dayLabel, errorMessage, eventText, isConflict, mergeTimelinePages, previewText } from './model';
+import {
+  buildTimelineRows, dayLabel, deletedTag, editedTag, errorMessage, eventText, isConflict, mergeTimelinePages, previewText,
+} from './model';
 
 // local wall-clock times, so the day boundaries match the browser's time zone
 const at = (y: number, mo: number, d: number, h: number, mi = 0) => new Date(y, mo - 1, d, h, mi).toISOString();
@@ -105,6 +107,50 @@ describe('eventText', () => {
   });
 });
 
+describe('eventText for history events', () => {
+  it('describes an import into a history chat and a contact merge', () => {
+    expect(eventText(event({ kind: 'history_imported', data: { count: 1234 } }), new Map())).toBe(
+      'Histórico do WhatsApp importado: 1.234 mensagens',
+    );
+    expect(eventText(event({ kind: 'contact_merged' }), new Map())).toBe('Contato sem número juntado a este contato');
+  });
+});
+
+describe('eventText for chatbot events', () => {
+  const names = new Map([['s-fin', 'Financeiro'], ['u-ana', 'Ana']]);
+  const bot = { botId: 'b1', botName: 'Triagem', runId: 'r1' };
+
+  it('describes each bot kind in Portuguese', () => {
+    expect(eventText(event({ kind: 'bot_started', data: bot }), names)).toBe('Chatbot Triagem iniciado');
+    expect(eventText(event({ kind: 'bot_finished', data: bot }), names)).toBe('Chatbot Triagem finalizado');
+    expect(eventText(event({ kind: 'bot_stopped', data: { ...bot, reason: 'manual' } }), names)).toBe('Chatbot Triagem parado');
+    expect(eventText(event({ kind: 'bot_stopped', authorName: 'Bia', data: { ...bot, reason: 'manual', by: 'u-bia' } }), names)).toBe(
+      'Chatbot Triagem parado por Bia',
+    );
+    expect(eventText(event({ kind: 'bot_failed', data: { ...bot, reason: 'Limite de 5 fluxos encadeados' } }), names)).toBe(
+      'Chatbot Triagem falhou: Limite de 5 fluxos encadeados',
+    );
+    expect(eventText(event({ kind: 'bot_failed', data: bot }), names)).toBe('Chatbot Triagem falhou');
+    expect(eventText(event({ kind: 'bot_transferred', data: { ...bot, toSectorId: 's-fin', toOwnerId: 'u-ana' } }), names)).toBe(
+      'Chatbot Triagem transferiu para Financeiro · Ana',
+    );
+    expect(eventText(event({ kind: 'bot_transferred', data: { ...bot, toSectorId: 's-x', toOwnerId: null } }), names)).toBe(
+      'Chatbot Triagem transferiu para outro setor',
+    );
+    expect(eventText(event({ kind: 'bot_note', data: { ...bot, text: 'Cliente VIP' } }), names)).toBe('Nota do chatbot Triagem: Cliente VIP');
+    expect(eventText(event({ kind: 'bot_started' }), names)).toBe('Chatbot Chatbot iniciado');
+  });
+
+  it('marks privacy changes and closes done by a bot', () => {
+    expect(eventText(event({ kind: 'privacy_changed', data: { ...bot, private: true } }), names)).toBe(
+      'Conversa tornada privada · Chatbot Triagem',
+    );
+    expect(eventText(event({ kind: 'closed', data: { ...bot, closingMessageSent: true } }), names)).toBe(
+      'Conversa finalizada · Chatbot Triagem',
+    );
+  });
+});
+
 describe('small helpers', () => {
   it('previewText falls back to a label per media kind', () => {
     expect(previewText('  oi  ', 'text')).toBe('oi');
@@ -118,5 +164,34 @@ describe('small helpers', () => {
     expect(isConflict(new ApiError(404, 'Não encontrado'))).toBe(false);
     expect(errorMessage(new ApiError(404, 'Não encontrado'))).toBe('Não encontrado');
     expect(errorMessage('boom')).toBe('Não foi possível concluir. Tente de novo.');
+  });
+});
+
+describe('message action texts', () => {
+  const names = new Map<string, string>();
+  const when = '2026-10-16T12:00:00.000Z';
+
+  it('describes deletes and edits by who made them', () => {
+    const del = (data: Record<string, unknown>, authorName: string | null = null) =>
+      eventText(event({ kind: 'message_deleted', data, authorName }), names);
+    expect(del({ messageId: 'm1', source: 'office' }, 'Bia')).toBe('Mensagem apagada por Bia');
+    expect(del({ messageId: 'm1', source: 'contact' })).toBe('Mensagem apagada pelo contato');
+    expect(del({ messageId: 'm1', source: 'phone' })).toBe('Mensagem apagada pelo celular');
+    expect(eventText(event({ kind: 'message_edited', authorName: 'Bia', data: { messageId: 'm1', source: 'office' } }), names)).toBe(
+      'Mensagem editada por Bia',
+    );
+    expect(eventText(event({ kind: 'message_edited', data: { messageId: 'm1', source: 'contact' } }), names)).toBe(
+      'Mensagem editada pelo contato',
+    );
+  });
+
+  it('labels the bubble tags exactly as the spec', () => {
+    expect(deletedTag({ at: when, source: 'contact', byName: null })).toBe('Apagada pelo contato');
+    expect(deletedTag({ at: when, source: 'office', byName: 'Ana Lima' })).toBe('Apagada por Ana Lima');
+    expect(deletedTag({ at: when, source: 'phone', byName: null })).toBe('Apagada pelo celular');
+    expect(editedTag({ at: when, source: 'office', newTextUnavailable: false })).toBe('editada');
+    expect(editedTag({ at: when, source: 'contact', newTextUnavailable: false })).toBe('editada pelo contato');
+    expect(editedTag({ at: when, source: 'contact', newTextUnavailable: true })).toBe('editada pelo contato (novo texto indisponível)');
+    expect(editedTag({ at: when, source: 'phone', newTextUnavailable: false })).toBe('editada pelo celular');
   });
 });

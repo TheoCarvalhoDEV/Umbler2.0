@@ -7,7 +7,8 @@ import { notFound } from '../lib/http-error.js';
 
 /** Profile pictures (contacts and users) live under `<mediaDir>/avatars`; paths in the DB are relative to mediaDir. */
 
-// Raster types only: image/svg+xml served from our origin could carry script.
+// Decision: only jpeg/png/webp/gif are ever stored or served. SVG is excluded on purpose (security):
+// image/svg+xml served from our origin could carry script. Users may upload only jpeg/png/webp (auth/routes.ts).
 export const AVATAR_TYPES: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -16,16 +17,35 @@ export const AVATAR_TYPES: Record<string, string> = {
 };
 export const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 
+/** Absolute path of `relPath` when it stays inside mediaDir, else null. */
+function insideMediaDir(mediaDir: string, relPath: string): string | null {
+  const root = resolve(mediaDir);
+  const file = resolve(root, relPath);
+  return file.startsWith(root + sep) ? file : null;
+}
+
+function fileOrThrow(mediaDir: string, relPath: string): string {
+  const file = insideMediaDir(mediaDir, relPath);
+  if (!file) throw new Error('avatar path outside mediaDir');
+  return file;
+}
+
 /** Writes `<path>.tmp` and renames it over `path`, so a reader never sees a half-written picture. */
 export async function writeAvatarFile(mediaDir: string, relPath: string, data: Buffer): Promise<void> {
-  const file = resolve(mediaDir, relPath);
+  const file = fileOrThrow(mediaDir, relPath);
+  const tmp = `${file}.tmp`;
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(`${file}.tmp`, data);
-  await rename(`${file}.tmp`, file);
+  try {
+    await writeFile(tmp, data);
+    await rename(tmp, file);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
 }
 
 export async function removeAvatarFile(mediaDir: string, relPath: string): Promise<void> {
-  await rm(resolve(mediaDir, relPath), { force: true });
+  await rm(fileOrThrow(mediaDir, relPath), { force: true });
 }
 
 /**
@@ -33,12 +53,11 @@ export async function removeAvatarFile(mediaDir: string, relPath: string): Promi
  * The Content-Type comes from that whitelist, never from the bytes; nosniff + CSP sandbox on top.
  */
 export async function sendAvatarFile(reply: FastifyReply, mediaDir: string, relPath: string | null | undefined) {
-  if (!relPath) throw notFound();
-  const root = resolve(mediaDir);
-  const file = resolve(root, relPath);
+  const file = relPath ? insideMediaDir(mediaDir, relPath) : null;
+  if (!file) throw notFound();
   const type = Object.keys(AVATAR_TYPES).find((t) => AVATAR_TYPES[t] === extname(file));
   const info = await stat(file).catch(() => null);
-  if (!file.startsWith(root + sep) || !type || !info?.isFile()) throw notFound();
+  if (!type || !info?.isFile()) throw notFound();
   return reply
     .headers({
       'Content-Type': type,

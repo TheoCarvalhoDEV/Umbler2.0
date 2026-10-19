@@ -11,6 +11,7 @@ describe('saveMedia', () => {
     const dir = await mkdtemp(join(tmpdir(), 'talk-media-'));
     const r = await saveMedia(dir, Buffer.from('abc'), 'audio/ogg; codecs=opus', 'voz.opus');
     expect(r.size).toBe(3);
+    expect(r.sha256).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'); // sha256('abc')
     expect(r.path).toMatch(new RegExp(`^\\d{4}/\\d{2}/${UUID}\\.ogg$`));
     expect(await readFile(join(dir, r.path), 'utf8')).toBe('abc');
   });
@@ -30,6 +31,16 @@ describe('saveMedia', () => {
     const r = await saveMedia(dir, Buffer.from('<h1>x</h1>'), 'text/html', '../../evil.html');
     expect(r.path).toMatch(new RegExp(`^\\d{4}/\\d{2}/${UUID}\\.html$`));
     expect(await readFile(join(dir, r.path), 'utf8')).toBe('<h1>x</h1>');
+  });
+});
+
+describe('saveMedia subdir', () => {
+  it('stores under the given subdir instead of YYYY/MM', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'talk-media-'));
+    const r = await saveMedia(dir, Buffer.from('%PDF'), 'application/pdf', 'Contrato.pdf', 'bots');
+    expect(r.path).toMatch(new RegExp(`^bots/${UUID}\\.pdf$`));
+    expect(r.size).toBe(4);
+    expect(await readFile(join(dir, r.path), 'utf8')).toBe('%PDF');
   });
 });
 

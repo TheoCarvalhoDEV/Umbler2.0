@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm';
-import type { WsEvent } from '@talk/shared';
+import type { NotificationDto, WsEvent } from '@talk/shared';
+import { loadChannelDto } from '../channels/service.js';
 import type { Db } from '../db/client.js';
-import { channels, chats, messages } from '../db/schema.js';
+import { chats, messages } from '../db/schema.js';
 import { toChatListItem } from '../inbox/queries.js';
 import { canSee, loadAuthUser, type AuthUser } from '../inbox/visibility.js';
 import { toMessageDto } from '../messages/dto.js';
@@ -13,7 +14,12 @@ export interface Hub {
   disconnectUser(userId: string): void;
   publishChat(chatId: string): Promise<void>;
   publishMessage(chatId: string, type: 'message.created' | 'message.updated', messageId: string): Promise<void>;
+  /** The chat no longer exists (merged away): every connected client drops it. */
+  publishChatRemoved(chatId: string): void;
   publishChannel(channelId: string): Promise<void>;
+  /** Chatbot "Notificar atendente": WS only, to the listed users who can see the chat. */
+  publishNotification(chatId: string, userIds: string[], notification: NotificationDto): Promise<void>;
+  publishUsersChanged(): void;
 }
 
 function send(socket: Socket, event: WsEvent): void {
@@ -68,6 +74,10 @@ export function createHub(getDb: () => Db): Hub {
       }
     },
 
+    publishChatRemoved(chatId) {
+      for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, { type: 'chat.removed', chatId });
+    },
+
     async publishMessage(chatId, type, messageId) {
       if (byUser.size === 0) return;
       const db = getDb();
@@ -83,13 +93,28 @@ export function createHub(getDb: () => Db): Hub {
 
     async publishChannel(channelId) {
       if (byUser.size === 0) return;
-      const [row] = await getDb().select().from(channels).where(eq(channels.id, channelId));
-      if (!row) return;
-      const event: WsEvent = {
-        type: 'channel.status',
-        channel: { id: row.id, name: row.name, status: row.status, phone: row.phone },
-      };
+      const channel = await loadChannelDto(getDb(), channelId); // with the import progress (history spec §5.6)
+      if (!channel) return;
+      const event: WsEvent = { type: 'channel.status', channel };
       for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, event);
+    },
+
+    // ponytail: WS-only; offline agents miss it — add a notifications table when 2b's "notificar só se online" lands.
+    async publishNotification(chatId, userIds, notification) {
+      if (byUser.size === 0) return;
+      const db = getDb();
+      const [chat] = await db.select().from(chats).where(eq(chats.id, chatId));
+      if (!chat) return;
+      const event: WsEvent = { type: 'notification', notification };
+      for (const userId of new Set(userIds)) {
+        const sockets = byUser.get(userId);
+        if (!sockets) continue;
+        const user = await loadAuthUser(db, userId);
+        if (user && canSee(user, chat)) for (const socket of [...sockets]) send(socket, event);
+      }
+    },
+    publishUsersChanged() {
+      for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, { type: 'users.changed' });
     },
   };
 }
@@ -103,7 +128,12 @@ export function createRecordingHub(): Hub & {
     register: () => () => {},
     disconnectUser: (userId) => { events.push({ type: 'disconnect', userId }); },
     publishChat: async (chatId) => { events.push({ type: 'chat', chatId }); },
+    publishChatRemoved: (chatId) => { events.push({ type: 'chat.removed', chatId }); },
     publishMessage: async (chatId, type, messageId) => { events.push({ type, chatId, messageId }); },
     publishChannel: async (channelId) => { events.push({ type: 'channel', channelId }); },
+    publishNotification: async (chatId, userIds) => {
+      for (const userId of userIds) events.push({ type: 'notification', chatId, userId });
+    },
+    publishUsersChanged: () => { events.push({ type: 'users.changed' }); },
   };
 }

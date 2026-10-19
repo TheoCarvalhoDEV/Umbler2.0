@@ -65,8 +65,8 @@ describe('parseEvolutionWebhook — content messages', () => {
 
 describe('parseEvolutionWebhook — reactions, statuses, connection, qrcode', () => {
   const cases: Array<[string, InboundEvent]> = [
-    ['reaction', { type: 'reaction', instance: INSTANCE, targetExternalId: 'MSG-OUT-0001', emoji: '👍' }],
-    ['reaction-removed', { type: 'reaction', instance: INSTANCE, targetExternalId: 'MSG-OUT-0001', emoji: null }],
+    ['reaction', { type: 'reaction', instance: INSTANCE, targetExternalId: 'MSG-OUT-0001', emoji: '👍', fromMe: false }],
+    ['reaction-removed', { type: 'reaction', instance: INSTANCE, targetExternalId: 'MSG-OUT-0001', emoji: null, fromMe: false }],
     ['status-delivered', { type: 'status', instance: INSTANCE, externalId: 'MSG-OUT-0001', status: 'delivered' }],
     ['status-read', { type: 'status', instance: INSTANCE, externalId: 'MSG-OUT-0001', status: 'read' }],
     ['connection-open', { type: 'connection', instance: INSTANCE, status: 'connected', phone: '5565988887777' }],
@@ -133,10 +133,12 @@ describe('parseEvolutionWebhook — ignored', () => {
     expect(parseEvolutionWebhook(fixture(name))).toEqual([{ type: 'ignored', reason }]);
   });
 
-  it('ignores a reaction the office sent from the phone', () => {
+  it('keeps a reaction the office sent from the phone, flagged fromMe (the office slot, spec §3)', () => {
     const body = fixture('reaction');
     body.data.key.fromMe = true;
-    expect(parseEvolutionWebhook(body)).toEqual([{ type: 'ignored', reason: 'own reaction' }]);
+    expect(parseEvolutionWebhook(body)).toEqual([
+      { type: 'reaction', instance: INSTANCE, targetExternalId: 'MSG-OUT-0001', emoji: '👍', fromMe: true },
+    ]);
   });
 
   it('ignores a message with only metadata (no content)', () => {
@@ -163,5 +165,54 @@ describe('parseEvolutionWebhook — ignored', () => {
     const events = parseEvolutionWebhook(body);
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('ignored');
+  });
+});
+
+describe('parseEvolutionWebhook — deletes and edits', () => {
+  it('reads a revoke by the contact from messages.delete', () => {
+    expect(parseEvolutionWebhook(fixture('delete-in'))).toEqual([
+      { type: 'revoke', instance: INSTANCE, targetExternalId: 'MSG-TEXT-IN', fromMe: false },
+    ]);
+  });
+
+  it('reads the WhatsApp key, not the Evolution row id, from the echo of our own delete', () => {
+    expect(parseEvolutionWebhook(fixture('delete-api'))).toEqual([
+      { type: 'revoke', instance: INSTANCE, targetExternalId: 'MSG-OUT-0001', fromMe: true },
+    ]);
+  });
+
+  it('reads an edit from messages.update, @lid remoteJid included', () => {
+    expect(parseEvolutionWebhook(fixture('edit-update-in'))).toEqual([
+      { type: 'edit', instance: INSTANCE, targetExternalId: 'MSG-TEXT-IN', fromMe: false, text: 'Olá, preciso de ajuda urgente' },
+    ]);
+  });
+
+  it('reads an edited caption, an extended text and an edit made on the office phone', () => {
+    const body = fixture('edit-update-in');
+    body.data.fromMe = true;
+    body.data.message = { editedMessage: { message: { imageMessage: { caption: 'Nova legenda', mimetype: 'image/jpeg' } } } };
+    expect(parseEvolutionWebhook(body)).toEqual([
+      { type: 'edit', instance: INSTANCE, targetExternalId: 'MSG-TEXT-IN', fromMe: true, text: 'Nova legenda' },
+    ]);
+    body.data.message = { editedMessage: { message: { protocolMessage: { editedMessage: { extendedTextMessage: { text: 'Texto longo' } } } } } };
+    expect(parseEvolutionWebhook(body)).toMatchObject([{ type: 'edit', text: 'Texto longo' }]);
+  });
+
+  it('turns the encrypted edit format into an edit with unknown text, never an unsupported message', () => {
+    expect(parseEvolutionWebhook(fixture('secret-edit-in'))).toEqual([
+      { type: 'edit', instance: INSTANCE, targetExternalId: 'MSG-TEXT-IN', fromMe: false, text: null },
+    ]);
+  });
+
+  it('ignores other encrypted messages, edits without text and deletes without id', () => {
+    const secret = fixture('secret-edit-in');
+    secret.data.message.secretEncryptedMessage.secretEncType = 1; // EVENT_EDIT
+    expect(parseEvolutionWebhook(secret)).toEqual([{ type: 'ignored', reason: 'secret message' }]);
+    const edit = fixture('edit-update-in');
+    edit.data.message = { editedMessage: { message: { audioMessage: {} } } };
+    expect(parseEvolutionWebhook(edit)).toEqual([{ type: 'ignored', reason: 'edit without text' }]);
+    const del = fixture('delete-in');
+    delete del.data.id;
+    expect(parseEvolutionWebhook(del)).toEqual([{ type: 'ignored', reason: 'missing id' }]);
   });
 });

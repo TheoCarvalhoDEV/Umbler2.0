@@ -4,7 +4,7 @@ import type { ChatDetail, ChatListFilters, ChatListItem, TimelineItem } from '@t
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { chatEvents, chatPins, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
-import { avatarUrl } from '../contacts/avatar.js';
+import { avatarUrl, refreshAvatarInBackground } from '../contacts/avatar.js';
 import { badRequest } from '../lib/http-error.js';
 import { toMessageDto } from '../messages/dto.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
@@ -72,6 +72,7 @@ export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string)
     lastMessagePreview: chat.lastMessagePreview,
     pinned: pin.length > 0,
     tagIds: tagRows.map((r) => r.id),
+    history: chat.history,
   };
 }
 
@@ -95,6 +96,8 @@ export async function listChats(
   const conds: Array<SQL | undefined> = [visibleChatsWhere(user)];
 
   conds.push(eq(chats.state, f.tab === 'closed' ? 'closed' : 'open'));
+  // History spec §8: history chats stay out of Finalizados; a search still finds them.
+  if (f.tab === 'closed' && !f.q?.trim()) conds.push(eq(chats.history, false));
   if (f.tab === 'waiting') conds.push(eq(chats.waiting, true));
   if (f.sectorId) conds.push(eq(chats.sectorId, f.sectorId));
   if (f.ownerId === 'none') conds.push(isNull(chats.ownerId));
@@ -158,6 +161,7 @@ export async function listChats(
 
 export async function getChatDetail(ctx: AppCtx, user: AuthUser, chatId: string): Promise<ChatDetail> {
   const chat = await getChatForUser(ctx, user, chatId);
+  refreshAvatarInBackground(ctx, chat.channelId, chat.contactId); // opening the conversation
   return toChatDetail(ctx.db, chat, user.id);
 }
 

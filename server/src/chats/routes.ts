@@ -1,14 +1,20 @@
 import multipart from '@fastify/multipart';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { stopRunsForChat } from '../bots/engine.js';
+import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
+import { downloadMediaForUser } from '../history/media.js';
 import {
-  assumeChat, closeChat, markChatRead, pinChat, reopenChat, setChatPrivacy, startChat, transferChat,
+  assumeChat, closeChat, getChatForUser, markChatRead, pinChat, reopenChat, setChatPrivacy, startChat, transferChat,
   type ChatRow,
 } from '../inbox/chats.js';
 import { getChatDetail, getTimeline, listChats, toChatDetail } from '../inbox/queries.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest } from '../lib/http-error.js';
+import {
+  deleteMessageForEveryone, editMessage, forwardMessage, listMessageEdits, listRecentStickers, reactToMessage,
+} from '../messages/actions.js';
 import { addNote, resendMessage, sendAgentMessage, type SendInput } from '../messages/send.js';
 
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
@@ -37,8 +43,10 @@ const startBody = z
     sectorId: z.uuid().optional(),
   })
   .refine((b) => b.contactId !== undefined || b.phone !== undefined, 'Informe o contato ou o telefone');
+/** Spec §5.5: the answer to a BOT_RUNNING 409, sent back with the retried request. */
+const botActionField = z.enum(['stop', 'keep']).optional();
 const transferBody = z
-  .object({ sectorId: z.uuid().optional(), ownerId: z.uuid().nullable().optional() })
+  .object({ sectorId: z.uuid().optional(), ownerId: z.uuid().nullable().optional(), botAction: botActionField })
   .refine((b) => b.sectorId !== undefined || b.ownerId !== undefined, 'Informe o setor ou o atendente');
 const privacyBody = z.object({ private: z.boolean() });
 const closeBody = z.object({ sendClosingMessage: z.boolean().default(false) });
@@ -46,14 +54,28 @@ const textBody = z.object({
   text: z.string().trim().min(1).max(4096),
   signature: z.boolean().default(true),
   replyToId: z.uuid().optional(),
+  botAction: botActionField,
 });
+/** Spec §6: a recent sticker, sent again by the id of the message that carries it. */
+const stickerBody = z.object({ stickerFromMessageId: z.uuid(), replyToId: z.uuid().optional(), botAction: botActionField });
 const multipartFields = z.object({
   text: z.string().trim().max(4096).optional(),
   signature: z.stringbool().default(true),
   asVoice: z.stringbool().default(false),
+  asSticker: z.stringbool().default(false),
   replyToId: z.uuid().optional(),
+  botAction: botActionField,
 });
 const noteBody = z.object({ text: z.string().trim().min(1).max(4096) });
+/** Spec §3: one emoji, or '' to remove (isSingleEmoji checks it in reactToMessage). */
+const reactionBody = z.object({ emoji: z.string().max(32) });
+/** Spec §5: same limits as a text send. */
+const editBody = z.object({ text: z.string().trim().min(1).max(4096) });
+/** Spec §7: one destination: an open chat, or a contact (+ optional channel; default = the source message's channel). */
+const forwardBody = z.union([
+  z.object({ chatId: z.uuid(), botAction: botActionField }),
+  z.object({ contactId: z.uuid(), channelId: z.uuid().optional(), botAction: botActionField }),
+]);
 
 async function readMultipart(req: FastifyRequest): Promise<SendInput> {
   const fields: Record<string, string> = {};
@@ -75,7 +97,16 @@ async function readMultipart(req: FastifyRequest): Promise<SendInput> {
   }
   if (!file) throw badRequest('Arquivo ausente');
   const f = multipartFields.parse(fields);
-  return { file, text: f.text || undefined, signature: f.signature, asVoice: f.asVoice, replyToId: f.replyToId };
+  return {
+    file, text: f.text || undefined, signature: f.signature, asVoice: f.asVoice, asSticker: f.asSticker, replyToId: f.replyToId,
+    botAction: f.botAction,
+  };
+}
+
+/** JSON send: a recent sticker (`stickerFromMessageId`) or a text. */
+function jsonSendInput(body: unknown): SendInput {
+  if (body && typeof body === 'object' && 'stickerFromMessageId' in body) return { ...stickerBody.parse(body), signature: false };
+  return textBody.parse(body);
 }
 
 export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<void> {
@@ -107,16 +138,27 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
 
     action('assume', (user, id) => assumeChat(ctx, user, id));
     action('reopen', (user, id) => reopenChat(ctx, user, id));
-    action('transfer', (user, id, body) => transferChat(ctx, user, id, transferBody.parse(body)));
+    action('transfer', async (user, id, body) => {
+      const { botAction, ...to } = transferBody.parse(body);
+      await getChatForUser(ctx, user, id); // 404 before a 409 could reveal bot names
+      // ponytail: 'stop' runs before transferChat validates the destination, so a transfer that then fails (400/409)
+      // has still stopped the bot; split the ask check from the stop if that ever matters.
+      await applyBotRunningBehavior(ctx, user, id, botAction, 'transfer');
+      return transferChat(ctx, user, id, to);
+    });
     action('privacy', (user, id, body) => setChatPrivacy(ctx, user, id, privacyBody.parse(body).private));
-    action('close', (user, id, body) =>
-      closeChat(ctx, user, id, {
+    action('close', async (user, id, body) => {
+      const closed = await closeChat(ctx, user, id, {
         sendClosingMessage: closeBody.parse(body ?? {}).sendClosingMessage,
         // Closing text is the office's canned message, so it goes without the agent signature.
+        // botAction 'keep': closing never asks, the runs are stopped right below.
         sendClosing: async (text: string) =>
-          (await sendAgentMessage(ctx, user, id, { text, signature: false })).status !== 'failed',
-      }),
-    );
+          (await sendAgentMessage(ctx, user, id, { text, signature: false, botAction: 'keep' })).status !== 'failed',
+      });
+      // Spec §5.5: closing the chat stops every bot run in it.
+      await stopRunsForChat(ctx, id, { userId: user.id, reason: 'chat_closed' });
+      return closed;
+    });
 
     r.post('/api/chats/:id/read', async (req, reply) => {
       await markChatRead(ctx, req.user, idParams.parse(req.params).id);
@@ -135,7 +177,7 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
 
     r.post('/api/chats/:id/messages', async (req) => {
       const { id } = idParams.parse(req.params);
-      const input: SendInput = req.isMultipart() ? await readMultipart(req) : textBody.parse(req.body);
+      const input: SendInput = req.isMultipart() ? await readMultipart(req) : jsonSendInput(req.body);
       return sendAgentMessage(ctx, req.user, id, input);
     });
 
@@ -146,6 +188,27 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
 
     r.post('/api/messages/:id/resend', async (req) =>
       resendMessage(ctx, req.user, idParams.parse(req.params).id),
+    );
+
+    // §5.5 "Baixar": one download by key.id for a media message that has no file yet
+    r.post('/api/messages/:id/media', async (req) => downloadMediaForUser(ctx, req.user, idParams.parse(req.params).id));
+
+    r.post('/api/messages/:id/reaction', async (req) =>
+      reactToMessage(ctx, req.user, idParams.parse(req.params).id, reactionBody.parse(req.body).emoji),
+    );
+
+    r.delete('/api/messages/:id', async (req) => deleteMessageForEveryone(ctx, req.user, idParams.parse(req.params).id));
+
+    r.patch('/api/messages/:id', async (req) =>
+      editMessage(ctx, req.user, idParams.parse(req.params).id, editBody.parse(req.body).text),
+    );
+
+    r.get('/api/messages/:id/edits', async (req) => listMessageEdits(ctx, req.user, idParams.parse(req.params).id));
+
+    r.get('/api/stickers/recent', async (req) => listRecentStickers(ctx, req.user));
+
+    r.post('/api/messages/:id/forward', async (req) =>
+      forwardMessage(ctx, req.user, idParams.parse(req.params).id, forwardBody.parse(req.body)),
     );
   });
 }

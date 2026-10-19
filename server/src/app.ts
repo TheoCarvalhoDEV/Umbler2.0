@@ -8,6 +8,7 @@ import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
 import { authRoutes } from './auth/routes.js';
+import { registerBotRoutes } from './bots/routes.js';
 import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
 import { registerChannelRoutes } from './channels/routes.js';
 import { chatRoutes } from './chats/routes.js';
@@ -30,7 +31,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   app.setErrorHandler((err: unknown, req, reply) => {
-    if (err instanceof HttpError) return reply.status(err.status).send({ error: err.message });
+    if (err instanceof HttpError) return reply.status(err.status).send({ error: err.message, ...err.body });
     if (err instanceof z.ZodError) return reply.status(400).send({ error: 'Requisição inválida' });
     // Fastify's own client errors (malformed JSON, body too large, rate limit, ...)
     const status = (err as { statusCode?: unknown }).statusCode;
@@ -78,6 +79,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerSettingsRoutes(app, ctx);
   await chatRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
+  registerBotRoutes(app, ctx);
 
   // Spec §2: the compiled React front is served at /. Any other GET outside /api, /ws and /webhooks is a
   // client-side route, so it gets index.html. Keep this block last in buildApp.

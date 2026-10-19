@@ -64,28 +64,38 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
     throw badRequest('Você não pode desativar nem rebaixar o próprio usuário');
   }
   const passwordHash = p.password ? await hashPassword(p.password) : undefined;
-  const set = {
-    name: p.name,
-    email: p.email,
-    role: p.role,
-    // A role change resets the admin-only view preference (stale 'ver todos' must not survive a demote/promote).
-    seeAllSectors: p.role === undefined ? undefined : false,
-    active: p.active,
-    passwordHash,
-    signature: p.signature === undefined ? undefined : p.signature || null,
-  };
   const killSessions = p.active === false || passwordHash !== undefined;
+  let scopeChanged = false;
   await ctx.db.transaction(async (tx) => {
-    if (!(await tx.$count(users, eq(users.id, id)))) throw notFound('Usuário não encontrado');
+    const [current] = await tx.select({ role: users.role }).from(users).where(eq(users.id, id));
+    if (!current) throw notFound('Usuário não encontrado');
+    const set = {
+      name: p.name,
+      email: p.email,
+      role: p.role,
+      // A real role change resets the admin-only view preference (stale 'ver todos' must not survive a demote/promote).
+      seeAllSectors: p.role !== undefined && p.role !== current.role ? false : undefined,
+      active: p.active,
+      passwordHash,
+      signature: p.signature === undefined ? undefined : p.signature || null,
+    };
     if (p.email && (await tx.$count(users, and(eq(users.email, p.email), ne(users.id, id))))) {
       throw conflict('E-mail já cadastrado');
     }
     if (Object.values(set).some((v) => v !== undefined)) await tx.update(users).set(set).where(eq(users.id, id));
-    if (p.sectorIds) await setSectors(tx, id, p.sectorIds);
+    const roleChanged = p.role !== undefined && p.role !== current.role;
+    let sectorsChanged = false;
+    if (p.sectorIds) {
+      const before = (await tx.select({ s: userSectors.sectorId }).from(userSectors).where(eq(userSectors.userId, id))).map((r) => r.s);
+      const next = new Set(p.sectorIds);
+      sectorsChanged = before.length !== next.size || before.some((x) => !next.has(x));
+      await setSectors(tx, id, p.sectorIds);
+    }
+    scopeChanged = roleChanged || sectorsChanged;
     if (killSessions) await deleteUserSessions(tx, id);
   });
   // A live socket keeps the role/sectors it had at connect time: drop it so the client reconnects fresh.
-  if (killSessions || p.role !== undefined || p.sectorIds !== undefined) ctx.hub.disconnectUser(id);
+  if (killSessions || scopeChanged) ctx.hub.disconnectUser(id);
   return getUserDto(ctx.db, id);
 }
 

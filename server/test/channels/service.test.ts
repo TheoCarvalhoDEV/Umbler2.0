@@ -10,6 +10,7 @@ import {
   setChannelQr,
   setChannelStatus,
   syncChannelStatuses,
+  syncWebhooks,
 } from '../../src/channels/service.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -38,7 +39,7 @@ describe('createChannel', () => {
 
     const dto = await createChannel(ctx, 'Escritório');
 
-    expect(dto).toEqual({ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null });
+    expect(dto).toEqual({ id: expect.any(String), name: 'Escritório', status: 'disconnected', phone: null, historyPeriod: '3m', disconnectedAt: null, historyImport: null });
     const instance = `talk-${dto.id.slice(0, 8)}`;
     expect(spy).toHaveBeenCalledWith(
       instance,
@@ -119,5 +120,29 @@ describe('getChannelQrById', () => {
     await expect(getChannelQrById(ctx, seed.channelId)).resolves.toEqual({ qrBase64: null });
 
     await expect(getChannelQrById(ctx, crypto.randomUUID())).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('syncWebhooks', () => {
+  it('pushes the webhook URL to every instance; one failure does not stop the others', async () => {
+    await ctx.db.insert(channels).values({ name: 'Outro', evolutionInstance: 'talk-outro', status: 'disconnected' });
+    const calls: string[] = [];
+    let first = true;
+    ctx.wa.setWebhook = async (instance, url) => {
+      calls.push(`${instance} ${url}`);
+      if (first) {
+        first = false;
+        throw new Error('evolution down');
+      }
+    };
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await syncWebhooks(ctx);
+
+    const url = 'http://app:3000/webhooks/evolution/test-webhook-secret-0123456789abcdef';
+    expect(calls.sort()).toEqual([`talk-outro ${url}`, `talk-test ${url}`]);
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledWith('webhook sync failed', { instance: expect.any(String), err: 'Error' });
+    logged.mockRestore();
   });
 });

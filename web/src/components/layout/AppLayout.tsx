@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Link, NavLink, Outlet } from 'react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { NavLink, Outlet } from 'react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AddressBookIcon,
   ChatCircleDotsIcon,
   GearSixIcon,
   SignOutIcon,
-  WarningCircleIcon,
   type Icon,
 } from '@phosphor-icons/react';
-import { api, qk } from '../../lib/api';
 import { useCurrentUser, useLogout } from '../../lib/auth';
 import { Avatar } from '../Avatar';
 import { connectWs } from '../../lib/ws';
 import { NotificationPermissionButton, useMessageNotifications } from '../../lib/notify';
+import { ChannelBanner } from './ChannelBanner';
+import { NotificationToasts } from './NotificationToasts';
 import { readThemePref, setThemePref, type ThemePref } from '../../lib/theme';
 
 function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon: Icon }) {
@@ -103,24 +103,6 @@ function UserMenu() {
   );
 }
 
-function ChannelBanner() {
-  const me = useCurrentUser();
-  const { data } = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
-  const down = (data ?? []).filter((c) => c.status !== 'connected');
-  if (down.length === 0) return null;
-  return (
-    <div role="alert" className="flex items-center gap-2 bg-danger-strong px-4 py-2 text-sm font-medium text-white">
-      <WarningCircleIcon size={18} weight="fill" />
-      <span>WhatsApp desconectado: {down.map((c) => c.name).join(', ')}.</span>
-      {me.role === 'admin' && (
-        <Link to="/configuracoes/canais" className="underline underline-offset-2">
-          Reconectar
-        </Link>
-      )}
-    </div>
-  );
-}
-
 export default function AppLayout() {
   const qc = useQueryClient();
   useEffect(() => connectWs(qc), [qc]);
@@ -142,6 +124,7 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <NotificationToasts />
     </div>
   );
 }

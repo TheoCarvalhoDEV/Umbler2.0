@@ -174,6 +174,19 @@ describe('applyWsEvent', () => {
       '2:connecting',
     ]);
   });
+
+  it('users.changed refetches the users, every chat query and me (a picture changed)', () => {
+    const qc = new QueryClient();
+    const keys = [qk.users, seedList(qc, [chat('a')]), qk.chat('a'), qk.timeline('a'), qk.me];
+    qc.setQueryData(qk.users, []);
+    qc.setQueryData(qk.chat('a'), {});
+    qc.setQueryData(qk.timeline('a'), { pages: [], pageParams: [] });
+    qc.setQueryData(qk.me, {});
+    qc.setQueryData(qk.channels, []);
+    applyWsEvent(qc, { type: 'users.changed' });
+    for (const key of keys) expect(qc.getQueryState(key)!.isInvalidated, JSON.stringify(key)).toBe(true);
+    expect(qc.getQueryState(qk.channels)!.isInvalidated).toBe(false);
+  });
 });
 
 describe('connectWs', () => {

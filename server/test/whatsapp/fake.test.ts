@@ -19,6 +19,27 @@ describe('createFakeGateway', () => {
     ]);
   });
 
+  it('records the message actions; stickers get ids like every send; failNext applies to them', async () => {
+    const wa = createFakeGateway();
+    const key = { address: '5565999999999', externalId: 'WA-1', fromMe: true };
+    await wa.sendReaction('talk-test', key, '👍');
+    await wa.deleteForEveryone('talk-test', key);
+    await wa.editText('talk-test', key, 'novo');
+    expect(await wa.sendSticker('talk-test', '5565999999999', 'UklGRg==')).toEqual({ externalId: 'fake-1' });
+    await wa.setWebhook('talk-test', 'http://app:3000/webhooks/evolution/s');
+
+    expect(wa.sent).toEqual([
+      { method: 'sendReaction', instance: 'talk-test', phone: '5565999999999', payload: { key, emoji: '👍' } },
+      { method: 'deleteForEveryone', instance: 'talk-test', phone: '5565999999999', payload: { key } },
+      { method: 'editText', instance: 'talk-test', phone: '5565999999999', payload: { key, text: 'novo' } },
+      { method: 'sendSticker', instance: 'talk-test', phone: '5565999999999', payload: { base64: 'UklGRg==' } },
+      { method: 'setWebhook', instance: 'talk-test', payload: { webhookUrl: 'http://app:3000/webhooks/evolution/s' } },
+    ]);
+
+    wa.failNext();
+    await expect(wa.deleteForEveryone('talk-test', key)).rejects.toThrow('fake gateway failure');
+  });
+
   it('records createInstance and connect but not read-only calls', async () => {
     const wa = createFakeGateway();
     await wa.createInstance('talk-test', 'http://app:3000/webhooks/evolution/s');
@@ -81,6 +102,32 @@ describe('createFakeGateway', () => {
       { instance: 'talk-test', address: '123@lid' },
     ]);
     expect(wa.sent).toEqual([]);
+  });
+
+  it('findMessages serves historyRecords inside the inclusive second bounds, newest first, by page', async () => {
+    const wa = createFakeGateway();
+    const r = (id: string, t: number) => ({ key: { id }, messageTimestamp: t });
+    wa.historyRecords.push(r('a', 100), r('b', 300), r('c', 200), r('d', 400));
+    const q = { gte: new Date(100_000), lte: new Date(300_999), offset: 2 };
+
+    expect(await wa.findMessages('talk-test', { ...q, page: 1 })).toEqual({ total: 3, pages: 2, records: [r('b', 300), r('c', 200)] });
+    expect(await wa.findMessages('talk-test', { ...q, page: 2 })).toEqual({ total: 3, pages: 2, records: [r('a', 100)] });
+    expect(wa.findCalls).toEqual([
+      { instance: 'talk-test', gte: '1970-01-01T00:01:40.000Z', lte: '1970-01-01T00:05:00.999Z', page: 1, offset: 2 },
+      { instance: 'talk-test', gte: '1970-01-01T00:01:40.000Z', lte: '1970-01-01T00:05:00.999Z', page: 2, offset: 2 },
+    ]);
+  });
+
+  it('downloadMediaById answers by key.id (PNG by default, or the armed media/error) and records the lookup', async () => {
+    const wa = createFakeGateway();
+    wa.mediaById.set('expirada', new Error('400'));
+    wa.mediaById.set('audio', { base64: 'T2dnUw==', mime: 'audio/ogg' });
+
+    await expect(wa.downloadMediaById('talk-test', 'qualquer')).resolves.toMatchObject({ mime: 'image/png' });
+    await expect(wa.downloadMediaById('talk-test', 'audio')).resolves.toEqual({ base64: 'T2dnUw==', mime: 'audio/ogg' });
+    await expect(wa.downloadMediaById('talk-test', 'expirada')).rejects.toThrow('400');
+    expect(wa.mediaLookups.map((l) => l.externalId)).toEqual(['qualquer', 'audio', 'expirada']);
+    expect(await wa.findContacts('talk-test')).toEqual([]);
   });
 });
 

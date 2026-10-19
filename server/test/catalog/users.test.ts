@@ -89,6 +89,16 @@ it('updates sectors and signature and drops live sockets on visibility changes',
   expect((await call('GET', '/api/auth/me', agent)).statusCode).toBe(200);
 });
 
+it('does not drop sockets when role and sectors are sent but unchanged; does on a real role change', async () => {
+  const spy = vi.spyOn(ctx.hub, 'disconnectUser');
+  const cur = (await call('GET', '/api/users', admin)).json().find((u: { id: string }) => u.id === seed.agentA.id);
+  const same = await call('PATCH', `/api/users/${seed.agentA.id}`, admin, { role: cur.role, sectorIds: cur.sectorIds, name: 'Novo Nome' });
+  expect(same.statusCode).toBe(200);
+  expect(spy).not.toHaveBeenCalled();
+  expect((await call('PATCH', `/api/users/${seed.agentA.id}`, admin, { role: 'admin' })).statusCode).toBe(200);
+  expect(spy).toHaveBeenCalledWith(seed.agentA.id);
+});
+
 it('deactivating a user kills their sessions and live sockets', async () => {
   const spy = vi.spyOn(ctx.hub, 'disconnectUser');
   expect((await call('GET', '/api/auth/me', agent)).statusCode).toBe(200);
@@ -125,4 +135,13 @@ it('resets seeAllSectors whenever the role changes', async () => {
   await call('PATCH', `/api/users/${uid}`, admin, { role: 'admin' });
   const [row] = await ctx.db.select().from(users).where(eq(users.id, uid));
   expect(row.seeAllSectors).toBe(false);
+});
+
+it('keeps seeAllSectors when the PATCH repeats the current role', async () => {
+  const other = await call('POST', '/api/users', admin, { name: 'Outro Adm', email: 'adm2@example.com', password: 'senha-teste-123', role: 'admin' });
+  const uid = other.json().id as string;
+  await ctx.db.update(users).set({ seeAllSectors: true }).where(eq(users.id, uid));
+  expect((await call('PATCH', `/api/users/${uid}`, admin, { role: 'admin', name: 'Outro Adm 2' })).statusCode).toBe(200);
+  const [row] = await ctx.db.select().from(users).where(eq(users.id, uid));
+  expect(row.seeAllSectors).toBe(true);
 });

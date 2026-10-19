@@ -40,7 +40,7 @@ function ClosedFooter({ chat, onOpenChat }: { chat: ChatDetail; onOpenChat: (cha
 
   return (
     <div className="border-t border-border bg-surface px-4 py-3 text-center text-sm text-muted">
-      Conversa finalizada —{' '}
+      {chat.history ? 'Histórico importado do WhatsApp (só leitura)' : 'Conversa finalizada'} —{' '}
       <button type="button" disabled={busy} onClick={() => void startNew()} className="font-medium text-fg underline disabled:opacity-50">
         Nova conversa
       </button>
@@ -96,7 +96,7 @@ function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOp
         onToggleContactPanel={onToggleContactPanel}
         onOpenChat={onOpenChat}
       />
-      <Timeline chatId={chatId} onReply={setReplyTo} />
+      <Timeline chatId={chatId} onReply={setReplyTo} chatOpen={chat.state === 'open'} />
       {chat.state === 'open' ? (
         <Composer chatId={chatId} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />
       ) : (

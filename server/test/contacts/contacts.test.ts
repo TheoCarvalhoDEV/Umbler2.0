@@ -92,6 +92,9 @@ it('searches by name or phone, filters by tag and paginates by most recently upd
   expect(page2.nextCursor).toBeNull();
 
   expect((await call('GET', '/api/contacts?cursor=lixo', agentA)).statusCode).toBe(400);
+  // Date.parse accepts "1", Postgres does not: must be 400, not 500.
+  const loose = Buffer.from('1|00000000-0000-4000-8000-000000000001').toString('base64url');
+  expect((await call('GET', `/api/contacts?cursor=${loose}`, agentA)).statusCode).toBe(400);
 });
 
 it('sets tags, custom fields and the blocked flag', async () => {

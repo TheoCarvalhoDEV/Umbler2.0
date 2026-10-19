@@ -15,6 +15,27 @@
       "when": 1792087443505,
       "tag": "0001_visibilidade_e_fotos",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792100223366,
+      "tag": "0002_chatbot_fluxos",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792191334633,
+      "tag": "0003_acoes_mensagem",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792429390059,
+      "tag": "0004_historico_whatsapp",
+      "breakpoints": true
     }
   ]
 }

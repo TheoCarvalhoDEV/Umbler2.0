@@ -72,13 +72,48 @@ Depois disso, entre em `https://talk.jvo.adv.br` e crie os demais usuários pela
 ## 4. Conectar o WhatsApp
 
 1. Entre como administrador e vá em **Configurações → Canais**.
-2. Crie o canal e clique em **Gerar novo QR / Reconectar**.
+2. Crie o canal. Em **Período do histórico** escolha **3 meses**, **12 meses** ou **Tudo** e clique em **Gerar novo QR / Reconectar**. Enquanto o código é preparado a tela mostra "Gerando QR code…".
 3. No celular do escritório: WhatsApp → **Aparelhos conectados** → **Conectar um aparelho** → leia o QR.
-4. O status muda para **Conectado** e o banner vermelho "WhatsApp desconectado" some.
+4. O status muda para **Conectado** e aparece "Importando histórico… N mensagens". O celular manda o histórico recente (cerca de 3,5 meses, mesmo com "12 meses" ou "Tudo") e o sistema copia em segundo plano por até 1 hora. No fim: "Histórico importado: N mensagens, desde DD/MM/AAAA".
 
 Atenção: conectar o mesmo número aqui desconecta o número do Umbler Talk. Faça isso só no dia da virada (seção 10).
 
-Se o canal cair (logout pelo celular, QR expirado), repita os passos 2 e 3. O botão **Gerar novo QR / Reconectar** serve para isso.
+Se o canal cair (logout pelo celular, QR expirado), depois de 1 minuto os administradores veem na caixa de entrada a faixa "Canal X desconectado: leia o QR code em Configurações › Canais". Repita os passos 2 e 3. **Importar histórico** copia de novo o que a Evolution já guardou, sem ler o QR.
+
+### 4.1 Histórico do WhatsApp e LGPD
+
+A Evolution guarda o histórico que o celular manda a cada leitura de QR (`DATABASE_SAVE_DATA_HISTORIC`, `DATABASE_SAVE_DATA_CHATS` e `DATABASE_SAVE_DATA_CONTACTS` = `"true"` no `docker-compose.yml`). Isso muda a decisão do núcleo (§6), que não guardava esse texto:
+
+- o banco `evolution` passa a ter o **texto** das conversas do celular, cerca de 1 kB por mensagem (~45 MB por leitura de QR com o volume do escritório), **inclusive de grupos**: o sistema não importa grupos, mas a Evolution os guarda;
+- a mídia não fica na Evolution: o sistema baixa só a das últimas 3 semanas para `data/media`;
+- esse banco já está no backup diário (`pg_dumpall`, seção 7) e segue as mesmas regras de acesso e retenção do núcleo. O dump fica maior.
+
+Não há tela para apagar o histórico da Evolution. Depois que a importação terminou ("Histórico importado…" em Configurações › Canais), você pode apagar da Evolution as mensagens com mais de N dias. O que já foi importado continua no sistema. Use N de pelo menos **30**: o botão **Baixar** e a recuperação de mensagens perdidas usam as linhas recentes. **Importar histórico** só traz de novo o que ainda estiver na Evolution.
+
+```bash
+docker compose exec postgres psql -U postgres -d evolution
+```
+
+```sql
+-- 1) Conte antes (troque 90 pelo número de dias que vai manter):
+SELECT i.name AS instancia, count(*) AS mensagens
+FROM evolution_api."Message" m
+JOIN evolution_api."Instance" i ON i.id = m."instanceId"
+WHERE m."messageTimestamp" < extract(epoch FROM now() - interval '90 days')
+GROUP BY i.name;
+
+-- 2) Apague só a instância do canal (o nome "talk-xxxxxxxx" do passo 1).
+--    As linhas de "MessageUpdate" dessas mensagens saem junto (cascata).
+BEGIN;
+DELETE FROM evolution_api."Message" m
+USING evolution_api."Instance" i
+WHERE i.id = m."instanceId"
+  AND i.name = 'talk-xxxxxxxx'
+  AND m."messageTimestamp" < extract(epoch FROM now() - interval '90 days');
+COMMIT;
+```
+
+Rode o passo 1 de novo: a instância não deve aparecer. Anote a data e o N usado no registro de tratamento de dados do escritório.
 
 ## 5. Importar do Umbler Talk
 
@@ -115,6 +150,10 @@ docker compose up -d --build app
 docker compose logs --tail 50 app          # migrations aplicadas, sem erro
 curl -fsS https://talk.jvo.adv.br/api/health
 ```
+
+Chatbots durante a atualização:
+- Uma execução que espera resposta do contato ou um tempo continua sozinha depois que o app volta.
+- Uma execução que estava no meio de um passo quando o app parou fica como falhou, com o motivo "Interrompido por reinício do servidor". A conversa segue com os atendentes.
 
 **Voltar a versão** se algo quebrar:
 
@@ -279,6 +318,13 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Usuários criados, cada um com seus setores e sua assinatura.
 - [ ] Cadastros importados do Umbler (seção 5) e relatório de importação revisado.
 - [ ] Menu de triagem e mensagem de encerramento configurados.
+- [ ] Chatbot: em Configurações › Chatbots, clicar em **Criar a partir do modelo** e preencher:
+  - o nome do escritório;
+  - o canal;
+  - os três destinos (Atendimento, Financeiro e Processos), cada um com o seu setor e o seu atendente. O campo personalizado **CPF** é reaproveitado, ou criado se não existir.
+- [ ] Chatbot: abrir o **Fluxo do escritório** no editor e conferir os textos e o bloco **Horário** com o horário real do escritório. O modelo vem com seg–sex, 08:00–12:00 e 14:00–18:00, no horário de Cuiabá. Se mudar algo, clicar em **Salvar e publicar**.
+- [ ] Chatbot: clicar em **Ativar** na lista, porque o modelo é criado pausado. Com ele ativo, a triagem simples deixa de rodar nesse canal.
+- [ ] Configurações › Conversas: escolher o que acontece quando o atendente escreve com o chatbot rodando. O padrão é Perguntar.
 - [ ] Cron de backup rodando (`backup ok` no log) e cópia fora do servidor confirmada (seção 7.1).
 - [ ] `.env` guardado fora do servidor.
 - [ ] Ensaio de restauração feito (seção 8).
@@ -292,12 +338,14 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Receber e enviar: texto, imagem, áudio (ouvir e gravar), documento e vídeo.
 - [ ] Responder citando uma mensagem, nos dois sentidos.
 - [ ] Reação do contato aparece na mensagem. Um 👍 numa conversa **finalizada** não reabre a conversa.
-- [ ] Mensagem digitada no celular do escritório aparece como enviada, sem ligar "Esperando" e sem menu de triagem.
+- [ ] Ações de mensagem (reagir, apagar, editar, figurinhas, encaminhar): o [roteiro de aceite](superpowers/plans/2026-10-16-acoes-mensagem-aceite.md) passa inteiro, com as partes A a F marcadas.
+- [ ] Mensagem digitada no celular do escritório aparece como enviada, sem ligar "Esperando", sem menu de triagem e sem iniciar o chatbot.
 - [ ] Transferir para outro setor: o atendente do setor antigo deixa de ver a conversa.
 - [ ] Finalizar com e sem a mensagem de encerramento; reabrir.
 - [ ] Iniciar conversa: com um contato existente e com um telefone novo.
 - [ ] Responder um contato que aparece sem telefone (só LID): a mensagem chega. Se a Evolution recusar o endereço `@lid`, anote para tratar.
-- [ ] Triagem: o contato novo recebe o menu, escolhe uma opção e a conversa vai para o setor certo.
+- [ ] Triagem (com o chatbot pausado): o contato novo recebe o menu, escolhe uma opção e a conversa vai para o setor certo.
+- [ ] Chatbot (ativo): o [roteiro de aceite](superpowers/plans/2026-10-15-chatbot-fluxos-2a-aceite.md) passa inteiro, com todas as partes, de A a F, marcadas.
 - [ ] Anexo `.html` enviado pelo contato é baixado, não aberto no navegador.
 - [ ] Desconectar pelo celular → banner vermelho → **Gerar novo QR / Reconectar** volta a conectar.
 
@@ -305,5 +353,6 @@ curl -fsS https://talk.jvo.adv.br/api/health
 
 1. [ ] Importar os cadastros mais recentes do Umbler (seção 5), se mudaram desde o teste.
 2. [ ] Conectar o **número oficial** no sistema novo (seção 4). Isso desconecta o número do Umbler.
-3. [ ] Durante uma semana, consultar o histórico antigo no Umbler quando preciso.
-4. [ ] Cancelar a assinatura do Umbler Talk.
+3. [ ] Se o número oficial ficou num canal diferente do canal de teste: no **Fluxo do escritório**, marcar esse canal no bloco **Iniciar por um canal** e clicar em **Salvar e publicar**. Em seguida, conferir na lista que o fluxo está ativo e mandar um `Oi` de um celular de teste para ver as boas-vindas.
+4. [ ] Durante uma semana, consultar o histórico antigo no Umbler quando preciso.
+5. [ ] Cancelar a assinatura do Umbler Talk.

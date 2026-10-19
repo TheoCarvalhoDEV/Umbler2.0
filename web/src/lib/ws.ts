@@ -87,6 +87,14 @@ export function applyWsEvent(qc: QueryClient, ev: WsEvent): void {
       );
       return;
     }
+    case 'notification':
+      return; // nothing to cache; the toasts (Task 16) subscribe through useWsEvent
+    case 'users.changed':
+      // a picture changed: the agent list, the chats (owner/author pictures) and my own menu refetch
+      void qc.invalidateQueries({ queryKey: qk.users });
+      void qc.invalidateQueries({ queryKey: qk.chats });
+      void qc.invalidateQueries({ queryKey: qk.me });
+      return;
   }
 }
 

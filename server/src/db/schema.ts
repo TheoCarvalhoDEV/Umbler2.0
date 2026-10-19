@@ -14,6 +14,9 @@ import {
   varchar,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
+import type {
+  BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
+} from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
 const id = () => uuid('id').primaryKey().$defaultFn(() => randomUUID());
@@ -67,6 +70,9 @@ export const channels = pgTable('channels', {
   status: text('status').$type<'disconnected' | 'connecting' | 'connected'>().notNull().default('disconnected'),
   phone: text('phone'),
   createdAt: createdAt(),
+  historyPeriod: text('history_period').$type<HistoryPeriod>().notNull().default('3m'), // §5.1: what a QR pairing imports
+  backfillUntil: timestamp('backfill_until', { withTimezone: true }), // §6: Evolution rows up to here were copied
+  disconnectedAt: timestamp('disconnected_at', { withTimezone: true }), // §7: start of the current outage (admin banner)
 });
 
 export const contacts = pgTable(
@@ -154,12 +160,17 @@ export const chats = pgTable(
     lastMessagePreview: text('last_message_preview'),
     createdAt: createdAt(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    history: boolean('history').notNull().default(false), // §5.3: imported from the phone; closed, read-only, visible to all
   },
   (t) => [
     uniqueIndex('chats_one_open_per_contact_channel')
       .on(t.contactId, t.channelId)
       .where(sql`${t.state} = 'open'`),
     index('chats_last_message_at_idx').on(t.lastMessageAt),
+    // §5.3: later imports append to the contact's one history chat on the channel
+    uniqueIndex('chats_one_history_per_contact_channel')
+      .on(t.contactId, t.channelId)
+      .where(sql`${t.history} = true`),
   ],
 );
 
@@ -194,6 +205,17 @@ export const messages = pgTable(
     reaction: text('reaction'),
     status: text('status').$type<'pending' | 'sent' | 'delivered' | 'read' | 'failed'>().notNull().default('pending'),
     error: text('error'),
+    botRunId: uuid('bot_run_id').references((): AnyPgColumn => botRuns.id, { onDelete: 'set null' }), // set = sent by a chatbot
+    // Message actions (spec 2026-10-16 §8). `reaction` is the contact's; this is the office's (agent or office phone).
+    officeReaction: text('office_reaction'),
+    // Deleted for everyone: the text stays for the team, the bubble shows who deleted it.
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedBy: uuid('deleted_by').references(() => users.id, { onDelete: 'set null' }), // office deletes only
+    deletedSource: text('deleted_source').$type<MessageChangeSource>(),
+    editedAt: timestamp('edited_at', { withTimezone: true }), // previous texts live in message_edits
+    forwardedFromId: uuid('forwarded_from_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
+    mediaSha256: text('media_sha256'), // hex digest of the stored file; dedupes the recent stickers (spec §6)
+    mediaStatus: text('media_status').$type<'queued' | 'expired'>(), // §5.5 history media: waiting for the queue, or gone from WhatsApp
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
@@ -201,6 +223,7 @@ export const messages = pgTable(
     // NULLs never collide, so notes/pending rows coexist; ingest uses ON CONFLICT (channel_id, external_id).
     uniqueIndex('messages_channel_external_unique').on(t.channelId, t.externalId),
     index('messages_chat_sent_idx').on(t.chatId, t.sentAt),
+    index('messages_media_queued_idx').on(t.sentAt).where(sql`${t.mediaStatus} = 'queued'`),
   ],
 );
 
@@ -209,9 +232,7 @@ export const chatEvents = pgTable(
   {
     id: id(),
     chatId: uuid('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
-    kind: text('kind')
-      .$type<'created' | 'assigned' | 'transferred' | 'closed' | 'reopened' | 'privacy_changed' | 'triage_routed'>()
-      .notNull(),
+    kind: text('kind').$type<ChatEventKind>().notNull(),
     data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
     authorId: uuid('author_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
@@ -233,3 +254,117 @@ export const settings = pgTable('settings', {
   key: text('key').primaryKey(), // 'closing_message' | 'triage_menu'
   value: jsonb('value').$type<unknown>().notNull(),
 });
+
+export const bots = pgTable('bots', {
+  id: id(),
+  name: text('name').notNull().unique(),
+  description: text('description').notNull().default(''),
+  status: text('status').$type<'active' | 'paused'>().notNull().default('paused'),
+  startChannelIds: uuid('start_channel_ids').array().notNull().default(sql`'{}'::uuid[]`), // empty = never starts by channel
+  manualStart: boolean('manual_start').notNull().default(false),
+  manualTitle: text('manual_title').notNull().default(''),
+  manualUnlisted: boolean('manual_unlisted').notNull().default(false),
+  publishedVersionId: uuid('published_version_id').references((): AnyPgColumn => botVersions.id, { onDelete: 'set null' }),
+  runCount: integer('run_count').notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export const botVersions = pgTable(
+  'bot_versions',
+  {
+    id: id(),
+    botId: uuid('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+    number: integer('number').notNull(),
+    graph: jsonb('graph').$type<BotGraph>().notNull(),
+    valid: boolean('valid').notNull(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    label: text('label'),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('bot_versions_bot_number_unique').on(t.botId, t.number)],
+); // immutable: no code path UPDATEs a bot_versions row (test/bots/repo.test.ts scans src for it)
+
+export const botRuns = pgTable(
+  'bot_runs',
+  {
+    id: id(),
+    botId: uuid('bot_id').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+    versionId: uuid('version_id').notNull().references(() => botVersions.id, { onDelete: 'cascade' }),
+    chatId: uuid('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
+    contactId: uuid('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+    state: text('state').$type<BotRunState>().notNull().default('running'),
+    currentNodeId: text('current_node_id').notNull(),
+    waitNodeId: text('wait_node_id'),
+    wakeAt: timestamp('wake_at', { withTimezone: true }),
+    timeoutAt: timestamp('timeout_at', { withTimezone: true }),
+    waitingSince: timestamp('waiting_since', { withTimezone: true }), // clock_timestamp() when entering waiting_reply (Review Focus 1)
+    retries: integer('retries').notNull().default(0), // invalid attempts on the current ask node; reset on every node change
+    vars: jsonb('vars').$type<BotRunVars>().notNull().default({}),
+    steps: jsonb('steps').$type<BotRunStep[]>().notNull().default([]),
+    depth: integer('depth').notNull().default(0),
+    parentRunId: uuid('parent_run_id').references((): AnyPgColumn => botRuns.id, { onDelete: 'set null' }),
+    startedBy: uuid('started_by').references(() => users.id, { onDelete: 'set null' }), // null = channel or call_flow
+    error: text('error'),
+    createdAt: createdAt(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('bot_runs_state_wake_idx').on(t.state, t.wakeAt),
+    index('bot_runs_state_timeout_idx').on(t.state, t.timeoutAt),
+    index('bot_runs_chat_idx').on(t.chatId),
+    // spec §3 "max 1 non-terminal run per (chat, bot)": root runs only, so call_flow may re-enter the same bot (depth limit applies).
+    // Keep the state list in sync with NON_TERMINAL_RUN_STATES (shared/src/bots.ts).
+    uniqueIndex('bot_runs_one_active_per_chat_bot')
+      .on(t.chatId, t.botId)
+      .where(sql`${t.state} in ('running','waiting_reply','waiting_timer','waiting_flow') and ${t.depth} = 0`),
+  ],
+);
+
+/** Spec §5: one row per edit, holding the text the message had before it. */
+export const messageEdits = pgTable(
+  'message_edits',
+  {
+    id: id(),
+    messageId: uuid('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
+    previousBody: text('previous_body'),
+    source: text('source').$type<MessageChangeSource>().notNull(),
+    editedBy: uuid('edited_by').references(() => users.id, { onDelete: 'set null' }), // null unless source = 'office'
+    // WhatsApp's encrypted edit format: the message was edited but the new text never reached us.
+    newTextUnavailable: boolean('new_text_unavailable').notNull().default(false),
+    // DB now() (microseconds), not a JS Date: two edits in the same millisecond still sort.
+    editedAt: timestamp('edited_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('message_edits_message_idx').on(t.messageId, t.editedAt)],
+);
+
+export const historyImports = pgTable(
+  'history_imports',
+  {
+    id: id(),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    period: text('period').$type<HistoryPeriod>().notNull(),
+    auto: boolean('auto').notNull(), // true = started by a QR pairing: repeats every 2 min while news arrive (§5.1)
+    state: text('state').$type<HistoryImportState>().notNull().default('running'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    messagesImported: integer('messages_imported').notNull().default(0),
+    contactsCreated: integer('contacts_created').notNull().default(0),
+    oldestMessageAt: timestamp('oldest_message_at', { withTimezone: true }),
+    error: text('error'), // error name/code only (§9)
+    lastNewAt: timestamp('last_new_at', { withTimezone: true }), // last pass that inserted something
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }), // when the worker runs the next pass; null once finished
+  },
+  (t) => [
+    // §5.1: one import per channel at a time; a second request is a 409
+    uniqueIndex('history_imports_one_running_per_channel').on(t.channelId).where(sql`${t.state} = 'running'`),
+    index('history_imports_channel_idx').on(t.channelId, t.startedAt),
+  ],
+);
