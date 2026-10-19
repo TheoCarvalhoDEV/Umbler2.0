@@ -171,6 +171,8 @@ export const api = Object.assign(call, {
     assume: (id: string) => request<ChatDetail>('POST', `/api/chats/${enc(id)}/assume`),
     reopen: (id: string) => request<ChatDetail>('POST', `/api/chats/${enc(id)}/reopen`),
     markRead: (id: string) => request<void>('POST', `/api/chats/${enc(id)}/read`),
+    markUnread: (id: string) => request<void>('POST', `/api/chats/${enc(id)}/unread`),
+    remove: (id: string) => request<void>('DELETE', `/api/chats/${enc(id)}`),
     transfer: (id: string, to: { sectorId?: string; ownerId?: string | null; botAction?: BotAction }) =>
       request<ChatDetail>('POST', `/api/chats/${enc(id)}/transfer`, to),
     setPrivacy: (id: string, isPrivate: boolean) =>

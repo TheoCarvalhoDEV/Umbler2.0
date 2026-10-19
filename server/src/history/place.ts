@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, max, sql } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
-import { chats, messages } from '../db/schema.js';
+import { chats, deletedChats, messages } from '../db/schema.js';
 import { getDefaultSectorId } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import { messagePreview } from '../messages/dto.js';
@@ -136,6 +136,16 @@ export async function placeRecords(
       .where(and(eq(messages.channelId, channel.id), inArray(messages.externalId, events.map((e) => e.externalId))));
     const stored = new Set(have.map((r) => r.externalId));
     const sectorId = await getDefaultSectorId(tx);
+    // A chat an admin deleted never comes back: skip its contact's rows up to the deletion (live ingest is not affected).
+    // ponytail: loads every tombstone of the channel once per batch (a handful of rows); filter by the batch's contacts
+    // if it ever grows. A LID-only contact merged into its phone contact loses its tombstone (cascade); acceptable
+    // because the merge happens on live rows first.
+    const tombs = await tx
+      .select({ contactId: deletedChats.contactId, until: max(deletedChats.until) })
+      .from(deletedChats)
+      .where(eq(deletedChats.channelId, channel.id))
+      .groupBy(deletedChats.contactId);
+    const deletedUntil = new Map(tombs.map((t) => [t.contactId, t.until]));
     const contactByAddress = new Map<string, Contact | null>();
     const chatByContact = new Map<string, Target>();
 
@@ -151,6 +161,8 @@ export async function placeRecords(
         contactByAddress.set(address, contact);
       }
       if (!contact || contact.blocked) continue;
+      const until = deletedUntil.get(contact.id);
+      if (until && ev.sentAt <= until) continue;
 
       let chat = chatByContact.get(contact.id);
       if (!chat) {

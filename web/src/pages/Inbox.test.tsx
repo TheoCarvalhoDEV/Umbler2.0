@@ -2,9 +2,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import type { ChannelDto, ChatListItem, Me } from '@talk/shared';
+import { confirmDialog } from '../lib/confirm';
 import { Inbox } from './Inbox';
+
+vi.mock('../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
 
 const chatA: ChatListItem = {
   id: 'a',
@@ -53,6 +56,8 @@ beforeEach(() => {
     }
     if (url.pathname === '/api/tags') return json([]);
     if (url.pathname === '/api/chats/a/pin') return new Response(null, { status: 204 });
+    if (url.pathname === '/api/chats/a/unread' && method === 'POST') return new Response(null, { status: 204 });
+    if (url.pathname === '/api/chats/a' && method === 'DELETE') return new Response(null, { status: 204 });
     if (url.pathname === '/api/auth/me/view' && method === 'PUT') {
       return json({ ...adminMe, seeAllSectors: JSON.parse(String(init?.body)).seeAllSectors });
     }
@@ -71,20 +76,31 @@ afterEach(() => {
 
 const adminMe: Me = { id: 'adm', name: 'Admin', email: 'adm@exemplo.com.br', role: 'admin', signature: null, sectorIds: ['s1'], seeAllSectors: false, avatarUrl: null };
 
-function renderInbox(me?: Me) {
+function Where() {
+  const loc = useLocation();
+  return <output data-testid="where">{loc.pathname + loc.search}</output>;
+}
+
+function renderInbox(me?: Me, path = '/chats') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   if (me) client.setQueryData(['me'], me);
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/chats']}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/chats" element={<Inbox />} />
+          <Route path="/chats" element={<Inbox />}>
+            <Route path=":id" element={null} />
+          </Route>
         </Routes>
+        <Where />
       </MemoryRouter>
     </QueryClientProvider>,
   );
   return client;
 }
+
+const where = () => screen.getByTestId('where').textContent;
+const menuOfA = () => fireEvent.click(screen.getAllByLabelText('Opções da conversa')[0]);
 
 it('renders chat items with preview, unread, owner, sector, lock and pin', async () => {
   renderInbox();
@@ -215,4 +231,58 @@ it('shows no channel name with a single channel', async () => {
   await screen.findByText('Ana Souza');
   await waitFor(() => expect(client.getQueryData(['channels'])).toHaveLength(1));
   expect(screen.queryByText('Escritório')).toBeNull();
+});
+
+it('marks a read chat as unread from the item menu', async () => {
+  const base = fetch as unknown as (i: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  vi.stubGlobal('fetch', vi.fn(async (i: RequestInfo | URL, init?: RequestInit) =>
+    String(i).startsWith('/api/chats?') ? json({ items: [{ ...chatA, unread: 0 }], nextCursor: null }) : base(i, init)));
+  renderInbox(undefined, '/chats/a');
+  await screen.findByText('Ana Souza');
+  menuOfA();
+  fireEvent.click(screen.getByText('Marcar como não lida'));
+  await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.pathname === '/api/chats/a/unread')).toBe(true));
+  await waitFor(() => expect(where()).toBe('/chats')); // the open pane would mark it read again
+});
+
+it('Transferir and Finalizar open the conversation with ?acao', async () => {
+  renderInbox();
+  await screen.findByText('Ana Souza');
+  menuOfA();
+  fireEvent.click(screen.getAllByText('Transferir')[0]);
+  expect(where()).toBe('/chats/a?acao=transferir');
+  menuOfA();
+  fireEvent.click(screen.getAllByText('Finalizar')[0]);
+  expect(where()).toBe('/chats/a?acao=finalizar');
+});
+
+it('only an admin sees "Excluir conversa"', async () => {
+  renderInbox({ ...adminMe, role: 'agent' });
+  await screen.findByText('Ana Souza');
+  expect(screen.queryByText('Excluir conversa')).toBeNull();
+});
+
+it('Excluir conversa asks first and sends DELETE; leaves the open pane', async () => {
+  renderInbox(adminMe, '/chats/a');
+  await screen.findByText('Ana Souza');
+  menuOfA();
+  fireEvent.click(screen.getAllByText('Excluir conversa')[0]);
+  expect(confirmDialog).toHaveBeenCalledWith({
+    title: 'Excluir conversa?',
+    body: 'A conversa, as mensagens e os arquivos dela saem do sistema para todos. O WhatsApp do contato e o celular não mudam. Não dá para desfazer.',
+    confirmLabel: 'Excluir',
+  });
+  await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url.pathname === '/api/chats/a')).toBe(true));
+  await waitFor(() => expect(where()).toBe('/chats'));
+});
+
+it('cancelling Excluir conversa sends nothing', async () => {
+  vi.mocked(confirmDialog).mockClear().mockResolvedValueOnce(false);
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  menuOfA();
+  fireEvent.click(screen.getAllByText('Excluir conversa')[0]);
+  await waitFor(() => expect(confirmDialog).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
 });

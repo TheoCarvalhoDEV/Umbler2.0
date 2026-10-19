@@ -6,8 +6,8 @@ import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
 import { downloadMediaForUser } from '../history/media.js';
 import {
-  assumeChat, closeChat, getChatForUser, markChatRead, pinChat, reopenChat, setChatPrivacy, startChat, transferChat,
-  type ChatRow,
+  assumeChat, closeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
+  startChat, transferChat, type ChatRow,
 } from '../inbox/chats.js';
 import { getChatDetail, getTimeline, listChats, toChatDetail } from '../inbox/queries.js';
 import type { AuthUser } from '../inbox/visibility.js';
@@ -162,6 +162,16 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
 
     r.post('/api/chats/:id/read', async (req, reply) => {
       await markChatRead(ctx, req.user, idParams.parse(req.params).id);
+      return reply.code(204).send();
+    });
+
+    r.post('/api/chats/:id/unread', async (req, reply) => {
+      await markChatUnread(ctx, req.user, idParams.parse(req.params).id);
+      return reply.code(204).send();
+    });
+
+    r.delete('/api/chats/:id', async (req, reply) => {
+      await deleteChat(ctx, req.user, idParams.parse(req.params).id);
       return reply.code(204).send();
     });
 

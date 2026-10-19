@@ -368,3 +368,17 @@ export const historyImports = pgTable(
     index('history_imports_channel_idx').on(t.channelId, t.startedAt),
   ],
 );
+
+/** A chat an admin deleted: history imports and back-fills never bring back its (contact, channel) rows up to `until`. */
+export const deletedChats = pgTable(
+  'deleted_chats',
+  {
+    id: id(),
+    contactId: uuid('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    until: timestamp('until', { withTimezone: true }).notNull(),
+    deletedBy: uuid('deleted_by').references(() => users.id, { onDelete: 'set null' }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('deleted_chats_channel_contact_idx').on(t.channelId, t.contactId)],
+);

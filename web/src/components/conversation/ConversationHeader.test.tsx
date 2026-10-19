@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, useLocation } from 'react-router';
 import type { ChatDetail, Me, SectorDto } from '@talk/shared';
 import { qk } from '../../lib/api';
 import { ConversationHeader } from './ConversationHeader';
@@ -57,12 +58,20 @@ function stubFetch() {
 
 const transfers = () => calls.filter((c) => c.method === 'POST' && c.path === '/api/chats/c1/transfer');
 
-function renderHeader(chat: ChatDetail = CHAT) {
+function Where() {
+  const loc = useLocation();
+  return <output data-testid="where">{loc.pathname + loc.search}</output>;
+}
+
+function renderHeader(chat: ChatDetail = CHAT, opts: { path?: string; me?: Me } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  qc.setQueryData(qk.me, ME);
+  qc.setQueryData(qk.me, opts.me ?? ME);
   render(
     <QueryClientProvider client={qc}>
-      <ConversationHeader chat={chat} contactPanelOpen={false} onToggleContactPanel={() => {}} onOpenChat={() => {}} />
+      <MemoryRouter initialEntries={[opts.path ?? '/chats/c1']}>
+        <ConversationHeader chat={chat} contactPanelOpen={false} onToggleContactPanel={() => {}} onOpenChat={() => {}} />
+        <Where />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return qc;
@@ -119,5 +128,35 @@ describe('ConversationHeader for an imported history chat (§8)', () => {
     expect(screen.queryByRole('button', { name: 'Reabrir' })).toBeNull();
     expect(screen.getByText('Histórico do WhatsApp')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Contato sem número' })).toBeTruthy();
+  });
+});
+
+describe('ConversationHeader opened from the chat list menu (?acao)', () => {
+  const where = () => screen.getByTestId('where').textContent;
+
+  it('?acao=transferir opens the transfer dialog and drops the param', async () => {
+    stubFetch();
+    renderHeader(CHAT, { path: '/chats/c1?acao=transferir' });
+    expect(await screen.findByRole('dialog', { name: 'Transferir conversa' })).toBeTruthy();
+    await waitFor(() => expect(where()).toBe('/chats/c1'));
+  });
+
+  it('?acao=finalizar opens the close dialog', async () => {
+    stubFetch();
+    renderHeader(CHAT, { path: '/chats/c1?acao=finalizar' });
+    expect(await screen.findByRole('dialog', { name: 'Finalizar conversa' })).toBeTruthy();
+    await waitFor(() => expect(where()).toBe('/chats/c1'));
+  });
+
+  it('opens nothing when the user may not transfer: someone else’s private chat, or a closed chat', async () => {
+    stubFetch();
+    const agent: Me = { ...ME, id: 'u-agent', role: 'agent', seeAllSectors: false };
+    renderHeader({ ...CHAT, private: true, ownerId: 'u-other' }, { path: '/chats/c1?acao=transferir', me: agent });
+    await waitFor(() => expect(where()).toBe('/chats/c1'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    cleanup();
+    renderHeader({ ...CHAT, state: 'closed' }, { path: '/chats/c1?acao=finalizar' });
+    await waitFor(() => expect(where()).toBe('/chats/c1'));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

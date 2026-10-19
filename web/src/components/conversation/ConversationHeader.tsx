@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockSimpleOpen, User, UserPlus } from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, ChatDetail } from '@talk/shared';
@@ -72,6 +73,22 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
   const open = chat.state === 'open';
   const ownerOrAdmin = me.role === 'admin' || chat.ownerId === me.id;
   const lockedByPrivacy = chat.private && !ownerOrAdmin; // §5.3: private → only owner/admin transfer or close
+  // The chat list menu opens a chat with ?acao=transferir|finalizar: the same dialog as the buttons below, only when
+  // that button is enabled; the param goes away (replace) so a reload does not reopen it.
+  const [params, setParams] = useSearchParams();
+  const acao = params.get('acao');
+  useEffect(() => {
+    if (!acao) return;
+    if (open && !lockedByPrivacy) setDialog(acao === 'transferir' ? 'transfer' : acao === 'finalizar' ? 'close' : null);
+    setParams(
+      (p) => {
+        p.delete('acao');
+        return p;
+      },
+      { replace: true },
+    );
+  }, [acao, open, lockedByPrivacy, setParams]);
+
   const sectorName = sectors.find((s) => s.id === chat.sectorId)?.name ?? '—';
   const ownerName = chat.ownerId ? (users.find((u) => u.id === chat.ownerId)?.name ?? 'Atendente') : 'Sem atendente';
 
