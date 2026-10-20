@@ -3,7 +3,7 @@ import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
 import { ApiError } from '../../lib/api';
 import {
   buildTimelineRows, dayLabel, deletedTag, editedTag, errorMessage, eventText, isConflict, mergeTimelinePages, newerCursor,
-  olderCursor, previewText,
+  olderCursor, previewText, resultsLabel,
 } from './model';
 
 // local wall-clock times, so the day boundaries match the browser's time zone
@@ -222,5 +222,14 @@ describe('anchored timeline cursors (spec 2026-10-19 §4)', () => {
     expect(newerCursor(page('a', 'b', 'c', 'd'), { after: 'x' }, 4)).toEqual({ after: 'd' });
     expect(newerCursor(page('a'), { after: 'x' }, 4)).toBeUndefined();
     expect(olderCursor([], { before: 'x' }, 4)).toBeUndefined();
+  });
+});
+
+describe('resultsLabel (spec 2026-10-19 §4)', () => {
+  it('counts the hits; a full page reads 50+', () => {
+    expect(resultsLabel(0)).toBe('Nenhum resultado');
+    expect(resultsLabel(1)).toBe('1 resultado');
+    expect(resultsLabel(12)).toBe('12 resultados');
+    expect(resultsLabel(50)).toBe('50+ resultados');
   });
 });

@@ -11,6 +11,7 @@ import { TagsEditor } from './TagsEditor';
 import { contactLabel, formatPhone } from '../../lib/format';
 import { Avatar } from '../Avatar';
 import { confirmDialog } from '../../lib/confirm';
+import { FavoritesList } from '../conversation/FavoritesList';
 
 const dateTime = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
@@ -57,9 +58,11 @@ interface Props {
   onClose: () => void;
   /** A column beside the conversation instead of a modal drawer (wide screens). */
   docked?: boolean;
+  /** Spec 2026-10-19 §5: a click in "Favoritas" brings that message into view. */
+  onJumpToMessage?: (messageId: string) => void;
 }
 
-export function ContactPanel({ contactId, chatId, onClose, docked = false }: Props) {
+export function ContactPanel({ contactId, chatId, onClose, docked = false, onJumpToMessage }: Props) {
   const [tab, setTab] = useState<'contact' | 'chat'>('contact');
   const contact = useQuery({ queryKey: qk.contact(contactId), queryFn: () => api.contacts.get(contactId) });
 
@@ -90,7 +93,13 @@ export function ContactPanel({ contactId, chatId, onClose, docked = false }: Pro
       </header>
       <div className="flex-1 overflow-y-auto p-5">
         {tab === 'chat' && chatId ? (
-          <ChatDetailsTab chatId={chatId} />
+          <ChatDetailsTab
+            chatId={chatId}
+            onJump={(messageId) => {
+              onJumpToMessage?.(messageId);
+              if (!docked) onClose(); // a drawer covers the conversation: get out of the way
+            }}
+          />
         ) : contact.data ? (
           <ContactTab contact={contact.data} onClose={onClose} />
         ) : (
@@ -253,7 +262,7 @@ function ContactChats({ contactId, onNavigate }: { contactId: string; onNavigate
   );
 }
 
-function ChatDetailsTab({ chatId }: { chatId: string }) {
+function ChatDetailsTab({ chatId, onJump }: { chatId: string; onJump: (messageId: string) => void }) {
   // Same cache entry as Task 17 and the WS handler, so the tab follows live updates.
   const chat = useQuery({ queryKey: qk.chat(chatId), queryFn: () => api.chats.get(chatId) });
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: () => api.sectors.list() }).data ?? [];
@@ -271,5 +280,12 @@ function ChatDetailsTab({ chatId }: { chatId: string }) {
     ['Última mensagem', dateTime(c.lastMessageAt)],
   ];
   if (c.closedAt) rows.push(['Finalizada em', dateTime(c.closedAt)]);
-  return <Rows rows={rows} />;
+  return (
+    <div className="space-y-6">
+      <Rows rows={rows} />
+      <Section title="Favoritas">
+        <FavoritesList chatId={chatId} onJump={onJump} />
+      </Section>
+    </div>
+  );
 }

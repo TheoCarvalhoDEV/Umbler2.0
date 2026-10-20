@@ -1,4 +1,4 @@
-import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
+import { SEARCH_LIMIT, type ChatEventDto, type MessageDto, type TimelineItem } from '@talk/shared';
 import { ApiError, type TimelineCursor } from '../../lib/api';
 
 export const TIMELINE_PAGE_SIZE = 50;
@@ -91,6 +91,19 @@ const KIND_PREVIEW: Record<string, string> = {
 
 export function previewText(body: string | null, kind: string): string {
   return body?.trim() || KIND_PREVIEW[kind] || 'Mensagem';
+}
+
+/** "Buscar na conversa" counter (spec 2026-10-19 §4). The server stops at SEARCH_LIMIT, so a full page reads "50+". */
+export function resultsLabel(n: number): string {
+  if (n === 0) return 'Nenhum resultado';
+  if (n === 1) return '1 resultado';
+  // ponytail: exactly 50 matches also reads "50+"; ask the server for one more row if that ever confuses someone
+  return n >= SEARCH_LIMIT ? `${n}+ resultados` : `${n} resultados`;
+}
+
+/** dd/mm/aaaa hh:mm in the browser's time zone. */
+export function shortDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 /** `names` maps sector and user ids to names (UUIDs never collide across tables). */

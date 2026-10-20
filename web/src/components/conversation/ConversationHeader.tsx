@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockSimpleOpen, User, UserPlus } from '@phosphor-icons/react';
+import {
+  ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockSimpleOpen, MagnifyingGlass, User, UserPlus,
+} from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, ChatDetail } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
@@ -55,9 +57,14 @@ export interface ConversationHeaderProps {
   contactPanelOpen: boolean;
   onToggleContactPanel: () => void;
   onOpenChat: (chatId: string) => void;
+  /** Spec 2026-10-19 §4: the search bar under the header. */
+  searchOpen?: boolean;
+  onToggleSearch?: () => void;
 }
 
-export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPanel, onOpenChat }: ConversationHeaderProps) {
+export function ConversationHeader({
+  chat, contactPanelOpen, onToggleContactPanel, onOpenChat, searchOpen = false, onToggleSearch,
+}: ConversationHeaderProps) {
   const qc = useQueryClient();
   const me = useCurrentUser();
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list }).data ?? [];
@@ -158,6 +165,9 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
           </button>
         )}
 
+        <HeaderButton label="Buscar na conversa" pressed={searchOpen} onClick={() => onToggleSearch?.()}>
+          <MagnifyingGlass size={20} />
+        </HeaderButton>
         <HeaderButton label="Contato" pressed={contactPanelOpen} onClick={onToggleContactPanel}>
           <User size={20} />
         </HeaderButton>

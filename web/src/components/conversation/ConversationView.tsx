@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ChatDetail, MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useWsEvent } from '../../lib/ws';
+import { ChatSearchBar } from './ChatSearchBar';
 import { Composer } from './Composer';
 import { ConversationHeader } from './ConversationHeader';
 import { errorMessage, type TimelineFocus } from './model';
@@ -15,6 +16,8 @@ export interface ConversationViewProps {
   onOpenChat: (chatId: string) => void;
   /** Spec 2026-10-19 §4/§5: the message to bring into view (a search hit or a favorite). */
   focus?: TimelineFocus | null;
+  /** Asks the page to focus a message (the search bar's hits). */
+  onFocusMessage?: (messageId: string) => void;
 }
 
 export function ConversationView(props: ConversationViewProps) {
@@ -55,10 +58,13 @@ function ClosedFooter({ chat, onOpenChat }: { chat: ChatDetail; onOpenChat: (cha
   );
 }
 
-function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOpenChat, focus = null }: ConversationViewProps) {
+function ConversationPane({
+  chatId, contactPanelOpen, onToggleContactPanel, onOpenChat, focus = null, onFocusMessage,
+}: ConversationViewProps) {
   const qc = useQueryClient();
   const detail = useQuery({ queryKey: qk.chat(chatId), queryFn: () => api.chats.get(chatId) });
   const [replyTo, setReplyTo] = useState<MessageDto | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   const chat = detail.data;
   const unread = chat?.unread ?? 0;
 
@@ -100,7 +106,12 @@ function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOp
         contactPanelOpen={contactPanelOpen}
         onToggleContactPanel={onToggleContactPanel}
         onOpenChat={onOpenChat}
+        searchOpen={searchOpen}
+        onToggleSearch={() => setSearchOpen((o) => !o)}
       />
+      {searchOpen && (
+        <ChatSearchBar chatId={chatId} onFocusMessage={(id) => onFocusMessage?.(id)} onClose={() => setSearchOpen(false)} />
+      )}
       <Timeline chatId={chatId} onReply={setReplyTo} chatOpen={chat.state === 'open'} focus={focus} />
       {chat.state === 'open' ? (
         <Composer chatId={chatId} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />

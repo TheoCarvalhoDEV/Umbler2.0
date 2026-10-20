@@ -63,13 +63,19 @@ function Where() {
   return <output data-testid="where">{loc.pathname + loc.search}</output>;
 }
 
-function renderHeader(chat: ChatDetail = CHAT, opts: { path?: string; me?: Me } = {}) {
+function renderHeader(chat: ChatDetail = CHAT, opts: { path?: string; me?: Me; onToggleSearch?: () => void } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   qc.setQueryData(qk.me, opts.me ?? ME);
   render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[opts.path ?? '/chats/c1']}>
-        <ConversationHeader chat={chat} contactPanelOpen={false} onToggleContactPanel={() => {}} onOpenChat={() => {}} />
+        <ConversationHeader
+          chat={chat}
+          contactPanelOpen={false}
+          onToggleContactPanel={() => {}}
+          onOpenChat={() => {}}
+          onToggleSearch={opts.onToggleSearch}
+        />
         <Where />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -158,5 +164,15 @@ describe('ConversationHeader opened from the chat list menu (?acao)', () => {
     renderHeader({ ...CHAT, state: 'closed' }, { path: '/chats/c1?acao=finalizar' });
     await waitFor(() => expect(where()).toBe('/chats/c1'));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('ConversationHeader search (spec 2026-10-19 §4)', () => {
+  it('toggles the search bar, also in a closed chat', () => {
+    stubFetch();
+    const onToggleSearch = vi.fn();
+    renderHeader({ ...CHAT, state: 'closed' }, { onToggleSearch });
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar na conversa' }));
+    expect(onToggleSearch).toHaveBeenCalledTimes(1);
   });
 });
