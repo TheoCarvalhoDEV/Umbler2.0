@@ -134,6 +134,13 @@ async function activeUserExists(db: Db | Tx, id: string): Promise<boolean> {
   return !!row;
 }
 
+/** 400 for a missing or nonexistent destination. The bulk transfer checks it once, before any chatbot is stopped. */
+export async function validateTransferTarget(db: Db | Tx, to: { sectorId?: string; ownerId?: string | null }): Promise<void> {
+  if (to.sectorId === undefined && to.ownerId === undefined) throw badRequest('Informe o setor ou o atendente.');
+  if (to.sectorId !== undefined && !(await sectorExists(db, to.sectorId))) throw badRequest('Setor inválido.');
+  if (to.ownerId && !(await activeUserExists(db, to.ownerId))) throw badRequest('Atendente inválido.');
+}
+
 export async function getClosingMessage(db: Db | Tx): Promise<string> {
   const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'closing_message'));
   return typeof row?.value === 'string' ? row.value.trim() : '';
@@ -158,11 +165,9 @@ export async function transferChat(
   chatId: string,
   to: { sectorId?: string; ownerId?: string | null },
 ): Promise<ChatRow> {
-  if (to.sectorId === undefined && to.ownerId === undefined) throw badRequest('Informe o setor ou o atendente.');
   const chat = await getChatForUser(ctx, user, chatId);
   if (chat.state !== 'open') throw conflict('Conversa finalizada.');
-  if (to.sectorId !== undefined && !(await sectorExists(ctx.db, to.sectorId))) throw badRequest('Setor inválido.');
-  if (to.ownerId && !(await activeUserExists(ctx.db, to.ownerId))) throw badRequest('Atendente inválido.');
+  await validateTransferTarget(ctx.db, to);
 
   const sectorId = to.sectorId ?? chat.sectorId;
   const ownerId = to.ownerId === undefined ? chat.ownerId : to.ownerId;

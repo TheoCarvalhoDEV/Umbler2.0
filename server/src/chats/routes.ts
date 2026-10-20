@@ -1,13 +1,13 @@
 import multipart from '@fastify/multipart';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { CHAT_SORTS, SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
-import { stopRunsForChat } from '../bots/engine.js';
+import { BULK_MAX, CHAT_SORTS, SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
 import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
 import { downloadMediaForUser } from '../history/media.js';
+import { bulkClose, bulkRead, bulkTransfer, closeChatAndStopBots } from '../inbox/bulk.js';
 import {
-  assumeChat, closeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
+  assumeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
   setChatTags, startChat, transferChat, type ChatRow,
 } from '../inbox/chats.js';
 import { getChatDetail, getTimeline, listChats, searchChat, toChatDetail } from '../inbox/queries.js';
@@ -60,6 +60,13 @@ const transferBody = z
   .refine((b) => b.sectorId !== undefined || b.ownerId !== undefined, 'Informe o setor ou o atendente');
 const privacyBody = z.object({ private: z.boolean() });
 const closeBody = z.object({ sendClosingMessage: z.boolean().default(false) });
+/** Spec 2026-10-20 §4: 1 to BULK_MAX chats per request; the same destination and choice for all of them. */
+const bulkIds = z.array(z.uuid()).min(1).max(BULK_MAX);
+const bulkTransferBody = z
+  .object({ chatIds: bulkIds, sectorId: z.uuid().optional(), ownerId: z.uuid().nullable().optional() })
+  .refine((b) => b.sectorId !== undefined || b.ownerId !== undefined, 'Informe o setor ou o atendente');
+const bulkCloseBody = z.object({ chatIds: bulkIds, sendClosingMessage: z.boolean().default(false) });
+const bulkReadBody = z.object({ chatIds: bulkIds });
 const textBody = z.object({
   text: z.string().trim().min(1).max(4096),
   signature: z.boolean().default(true),
@@ -134,6 +141,17 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
       return toChatDetail(ctx.db, chat, req.user.id);
     });
 
+    // Static paths: find-my-way matches them before /api/chats/:id/…; the answer is 200 with one result per chat.
+    r.post('/api/chats/bulk/transfer', async (req) => {
+      const { chatIds, ...to } = bulkTransferBody.parse(req.body);
+      return bulkTransfer(ctx, req.user, chatIds, to);
+    });
+    r.post('/api/chats/bulk/close', async (req) => {
+      const { chatIds, sendClosingMessage } = bulkCloseBody.parse(req.body);
+      return bulkClose(ctx, req.user, chatIds, sendClosingMessage);
+    });
+    r.post('/api/chats/bulk/read', async (req) => bulkRead(ctx, req.user, bulkReadBody.parse(req.body).chatIds));
+
     r.get('/api/chats/:id', async (req) => getChatDetail(ctx, req.user, idParams.parse(req.params).id));
 
     r.get('/api/chats/:id/timeline', async (req) => {
@@ -164,18 +182,9 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
       return transferChat(ctx, user, id, to);
     });
     action('privacy', (user, id, body) => setChatPrivacy(ctx, user, id, privacyBody.parse(body).private));
-    action('close', async (user, id, body) => {
-      const closed = await closeChat(ctx, user, id, {
-        sendClosingMessage: closeBody.parse(body ?? {}).sendClosingMessage,
-        // Closing text is the office's canned message, so it goes without the agent signature.
-        // botAction 'keep': closing never asks, the runs are stopped right below.
-        sendClosing: async (text: string) =>
-          (await sendAgentMessage(ctx, user, id, { text, signature: false, botAction: 'keep' })).status !== 'failed',
-      });
-      // Spec §5.5: closing the chat stops every bot run in it.
-      await stopRunsForChat(ctx, id, { userId: user.id, reason: 'chat_closed' });
-      return closed;
-    });
+    action('close', (user, id, body) =>
+      closeChatAndStopBots(ctx, user, id, closeBody.parse(body ?? {}).sendClosingMessage),
+    );
 
     r.post('/api/chats/:id/read', async (req, reply) => {
       await markChatRead(ctx, req.user, idParams.parse(req.params).id);
