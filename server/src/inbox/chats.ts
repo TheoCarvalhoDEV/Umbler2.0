@@ -6,7 +6,7 @@ import { stopRunsForChat } from '../bots/engine.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import {
-  channels, chatPins, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, users,
+  channels, chatPins, chatTags, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, tags, users,
 } from '../db/schema.js';
 import { HttpError, badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
 import { BlockError } from '../bots/block-error.js';
@@ -339,6 +339,22 @@ export async function pinChat(ctx: AppCtx, user: AuthUser, chatId: string, pinne
     await ctx.db.insert(chatPins).values({ userId: user.id, chatId, createdAt: new Date() }).onConflictDoNothing();
   }
   await ctx.hub.publishChat(chatId);
+}
+
+/** Spec 2026-10-20 §5: replaces the conversation's tags (same catalog as the contact's). Anyone who sees the chat, open or not. */
+export async function setChatTags(ctx: AppCtx, user: AuthUser, chatId: string, tagIds: string[]): Promise<ChatRow> {
+  const chat = await getChatForUser(ctx, user, chatId);
+  const unique = [...new Set(tagIds)];
+  // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
+  await ctx.db.transaction(async (tx) => {
+    if (unique.length && (await tx.$count(tags, inArray(tags.id, unique))) !== unique.length) {
+      throw badRequest('Etiqueta inexistente');
+    }
+    await tx.delete(chatTags).where(eq(chatTags.chatId, chatId));
+    if (unique.length) await tx.insert(chatTags).values(unique.map((tagId) => ({ chatId, tagId }))).onConflictDoNothing();
+  });
+  await ctx.hub.publishChat(chatId);
+  return chat;
 }
 
 async function resolveContactId(tx: Tx, input: { contactId?: string; phone?: string; name?: string }): Promise<string> {

@@ -82,7 +82,13 @@ export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string)
     .from(contactTags)
     .innerJoin(tags, eq(tags.id, contactTags.tagId))
     .where(eq(contactTags.contactId, chat.contactId))
-    .orderBy(asc(tags.position));
+    .orderBy(asc(tags.position), asc(tags.name));
+  const chatTagRows = await db
+    .select({ id: chatTags.tagId })
+    .from(chatTags)
+    .innerJoin(tags, eq(tags.id, chatTags.tagId))
+    .where(eq(chatTags.chatId, chat.id))
+    .orderBy(asc(tags.position), asc(tags.name));
   // the message the preview shows (notes never set it): who sent it and, if the office did, its ticks
   // ponytail: one more small query per list item, like the three above; join them if the list gets slow
   const [last] = await db
@@ -109,6 +115,7 @@ export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string)
     tagIds: tagRows.map((r) => r.id),
     history: chat.history,
     lastOutStatus: last?.direction === 'out' ? last.status : null,
+    chatTagIds: chatTagRows.map((r) => r.id),
   };
 }
 

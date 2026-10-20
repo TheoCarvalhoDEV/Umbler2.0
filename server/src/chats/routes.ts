@@ -8,7 +8,7 @@ import type { AppCtx } from '../ctx.js';
 import { downloadMediaForUser } from '../history/media.js';
 import {
   assumeChat, closeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
-  startChat, transferChat, type ChatRow,
+  setChatTags, startChat, transferChat, type ChatRow,
 } from '../inbox/chats.js';
 import { getChatDetail, getTimeline, listChats, searchChat, toChatDetail } from '../inbox/queries.js';
 import type { AuthUser } from '../inbox/visibility.js';
@@ -86,6 +86,9 @@ const forwardBody = z.union([
   z.object({ chatId: z.uuid(), botAction: botActionField }),
   z.object({ contactId: z.uuid(), channelId: z.uuid().optional(), botAction: botActionField }),
 ]);
+
+/** Spec 2026-10-20 §5: same limit as the contact's tags. */
+const tagsBody = z.object({ tagIds: z.array(z.uuid()).max(50) });
 
 async function readMultipart(req: FastifyRequest): Promise<SendInput> {
   const fields: Record<string, string> = {};
@@ -197,6 +200,12 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
     r.delete('/api/chats/:id/pin', async (req, reply) => {
       await pinChat(ctx, req.user, idParams.parse(req.params).id, false);
       return reply.code(204).send();
+    });
+
+    // The detail is read after the change, so it carries the new chatTagIds.
+    r.put('/api/chats/:id/tags', async (req) => {
+      const { id } = idParams.parse(req.params);
+      return toChatDetail(ctx.db, await setChatTags(ctx, req.user, id, tagsBody.parse(req.body).tagIds), req.user.id);
     });
 
     r.post('/api/chats/:id/messages', async (req) => {
