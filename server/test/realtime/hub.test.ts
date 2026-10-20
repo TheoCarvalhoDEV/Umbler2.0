@@ -94,6 +94,7 @@ describe('createHub.publishChat', () => {
       pinned: true,
       tagIds: [tagId],
       history: false,
+      lastOutStatus: null,
     };
     expect(a.events).toEqual([{ type: 'chat.updated', chat: expected }]);
     expect(adm.events).toEqual([{ type: 'chat.updated', chat: { ...expected, pinned: false } }]);

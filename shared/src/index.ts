@@ -40,7 +40,9 @@ export type ChatTab = 'inbox' | 'waiting' | 'closed';
 export interface ChatListFilters { tab: ChatTab; q?: string; sectorId?: string; ownerId?: string; tagId?: string; from?: string; to?: string; cursor?: string; limit?: number }
 export interface ChatListItem { id: string; contact: ContactRef; channelId: string; sectorId: string; ownerId: string | null; state: 'open' | 'closed'; waiting: boolean; private: boolean; unread: number; lastMessageAt: string | null; lastMessagePreview: string | null; pinned: boolean; tagIds: string[];
   // imported from the phone (closed, read-only, visible to everyone); optional so existing literals compile (Task 10 fills it)
-  history?: boolean }
+  history?: boolean;
+  // status of the last (non-note) message when the office sent it; null when the contact sent it or there is none
+  lastOutStatus?: MessageDto['status'] | null }
 export interface ChatDetail extends ChatListItem { triagePending: boolean; createdAt: string; closedAt: string | null }
 export interface MediaDto { url: string; mime: string; name: string | null; size: number | null }
 export interface MessageDto { id: string; chatId: string; direction: 'in' | 'out'; kind: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'note' | 'unsupported'; body: string | null; media: MediaDto | null; mediaUnavailable: boolean; authorId: string | null; authorName: string | null; authorAvatarUrl: string | null; replyTo: { id: string; body: string | null; kind: string } | null; reaction: string | null; status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'; error: string | null; sentAt: string;

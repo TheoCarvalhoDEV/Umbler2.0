@@ -54,6 +54,14 @@ describe('ChatListItem menu', () => {
     expect(items()).toEqual(['Fixar', 'Marcar como não lida', 'Excluir conversa']);
   });
 
+  it('shows the ticks before the preview when the last message was the office’s', () => {
+    renderItem({ lastOutStatus: 'read' });
+    expect(screen.getByLabelText('Você · lida')).toBeTruthy();
+    cleanup();
+    renderItem({ lastOutStatus: null });
+    expect(screen.queryByLabelText(/^Você/)).toBeNull();
+  });
+
   it('each item calls its handler', () => {
     const h = renderItem({}, true);
     fireEvent.click(screen.getByText('Marcar como não lida'));
