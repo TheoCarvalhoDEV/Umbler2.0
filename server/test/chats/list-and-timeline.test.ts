@@ -140,13 +140,13 @@ describe('GET /api/chats', () => {
 });
 
 describe('history chats (§8)', () => {
-  it('Finalizados leaves history chats out, but a search finds them', async () => {
-    const closed = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, state: 'closed', name: 'Ana Paula' });
-    const hist = await seedChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, state: 'closed', name: 'Ana Histórico' });
+  it('Finalizados lists history chats with the closed ones, by their last message, and a search finds them', async () => {
+    const closed = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, state: 'closed', name: 'Ana Paula', at: t(2) });
+    const hist = await seedChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, state: 'closed', name: 'Ana Histórico', at: t(1) });
     await ctx.db.update(chats).set({ history: true }).where(eq(chats.id, hist.chatId));
     const { headers } = await loginAs(app, s.agentA.email);
 
-    expect(ids(await list(headers, '?tab=closed'))).toEqual([closed.chatId]);
+    expect(ids(await list(headers, '?tab=closed'))).toEqual([closed.chatId, hist.chatId]);
     expect(ids(await list(headers, '?tab=closed&q=Hist'))).toEqual([hist.chatId]);
     const found = await list(headers, '?tab=closed&q=Ana');
     expect(found.items.find((i) => i.id === hist.chatId)?.history).toBe(true);
