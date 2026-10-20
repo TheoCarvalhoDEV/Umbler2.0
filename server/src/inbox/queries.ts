@@ -2,11 +2,11 @@ import {
   and, asc, desc, eq, gte, ilike, inArray, isNull, like, lte, ne, notInArray, or, sql, type AnyColumn, type SQL,
 } from 'drizzle-orm';
 import { z } from 'zod';
-import { FOLD_FROM, FOLD_TO, SEARCH_LIMIT, foldText } from '@talk/shared';
-import type { ChatDetail, ChatListFilters, ChatListItem, MessageSearchHit, TimelineItem } from '@talk/shared';
+import { CHAT_SORTS, DEFAULT_CHAT_SORT, FOLD_FROM, FOLD_TO, SEARCH_LIMIT, foldText } from '@talk/shared';
+import type { ChatDetail, ChatListFilters, ChatListItem, ChatSort, MessageSearchHit, TimelineItem } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
-import { chatEvents, chatPins, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
+import { chatEvents, chatPins, chatTags, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
 import { avatarUrl, refreshAvatarInBackground } from '../contacts/avatar.js';
 import { badRequest } from '../lib/http-error.js';
 import { toMessageDto } from '../messages/dto.js';
@@ -19,20 +19,44 @@ const MAX_LIMIT = 100;
 const clampLimit = (n: number | undefined) => Math.min(Math.max(n ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
 
 // A chat with no message yet (started by an agent) sorts by its creation time.
-const sortKey = sql`coalesce(${chats.lastMessageAt}, ${chats.createdAt})`;
+const lastKey = sql`coalesce(${chats.lastMessageAt}, ${chats.createdAt})`;
+// Chats already waiting before migration 0007 have no waiting_since: their last message is the closest guess.
+const waitKey = sql`coalesce(${chats.waitingSince}, ${chats.lastMessageAt}, ${chats.createdAt})`;
 
-// The cursor carries the timestamptz as Postgres text, so microseconds survive the round trip.
+/** One keyset run of the list: the chats matching `where`, by (key, id) in `dir` (spec 2026-10-20 §3). */
+interface Run { where?: SQL; key: SQL; dir: 'asc' | 'desc' }
+const RUNS: Record<ChatSort, Run[]> = {
+  last_desc: [{ key: lastKey, dir: 'desc' }],
+  last_asc: [{ key: lastKey, dir: 'asc' }],
+  created_desc: [{ key: sql`${chats.createdAt}`, dir: 'desc' }],
+  created_asc: [{ key: sql`${chats.createdAt}`, dir: 'asc' }],
+  // waiting chats first, the longest wait on top; then the others by last message, newest first
+  waiting: [
+    { where: eq(chats.waiting, true), key: waitKey, dir: 'asc' },
+    { where: eq(chats.waiting, false), key: lastKey, dir: 'desc' },
+  ],
+};
+const orderOf = (r: Run) => (r.dir === 'desc' ? [desc(r.key), desc(chats.id)] : [asc(r.key), asc(chats.id)]);
+
+// The cursor is [order, run, key, id]; the key is the timestamptz as Postgres text, so microseconds survive the round trip.
 const cursorSchema = z.tuple([
+  z.enum(CHAT_SORTS),
+  z.number().int().min(0),
   z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}(:\d{2})?$/),
   z.uuid(),
 ]);
-const encodeCursor = (key: string, id: string) => Buffer.from(JSON.stringify([key, id])).toString('base64url');
-function decodeCursor(cursor: string): [string, string] {
+type Cursor = z.infer<typeof cursorSchema>;
+const encodeCursor = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
+function decodeCursor(cursor: string, sort: ChatSort): Cursor {
+  let c: Cursor;
   try {
-    return cursorSchema.parse(JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')));
+    c = cursorSchema.parse(JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')));
   } catch {
     throw badRequest('Cursor inválido');
   }
+  // a cursor belongs to one order: the web starts the list over when the order changes
+  if (c[0] !== sort || c[1] >= RUNS[sort].length) throw badRequest('Cursor inválido');
+  return c;
 }
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -105,6 +129,8 @@ export async function listChats(
 ): Promise<{ items: ChatListItem[]; nextCursor: string | null }> {
   const db = ctx.db;
   const limit = clampLimit(f.limit);
+  const sort = f.sort ?? DEFAULT_CHAT_SORT;
+  const runs = RUNS[sort];
   const conds: Array<SQL | undefined> = [visibleChatsWhere(user)];
 
   conds.push(eq(chats.state, f.tab === 'closed' ? 'closed' : 'open'));
@@ -122,6 +148,10 @@ export async function listChats(
       ),
     );
   }
+  // spec 2026-10-20 §5: the conversation's own tag
+  if (f.chatTagId) {
+    conds.push(inArray(chats.id, db.select({ id: chatTags.chatId }).from(chatTags).where(eq(chatTags.tagId, f.chatTagId))));
+  }
   if (f.from) conds.push(gte(chats.createdAt, new Date(f.from)));
   if (f.to) conds.push(lte(chats.createdAt, new Date(f.to)));
   const q = f.q?.trim();
@@ -136,36 +166,41 @@ export async function listChats(
   }
 
   const myPins = () => db.select({ id: chatPins.chatId }).from(chatPins).where(eq(chatPins.userId, user.id));
-  const base = () =>
+  const base = (r: Run) =>
     db
-      .select({ chat: chats, key: sql<string>`${sortKey}::text` })
+      .select({ chat: chats, key: sql<string>`${r.key}::text` })
       .from(chats)
       .innerJoin(contacts, eq(contacts.id, chats.contactId));
 
-  // Pins (max 3 per user) are prepended to the first page only, so the keyset cursor covers unpinned chats alone.
-  const pinned = f.cursor
-    ? []
-    : await base()
-        .where(and(...conds, inArray(chats.id, myPins())))
-        .orderBy(desc(sortKey), desc(chats.id));
+  // Pins (max 3 per user) are prepended to the first page only, in the same order, so the cursor covers unpinned chats alone.
+  const pinned: Array<{ chat: ChatRow }> = [];
+  if (!f.cursor) {
+    for (const r of runs) {
+      pinned.push(...(await base(r).where(and(...conds, r.where, inArray(chats.id, myPins()))).orderBy(...orderOf(r))));
+    }
+  }
 
-  const after = f.cursor ? decodeCursor(f.cursor) : null;
-  const rows = await base()
-    .where(
-      and(
-        ...conds,
-        notInArray(chats.id, myPins()),
-        after ? sql`(${sortKey}, ${chats.id}) < (${after[0]}::timestamptz, ${after[1]}::uuid)` : undefined,
-      ),
-    )
-    .orderBy(desc(sortKey), desc(chats.id))
-    .limit(limit + 1);
+  // Each run is a plain keyset query; a page that empties one run goes on into the next.
+  const after = f.cursor ? decodeCursor(f.cursor, sort) : null;
+  const rows: Array<{ chat: ChatRow; key: string; run: number }> = [];
+  for (let i = after ? after[1] : 0; i < runs.length && rows.length <= limit; i++) {
+    const r = runs[i]!;
+    const from =
+      after && after[1] === i
+        ? sql`(${r.key}, ${chats.id}) ${sql.raw(r.dir === 'desc' ? '<' : '>')} (${after[2]}::timestamptz, ${after[3]}::uuid)`
+        : undefined;
+    const got = await base(r)
+      .where(and(...conds, r.where, notInArray(chats.id, myPins()), from))
+      .orderBy(...orderOf(r))
+      .limit(limit + 1 - rows.length);
+    rows.push(...got.map((g) => ({ ...g, run: i })));
+  }
 
   const page = rows.slice(0, limit);
   const last = page.at(-1);
-  const nextCursor = rows.length > limit && last ? encodeCursor(last.key, last.chat.id) : null;
+  const nextCursor = rows.length > limit && last ? encodeCursor([sort, last.run, last.key, last.chat.id]) : null;
 
-  // ponytail: 3 small queries per chat (contact, pin, tags); batch them if listing 100 chats gets slow.
+  // ponytail: toChatListItem runs a few small queries per chat; batch them if listing 100 chats gets slow.
   const items: ChatListItem[] = [];
   for (const r of [...pinned, ...page]) items.push(await toChatListItem(db, r.chat, user.id));
   return { items, nextCursor };

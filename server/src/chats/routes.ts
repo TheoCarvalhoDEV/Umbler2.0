@@ -1,7 +1,7 @@
 import multipart from '@fastify/multipart';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
+import { CHAT_SORTS, SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
 import { stopRunsForChat } from '../bots/engine.js';
 import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
@@ -28,6 +28,8 @@ const listQuery = z.object({
   sectorId: z.uuid().optional(),
   ownerId: z.union([z.literal('none'), z.uuid()]).optional(),
   tagId: z.uuid().optional(),
+  chatTagId: z.uuid().optional(),
+  sort: z.enum(CHAT_SORTS).optional(),
   from: z.iso.datetime({ offset: true }).optional(),
   to: z.iso.datetime({ offset: true }).optional(),
   cursor: z.string().max(500).optional(),
