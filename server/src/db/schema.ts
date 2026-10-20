@@ -164,6 +164,8 @@ export const chats = pgTable(
     createdAt: createdAt(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
     history: boolean('history').notNull().default(false), // §5.3: imported from the phone; closed, read-only, visible to all
+    // spec 2026-10-20 §3: the oldest contact message still unanswered; null whenever `waiting` is false
+    waitingSince: timestamp('waiting_since', { withTimezone: true }),
   },
   (t) => [
     uniqueIndex('chats_one_open_per_contact_channel')
@@ -185,6 +187,16 @@ export const chatPins = pgTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.chatId] })],
+);
+
+/** Spec 2026-10-20 §5: the conversation's own tags, from the same catalog as the contact's. */
+export const chatTags = pgTable(
+  'chat_tags',
+  {
+    chatId: uuid('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
+    tagId: uuid('tag_id').notNull().references(() => tags.id, { onDelete: 'cascade' }),
+  },
+  (t) => [primaryKey({ columns: [t.chatId, t.tagId] })],
 );
 
 export const messages = pgTable(
