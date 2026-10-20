@@ -1,4 +1,4 @@
-import { DotsThreeVertical, LockSimple, PushPin } from '@phosphor-icons/react';
+import { Check, Checks, Clock, DotsThreeVertical, LockSimple, PushPin, WarningCircle } from '@phosphor-icons/react';
 import type { ChatListItem as ChatItem } from '@talk/shared';
 import { contactLabel, listTime } from '../../lib/format';
 import { Avatar } from '../Avatar';
@@ -17,6 +17,23 @@ interface Props {
   onOpenWith(acao: 'transferir' | 'finalizar'): void;
   /** Admins only; undefined hides the item. */
   onDelete?: () => void;
+}
+
+/** Like WhatsApp: the last message was the office's, with its ticks. */
+function OutTick({ status }: { status: NonNullable<ChatItem['lastOutStatus']> }) {
+  const cls = 'shrink-0';
+  switch (status) {
+    case 'pending':
+      return <Clock size={14} aria-label="Você · enviando" className={cls} />;
+    case 'sent':
+      return <Check size={14} aria-label="Você · enviada" className={cls} />;
+    case 'delivered':
+      return <Checks size={14} aria-label="Você · entregue" className={cls} />;
+    case 'read':
+      return <Checks size={14} weight="bold" aria-label="Você · lida" className={`${cls} text-read`} />;
+    case 'failed':
+      return <WarningCircle size={14} weight="fill" aria-label="Você · falhou" className={`${cls} text-danger`} />;
+  }
 }
 
 export function ChatListItem({
@@ -51,7 +68,10 @@ export function ChatListItem({
             </span>
           </span>
           <span className="flex items-center gap-2">
-            <span className={`truncate text-sm ${unread ? 'text-fg' : 'text-muted'}`}>{chat.lastMessagePreview ?? ''}</span>
+            <span className={`flex min-w-0 items-center gap-1 text-sm ${unread ? 'text-fg' : 'text-muted'}`}>
+              {chat.lastOutStatus && <OutTick status={chat.lastOutStatus} />}
+              <span className="truncate">{chat.lastMessagePreview ?? ''}</span>
+            </span>
             {unread && (
               <span
                 aria-label={`Não lidas: ${chat.unread}`}
