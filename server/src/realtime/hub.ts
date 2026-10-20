@@ -17,6 +17,7 @@ export interface Hub {
   /** The chat no longer exists (merged away): every connected client drops it. */
   publishChatRemoved(chatId: string): void;
   publishChannel(channelId: string): Promise<void>;
+  publishChannelRemoved(channelId: string): void;
   /** Chatbot "Notificar atendente": WS only, to the listed users who can see the chat. */
   publishNotification(chatId: string, userIds: string[], notification: NotificationDto): Promise<void>;
   publishUsersChanged(): void;
@@ -78,6 +79,10 @@ export function createHub(getDb: () => Db): Hub {
       for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, { type: 'chat.removed', chatId });
     },
 
+    publishChannelRemoved(channelId) {
+      for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, { type: 'channel.removed', channelId });
+    },
+
     async publishMessage(chatId, type, messageId) {
       if (byUser.size === 0) return;
       const db = getDb();
@@ -131,6 +136,7 @@ export function createRecordingHub(): Hub & {
     publishChatRemoved: (chatId) => { events.push({ type: 'chat.removed', chatId }); },
     publishMessage: async (chatId, type, messageId) => { events.push({ type, chatId, messageId }); },
     publishChannel: async (channelId) => { events.push({ type: 'channel', channelId }); },
+    publishChannelRemoved: (channelId) => { events.push({ type: 'channel.removed', channelId }); },
     publishNotification: async (chatId, userIds) => {
       for (const userId of userIds) events.push({ type: 'notification', chatId, userId });
     },

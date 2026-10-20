@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ChannelDto, HistoryImportDto, HistoryPeriod } from '@talk/shared';
 import { api, qk } from '../../lib/api';
+import { confirmDialog } from '../../lib/confirm';
 import { formatPhone } from '../../lib/format';
 import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
 
@@ -62,6 +63,25 @@ export function ChannelsSettings() {
     mutationFn: (v: { id: string; period: HistoryPeriod }) => api.channels.importHistory(v.id, v.period),
     onSuccess: (ch) => qc.setQueryData<ChannelDto[]>(qk.channels, (list) => list?.map((c) => (c.id === ch.id ? ch : c))),
   });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.channels.remove(id),
+    onSuccess: (_r, id) => {
+      setQr((cur) => withQr(cur, id, null));
+      qc.setQueryData<ChannelDto[]>(qk.channels, (list) => list?.filter((c) => c.id !== id));
+      void qc.invalidateQueries({ queryKey: qk.chats }); // its chats are gone
+    },
+  });
+
+  async function confirmRemove(c: ChannelDto) {
+    const ok = await confirmDialog({
+      title: `Excluir o canal “${c.name}”?`,
+      body:
+        'O WhatsApp deste canal será desconectado e as conversas, mensagens e arquivos dele serão apagados do sistema. ' +
+        'Os contatos continuam. Isso não pode ser desfeito.',
+      confirmLabel: 'Excluir canal',
+    });
+    if (ok) remove.mutate(c.id);
+  }
 
   // History spec §7: poll while a channel is connecting, even when connect answered without a QR (it can come later),
   // and while a shown QR is not connected yet (later QRs arrive as qrcode.updated). A stable string, so the
@@ -114,6 +134,7 @@ export function ChannelsSettings() {
       <ErrorText error={create.error} />
       <ErrorText error={connect.error} />
       <ErrorText error={importHistory.error} />
+      <ErrorText error={remove.error} />
 
       {channels.data.length === 0 && <p className="text-sm text-muted">Nenhum canal cadastrado.</p>}
       <ul className="space-y-3">
@@ -163,6 +184,14 @@ export function ChannelsSettings() {
                   className={btn}
                 >
                   Importar histórico
+                </button>
+                <button
+                  type="button"
+                  disabled={remove.isPending}
+                  onClick={() => void confirmRemove(c)}
+                  className={`${btn} ml-auto text-danger`}
+                >
+                  Excluir canal
                 </button>
               </div>
               <p className="mt-1 text-xs text-muted">
