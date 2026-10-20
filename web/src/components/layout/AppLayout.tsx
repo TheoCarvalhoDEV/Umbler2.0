@@ -1,13 +1,8 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet } from 'react-router';
+import { NavLink, Outlet, useLocation } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  AddressBookIcon,
-  ChatCircleDotsIcon,
-  GearSixIcon,
-  SignOutIcon,
-  type Icon,
-} from '@phosphor-icons/react';
+import { ChatIcon, RobotIcon, SignOutIcon, SlidersIcon, UsersIcon, type Icon } from '@phosphor-icons/react';
+import { useUnreadChats } from '../../pages/Inbox';
 import { useCurrentUser, useLogout } from '../../lib/auth';
 import { Avatar } from '../Avatar';
 import { connectWs } from '../../lib/ws';
@@ -17,17 +12,29 @@ import { NotificationToasts } from './NotificationToasts';
 import { readThemePref, setThemePref, type ThemePref } from '../../lib/theme';
 import { menu, menuItem } from '../ui';
 
-function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon: Icon }) {
+function NavItem(props: { to: string; label: string; icon: Icon; badge?: number; active?: boolean }) {
+  const { to, label, icon: IconCmp, badge = 0 } = props;
   return (
     <NavLink
       to={to}
-      className={({ isActive }) =>
-        `flex w-[60px] flex-col items-center gap-1 rounded-block py-2 text-[11px] leading-[14px] transition-colors ${
+      className={({ isActive: routeActive }) => {
+        const isActive = props.active ?? routeActive;
+        return `relative flex w-[60px] flex-col items-center gap-1 rounded-block py-2 text-[11px] leading-[14px] transition-colors ${
           isActive ? 'bg-rail-active font-semibold text-nav-on' : 'font-medium text-rail-fg hover:bg-rail-active/60 hover:text-nav-on'
         }`
-      }
+      }}
     >
-      <IconCmp size={20} aria-hidden />
+      <span className="relative">
+        <IconCmp size={22} aria-hidden />
+        {badge > 0 && (
+          <span
+            aria-label={`${badge} não lidas`}
+            className="absolute -top-1.5 -right-2 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-bold text-on-primary tabular-nums ring-2 ring-rail"
+          >
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
+      </span>
       {label}
     </NavLink>
   );
@@ -102,6 +109,21 @@ function UserMenu() {
   );
 }
 
+/** Conversas (with the unread badge), Contatos, Chatbot (admins: the settings page is admin only) and Ajustes. */
+function MainNav() {
+  const me = useCurrentUser();
+  const unread = useUnreadChats('inbox');
+  const onBots = useLocation().pathname.startsWith('/configuracoes/chatbots');
+  return (
+    <>
+      <NavItem to="/chats" label="Conversas" icon={ChatIcon} badge={unread} />
+      <NavItem to="/contacts" label="Contatos" icon={UsersIcon} />
+      {me.role === 'admin' && <NavItem to="/configuracoes/chatbots" label="Chatbot" icon={RobotIcon} />}
+      <NavItem to="/configuracoes" label="Ajustes" icon={SlidersIcon} active={onBots ? false : undefined} />
+    </>
+  );
+}
+
 export default function AppLayout() {
   const qc = useQueryClient();
   useEffect(() => connectWs(qc), [qc]);
@@ -111,9 +133,7 @@ export default function AppLayout() {
     <div className="flex h-dvh gap-3 bg-ground p-3 text-fg">
       <nav className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 overflow-y-auto rounded-card bg-rail px-2 py-3.5" aria-label="Menu principal">
         <img src="/logo-mark.svg" alt="" className="mb-3.5 size-10" />
-        <NavItem to="/chats" label="Conversas" icon={ChatCircleDotsIcon} />
-        <NavItem to="/contacts" label="Contatos" icon={AddressBookIcon} />
-        <NavItem to="/configuracoes" label="Ajustes" icon={GearSixIcon} />
+        <MainNav />
         <div className="flex-1" />
         <UserMenu />
       </nav>
