@@ -1,7 +1,36 @@
 import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
-import { ApiError } from '../../lib/api';
+import { ApiError, type TimelineCursor } from '../../lib/api';
 
 export const TIMELINE_PAGE_SIZE = 50;
+
+/** Spec 2026-10-19 §4: a message to bring into view; a new `seq` jumps again to the same message. */
+export interface TimelineFocus { messageId: string; seq: number }
+export const FOCUS_HIGHLIGHT_MS = 3000;
+
+/**
+ * Anchored timeline: the cursor of the next older page, or undefined at the start of the chat. The page around a message
+ * asked for half a page on each side, so a full older half means there may be more.
+ */
+export function olderCursor(page: TimelineItem[], param: TimelineCursor, size: number): TimelineCursor | undefined {
+  const first = page[0];
+  if (!first) return undefined;
+  if ('around' in param) {
+    const i = page.findIndex((it) => it.id === param.around);
+    return i >= Math.floor(size / 2) ? { before: first.id } : undefined;
+  }
+  return page.length < size ? undefined : { before: first.id };
+}
+
+/** Anchored timeline: the cursor of the next newer page, or undefined once the present is loaded. */
+export function newerCursor(page: TimelineItem[], param: TimelineCursor, size: number): TimelineCursor | undefined {
+  const last = page.at(-1);
+  if (!last) return undefined;
+  if ('around' in param) {
+    const i = page.findIndex((it) => it.id === param.around);
+    return i >= 0 && page.length - 1 - i >= Math.floor(size / 2) ? { after: last.id } : undefined;
+  }
+  return page.length < size ? undefined : { after: last.id };
+}
 
 export type TimelineRow =
   | { kind: 'date'; key: string; label: string }

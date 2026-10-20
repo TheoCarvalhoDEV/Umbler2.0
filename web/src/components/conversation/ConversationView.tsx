@@ -5,7 +5,7 @@ import { api, qk } from '../../lib/api';
 import { useWsEvent } from '../../lib/ws';
 import { Composer } from './Composer';
 import { ConversationHeader } from './ConversationHeader';
-import { errorMessage } from './model';
+import { errorMessage, type TimelineFocus } from './model';
 import { Timeline } from './Timeline';
 
 export interface ConversationViewProps {
@@ -13,6 +13,8 @@ export interface ConversationViewProps {
   contactPanelOpen: boolean;
   onToggleContactPanel: () => void;
   onOpenChat: (chatId: string) => void;
+  /** Spec 2026-10-19 §4/§5: the message to bring into view (a search hit or a favorite). */
+  focus?: TimelineFocus | null;
 }
 
 export function ConversationView(props: ConversationViewProps) {
@@ -53,7 +55,7 @@ function ClosedFooter({ chat, onOpenChat }: { chat: ChatDetail; onOpenChat: (cha
   );
 }
 
-function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOpenChat }: ConversationViewProps) {
+function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOpenChat, focus = null }: ConversationViewProps) {
   const qc = useQueryClient();
   const detail = useQuery({ queryKey: qk.chat(chatId), queryFn: () => api.chats.get(chatId) });
   const [replyTo, setReplyTo] = useState<MessageDto | null>(null);
@@ -71,14 +73,17 @@ function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOp
   const lastEventFields = useRef(eventFields);
   useEffect(() => {
     if (lastEventFields.current && eventFields && lastEventFields.current !== eventFields) {
-      void qc.invalidateQueries({ queryKey: qk.timeline(chatId), exact: true });
+      void qc.invalidateQueries({ queryKey: qk.timeline(chatId) }); // prefix: the anchored views too
     }
     lastEventFields.current = eventFields;
   }, [eventFields, chatId, qc]);
 
-  // the server may drop an echo duplicate row without a message event: refetch the timeline on chat.updated
+  // the server may drop an echo duplicate row (or a deleted note) without a message event: refetch on chat.updated,
+  // the anchored views and the favorites list included
   useWsEvent((ev) => {
-    if (ev.type === 'chat.updated' && ev.chat.id === chatId) void qc.invalidateQueries({ queryKey: qk.timeline(chatId), exact: true });
+    if (ev.type !== 'chat.updated' || ev.chat.id !== chatId) return;
+    void qc.invalidateQueries({ queryKey: qk.timeline(chatId) });
+    void qc.invalidateQueries({ queryKey: qk.chatFavorites(chatId), exact: true });
   });
 
   if (detail.isError) {
@@ -96,7 +101,7 @@ function ConversationPane({ chatId, contactPanelOpen, onToggleContactPanel, onOp
         onToggleContactPanel={onToggleContactPanel}
         onOpenChat={onOpenChat}
       />
-      <Timeline chatId={chatId} onReply={setReplyTo} chatOpen={chat.state === 'open'} />
+      <Timeline chatId={chatId} onReply={setReplyTo} chatOpen={chat.state === 'open'} focus={focus} />
       {chat.state === 'open' ? (
         <Composer chatId={chatId} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />
       ) : (
