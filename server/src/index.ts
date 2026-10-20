@@ -40,8 +40,11 @@ const app = await buildApp(ctx, {
   },
 });
 
-// ponytail: one-shot correction at boot (§5.6), no periodic polling; on failure the stored status stays until the next connection.update
-syncChannelStatuses(ctx).catch((err: unknown) => app.log.error({ err }, 'falha ao sincronizar status dos canais'));
+// Boot (§5.6) and then every minute: a connection.update Evolution sent while the app was down is lost, which left a
+// channel on "connecting" while the instance was open. setChannelStatus only writes and publishes when the status changes.
+const syncStatuses = () => syncChannelStatuses(ctx).catch((err: unknown) => app.log.error({ err }, 'falha ao sincronizar status dos canais'));
+void syncStatuses();
+setInterval(syncStatuses, 60_000).unref();
 // Once per boot: existing instances get today's webhook events (MESSAGES_DELETE since "ações de mensagem"). Never throws
 // per channel; only a failing DB read reaches this catch.
 syncWebhooks(ctx).catch((err: unknown) => app.log.error({ err }, 'falha ao atualizar os webhooks dos canais'));

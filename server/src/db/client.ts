@@ -11,7 +11,12 @@ export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 export const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url));
 
 export function createPgDb(url: string): Db {
-  return drizzlePg(postgres(url), { schema });
+  // The migrator's CREATE ... IF NOT EXISTS raises "already exists, skipping" (42P06 schema, 42P07 table) at every boot;
+  // any other notice still goes to the log, as postgres-js does by default.
+  const onnotice = (n: { code?: string }) => {
+    if (n.code !== '42P06' && n.code !== '42P07') console.log(n);
+  };
+  return drizzlePg(postgres(url, { onnotice }), { schema });
 }
 
 // PGlite is a devDependency: imported lazily so the production image never loads it.
