@@ -4,7 +4,8 @@
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/index.router.ts
 // - routerPath(name) → "/<name>/:instanceName":
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/abstract/abstract.router.ts
-// - Routes: POST /instance/create, GET /instance/connect/:i, GET /instance/connectionState/:i
+// - Routes: POST /instance/create, GET /instance/connect/:i, GET /instance/connectionState/:i,
+//   DELETE /instance/logout/:i, DELETE /instance/delete/:i
 //   https://github.com/EvolutionAPI/evolution-api/blob/2.3.7/src/api/routes/instance.router.ts
 // - Routes: POST /message/sendText|sendMedia|sendWhatsAppAudio|sendSticker|sendReaction/:i (201)
 //   sendSticker: JSON { number, sticker: raw base64 } (multipart is buggy in 2.3.7); PNG/JPEG converted to WebP by sharp.
@@ -143,6 +144,12 @@ export function createEvolutionGateway(
     async connect(instance) {
       const res = await call<{ base64?: string | null }>('GET', `/instance/connect/${seg(instance)}`);
       return { qrBase64: res?.base64 ?? null };
+    },
+
+    async deleteInstance(instance) {
+      // Logout first, so the phone drops the linked device; a session that is not open answers an error here, which is fine.
+      await call('DELETE', `/instance/logout/${seg(instance)}`).catch(() => undefined);
+      await call('DELETE', `/instance/delete/${seg(instance)}`);
     },
 
     async connectionState(instance): Promise<ChannelStatus> {

@@ -95,6 +95,10 @@ export function applyWsEvent(qc: QueryClient, ev: WsEvent): void {
       );
       return;
     }
+    case 'channel.removed':
+      // its chats each came as chat.removed
+      qc.setQueryData<ChannelDto[]>(qk.channels, (list) => list?.filter((c) => c.id !== ev.channelId));
+      return;
     case 'notification':
       return; // nothing to cache; the toasts (Task 16) subscribe through useWsEvent
     case 'users.changed':

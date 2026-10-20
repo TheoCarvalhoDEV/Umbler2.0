@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ChannelDto, HistoryImportDto } from '@talk/shared';
+import { confirmDialog } from '../../lib/confirm';
 import { ChannelsSettings, importText } from './ChannelsSettings';
+
+vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
 
 const channel = (over: Partial<ChannelDto> = {}): ChannelDto => ({
   id: 'ch1', name: 'WhatsApp escritório', status: 'connected', phone: '5565999990000', historyPeriod: '3m',
@@ -105,6 +108,23 @@ describe('Settings › Canais', () => {
     };
     renderPage();
     expect(await screen.findByText('Histórico importado: 1.234 mensagens, desde 20/07/2026')).toBeTruthy();
+  });
+
+  it('Excluir canal asks first; on yes it deletes and drops the channel from the list', async () => {
+    vi.mocked(confirmDialog).mockClear();
+    routes['GET /api/channels'] = { body: [channel()] };
+    routes['DELETE /api/channels/ch1'] = { body: null };
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Excluir canal' }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmDialog).mock.calls[0]![0]).toMatchObject({ title: 'Excluir o canal “WhatsApp escritório”?', confirmLabel: 'Excluir canal' });
+    expect(called('DELETE', '/api/channels/ch1')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Excluir canal' }));
+    await waitFor(() => expect(called('DELETE', '/api/channels/ch1')).toHaveLength(1));
+    expect(await screen.findByText('Nenhum canal cadastrado.')).toBeTruthy();
   });
 
   it('shows the 409 when an import is already running', async () => {

@@ -272,6 +272,7 @@ export const api = Object.assign(call, {
     connect: (id: string, historyPeriod?: HistoryPeriod) =>
       request<{ qrBase64: string | null }>('POST', `/api/channels/${enc(id)}/connect`, historyPeriod ? { historyPeriod } : undefined),
     importHistory: (id: string, period: HistoryPeriod) => request<ChannelDto>('POST', `/api/channels/${enc(id)}/history-import`, { period }),
+    remove: (id: string) => request<void>('DELETE', `/api/channels/${enc(id)}`),
   },
   bots: {
     list: () => request<BotDto[]>('GET', '/api/bots'),

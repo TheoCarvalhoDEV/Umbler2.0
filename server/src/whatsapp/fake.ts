@@ -66,6 +66,11 @@ export function createFakeGateway(): WhatsAppGateway & {
       guard();
       sent.push({ method: 'createInstance', instance, payload: { webhookUrl } });
     },
+    async deleteInstance(instance) {
+      guard();
+      sent.push({ method: 'deleteInstance', instance, payload: null });
+      status.delete(instance);
+    },
     async connect(instance) {
       guard();
       sent.push({ method: 'connect', instance, payload: null });
