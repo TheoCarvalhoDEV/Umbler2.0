@@ -521,3 +521,63 @@ export async function closeChatAsBot(
     { kind: 'closed', data: { closingMessageSent, ...actorData(actor) } },
   );
 }
+
+// ---------- automatic rules (spec 2026-10-20 agendamentos §4) ----------
+// The system acts: no canSee, events without author. Each UPDATE re-checks the condition the rule selected on, so a
+// contact or an agent acting in between wins: the 409 STALE becomes `false` and nothing changes.
+
+async function unlessStale(change: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await change();
+    return true;
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 409) return false;
+    throw e;
+  }
+}
+
+/** "Devolver à fila": the waiting chat loses its owner, back to "Sem atendente" in the same sector. */
+export async function returnChatToQueue(ctx: AppCtx, chatId: string, ownerId: string, minutes: number): Promise<boolean> {
+  return unlessStale(() =>
+    updateChat(
+      ctx,
+      chatId,
+      and(eq(chats.state, 'open'), eq(chats.waiting, true), eq(chats.private, false), eq(chats.ownerId, ownerId)),
+      { ownerId: null },
+      { kind: 'returned_to_queue', data: { minutes, previousOwnerId: ownerId }, authorId: null },
+    ),
+  );
+}
+
+/**
+ * "Finalizar por inatividade": the closing text (if any) goes first as a system message, without author or signature.
+ * A chat whose last message is no longer older than `hours` (an agent wrote meanwhile) is left alone. A gateway failure
+ * keeps the chat open with the failed bubble; a contact without an address is closed without the message.
+ */
+export async function closeChatForInactivity(
+  ctx: AppCtx,
+  chatId: string,
+  opts: { closingText: string | null; hours: number; now: Date },
+): Promise<boolean> {
+  const [chat] = await ctx.db.select().from(chats).where(eq(chats.id, chatId));
+  if (!chat || chat.state !== 'open' || chat.waiting) return false;
+  if ((chat.lastMessageAt ?? chat.createdAt).getTime() >= opts.now.getTime() - opts.hours * 3_600_000) return false;
+  let closingMessageSent = false;
+  if (opts.closingText) {
+    const sent = await sendSystemMessage(ctx, chat, { text: opts.closingText });
+    if (!sent.ok && sent.messageId !== null) {
+      await ctx.hub.publishChat(chatId); // the failed bubble is the chat's last message now
+      return false;
+    }
+    closingMessageSent = sent.ok;
+  }
+  return unlessStale(() =>
+    updateChat(
+      ctx,
+      chatId,
+      and(eq(chats.state, 'open'), eq(chats.waiting, false)), // the contact wrote meanwhile: keep it open
+      { state: 'closed', closedAt: new Date(), waiting: false, waitingSince: null, triagePending: false },
+      { kind: 'closed', data: { closingMessageSent, reason: 'inactivity', hours: opts.hours }, authorId: null },
+    ),
+  );
+}
