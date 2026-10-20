@@ -107,9 +107,8 @@ export async function listChats(
   const limit = clampLimit(f.limit);
   const conds: Array<SQL | undefined> = [visibleChatsWhere(user)];
 
+  // Imported history chats are closed, so Finalizados lists them with the rest, in the place of their last message.
   conds.push(eq(chats.state, f.tab === 'closed' ? 'closed' : 'open'));
-  // History spec §8: history chats stay out of Finalizados; a search still finds them.
-  if (f.tab === 'closed' && !f.q?.trim()) conds.push(eq(chats.history, false));
   if (f.tab === 'waiting') conds.push(eq(chats.waiting, true));
   if (f.sectorId) conds.push(eq(chats.sectorId, f.sectorId));
   if (f.ownerId === 'none') conds.push(isNull(chats.ownerId));

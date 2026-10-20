@@ -84,6 +84,7 @@ export function ChatListItem({
           <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px]">
             {channelName && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">{channelName}</span>}
             {sectorName && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">{sectorName}</span>}
+            {chat.history && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">Histórico do WhatsApp</span>}
             {owner ? (
               <span
                 title={owner.name}
