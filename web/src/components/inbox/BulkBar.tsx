@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { BulkResultDto, ChatTab } from '@talk/shared';
 import { api, qk } from '../../lib/api';
@@ -12,7 +12,8 @@ interface Props {
   /** The sector all selected chats share, if they do; the transfer dialog starts there. */
   commonSectorId?: string;
   /** After each run: the summary line and the chats that could not be done. */
-  onResult(summary: string, failedIds: string[]): void;
+  /** `stillOpen` false: the user left this selection mid-run, so the result must not touch the next one. */
+  onResult(summary: string, failedIds: string[], stillOpen: boolean): void;
   onCancel(): void;
 }
 
@@ -25,6 +26,13 @@ export function BulkBar({ chatIds, tab, commonSectorId, onResult, onCancel }: Pr
   const [dialog, setDialog] = useState<'transfer' | 'close' | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const n = chatIds.length;
   const workable = tab !== 'closed'; // Finalizados: nothing to transfer or finish
   const startSector = sectors.find((s) => s.id === commonSectorId) ?? sectors.find((s) => s.isDefault) ?? sectors[0];
@@ -34,12 +42,12 @@ export function BulkBar({ chatIds, tab, commonSectorId, onResult, onCancel }: Pr
     setError(null);
     try {
       const result = await call();
-      setDialog(null);
-      onResult(bulkSummary(result), result.failed.map((f) => f.chatId));
+      if (mounted.current) setDialog(null);
+      onResult(bulkSummary(result), result.failed.map((f) => f.chatId), mounted.current);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Não foi possível concluir. Tente de novo.');
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   }
 

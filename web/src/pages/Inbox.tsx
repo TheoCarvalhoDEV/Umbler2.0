@@ -348,9 +348,10 @@ export function Inbox() {
             tab={tab}
             commonSectorId={selectedSector}
             onCancel={stopSelecting}
-            onResult={(summary, failedIds) => {
+            onResult={(summary, failedIds, stillOpen) => {
               setNotice(summary);
               void qc.invalidateQueries({ queryKey: qk.chatLists });
+              if (!stillOpen) return; // the selection was left mid-run: never pre-tick or end the next one
               // all done: leave the mode; otherwise keep only what failed, to retry or look at
               if (failedIds.length) setSelected(new Set(failedIds));
               else stopSelecting();

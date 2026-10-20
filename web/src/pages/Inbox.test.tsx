@@ -391,6 +391,25 @@ it('Cancelar is disabled while a bulk request runs, and a late result never pre-
   expect((screen.getByLabelText('Selecionar Ana Souza') as HTMLInputElement).checked).toBe(false);
 });
 
+it('leaving and re-entering selection mid-run: the late result neither ticks chats nor ends the new selection', async () => {
+  let release!: () => void;
+  bulkGate = new Promise((r) => (release = r));
+  bulkReply = { done: ['b'], failed: [{ chatId: 'a', error: 'Conversa finalizada' }] };
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' }));
+  fireEvent.click(screen.getByLabelText('Selecionar Ana Souza'));
+  fireEvent.click(screen.getByRole('button', { name: 'Marcar como lida' }));
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Cancelar' }) as HTMLButtonElement).disabled).toBe(true));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' })); // exit mid-run
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' })); // and back in before the answer
+  release();
+  await screen.findByRole('status');
+  expect(screen.getByText('0 selecionadas')).toBeTruthy();
+  expect((screen.getByLabelText('Selecionar Ana Souza') as HTMLInputElement).checked).toBe(false);
+});
+
 it("bulk transfer starts on the chats' common sector, else on the default sector", async () => {
   withDefaultSector = true;
   renderInbox(adminMe);
