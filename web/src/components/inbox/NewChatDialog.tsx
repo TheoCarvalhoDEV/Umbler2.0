@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ContactDto, SectorDto } from '@talk/shared';
 import { api, qk, type StartChatInput } from '../../lib/api';
 import { contactLabel } from '../../lib/format';
+import { button, dialog, dialogTitle, field, fieldLabel, fieldSelect, menuItem } from '../ui';
 
 interface Props {
   sectors: SectorDto[];
@@ -57,10 +58,8 @@ export function NewChatDialog({ sectors, onClose }: Props) {
     if (e.key === 'Escape') onClose();
   }
 
-  const input = 'mt-1 w-full rounded bg-surface px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary';
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4" onClick={onClose}>
       <form
         role="dialog"
         aria-modal="true"
@@ -68,36 +67,36 @@ export function NewChatDialog({ sectors, onClose }: Props) {
         onSubmit={submit}
         onKeyDown={onKeyDown}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md space-y-3 rounded-lg bg-panel p-4 text-fg shadow-xl"
+        className={`${dialog} flex flex-col gap-4`}
       >
-        <h2 id={ids.title} className="text-lg font-semibold">Nova conversa</h2>
+        <h2 id={ids.title} className={dialogTitle}>Nova conversa</h2>
 
         {contact ? (
-          <div className="flex items-center gap-2 rounded bg-surface px-3 py-2 text-sm">
+          <div className="flex h-11 items-center gap-2 rounded-block bg-sunken pr-1.5 pl-3.5 text-sm font-semibold tabular-nums">
             <span className="flex-1 truncate">{contactLabel(contact)}</span>
-            <button type="button" onClick={() => setContact(null)} className="text-link underline">Trocar</button>
+            <button type="button" onClick={() => setContact(null)} className={button('secondary', 'sm')}>Trocar</button>
           </div>
         ) : (
           <>
             <div>
-              <label htmlFor={ids.text} className="text-sm text-muted">Contato ou telefone</label>
+              <label htmlFor={ids.text} className={fieldLabel}>Contato ou telefone</label>
               <input
                 id={ids.text}
                 autoFocus
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 placeholder="Nome ou (65) 99999-9999"
-                className={input}
+                className={field}
               />
             </div>
             {results.data && results.data.items.length > 0 && (
-              <ul className="max-h-48 overflow-y-auto rounded border border-border">
+              <ul className="-mt-2 max-h-48 overflow-y-auto rounded-block border border-border p-1">
                 {results.data.items.map((c) => (
                   <li key={c.id}>
                     <button
                       type="button"
                       onClick={() => setContact(c)}
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-surface"
+                      className={`${menuItem} tabular-nums`}
                     >
                       {contactLabel(c)}
                       {c.name && c.phone ? ` · ${contactLabel({ name: null, phone: c.phone })}` : ''}
@@ -107,15 +106,15 @@ export function NewChatDialog({ sectors, onClose }: Props) {
               </ul>
             )}
             <div>
-              <label htmlFor={ids.name} className="text-sm text-muted">Nome (opcional)</label>
-              <input id={ids.name} value={name} onChange={(e) => setName(e.target.value)} className={input} />
+              <label htmlFor={ids.name} className={fieldLabel}>Nome (opcional)</label>
+              <input id={ids.name} value={name} onChange={(e) => setName(e.target.value)} className={field} />
             </div>
           </>
         )}
 
         <div>
-          <label htmlFor={ids.sector} className="text-sm text-muted">Setor</label>
-          <select id={ids.sector} value={sectorId} onChange={(e) => setSectorId(e.target.value)} className={input}>
+          <label htmlFor={ids.sector} className={fieldLabel}>Setor</label>
+          <select id={ids.sector} value={sectorId} onChange={(e) => setSectorId(e.target.value)} className={fieldSelect}>
             <option value="">Setor padrão</option>
             {sectors.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
@@ -123,14 +122,14 @@ export function NewChatDialog({ sectors, onClose }: Props) {
           </select>
         </div>
 
-        {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+        {error && <p role="alert" className="rounded-block bg-danger-soft px-3.5 py-2.5 text-[13px] font-semibold text-danger">{error}</p>}
 
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="rounded px-3 py-2 text-sm hover:bg-surface">Cancelar</button>
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className={button('secondary')}>Cancelar</button>
           <button
             type="submit"
             disabled={start.isPending}
-            className="rounded bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+            className={button('primary')}
           >
             Iniciar conversa
           </button>

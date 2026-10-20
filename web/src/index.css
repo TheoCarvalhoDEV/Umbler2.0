@@ -28,7 +28,7 @@
   /* Active tab pill and other "on" chips. */
   --color-chip-on: #cfe3de;
   --color-chip-on-fg: #12332e;
-  --color-brass: #f2c94c; /* favourites, highlight ring, "Padrão" */
+  --color-brass: #f2c94c; /* favourites, highlight ring ("Padrão" uses primary-soft / accent-ink) */
   --color-brass-soft: #33290c;
   /* Light enough to read as text on dark surfaces; solid red fills with white text use --color-danger-strong. */
   --color-danger: #f38b82;
@@ -78,6 +78,10 @@
   --app-shadow-float: 0 2px 8px rgb(0 0 0 / 0.45);
   --app-shadow-pop: 0 12px 32px rgb(0 0 0 / 0.55);
   --app-scrim: rgb(0 0 0 / 0.6);
+  --app-shadow-bubble: 0 1px 2px rgb(0 0 0 / 0.3);
+  /* Images can't read tokens: the select chevron is fg-2, the check mark on-primary (keep in sync). */
+  --app-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c3d0cb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --app-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2304201b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
 }
 
 /* Light theme: same tokens, new values. lib/theme.ts sets data-theme (system preference by default). */
@@ -86,6 +90,9 @@
   --app-shadow-float: 0 2px 8px rgb(20 32 29 / 0.08);
   --app-shadow-pop: 0 12px 32px rgb(20 32 29 / 0.16);
   --app-scrim: rgb(20 32 29 / 0.45);
+  --app-shadow-bubble: 0 1px 2px rgb(20 32 29 / 0.06);
+  --app-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232d3b37' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --app-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
   --color-ground: #e9eeec;
   --color-sunken: #f7f9f8;
   --color-surface: #ffffff;
@@ -143,6 +150,22 @@
 }
 @utility shadow-pop {
   box-shadow: var(--app-shadow-pop);
+}
+@utility shadow-bubble {
+  box-shadow: var(--app-shadow-bubble);
+}
+/* <select> chevron (ui.ts fieldSelect) and checkbox tick (ui.ts checkbox). */
+@utility select-chevron {
+  background-image: var(--app-select-chevron);
+  background-position: right 14px center;
+  background-size: 18px;
+  background-repeat: no-repeat;
+}
+@utility check-mark {
+  background-image: var(--app-check);
+  background-position: center;
+  background-size: 14px;
+  background-repeat: no-repeat;
 }
 @utility bg-scrim {
   background-color: var(--app-scrim);

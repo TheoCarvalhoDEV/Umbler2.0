@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { BotDto, BotPatch, StickyColor, StickyNoteConfig } from '@talk/shared';
 import type { EditorCatalog } from '../useEditorCatalog';
-import { Check, CheckList, Field, Select, TextInput, channelItems, control, entries, type FormProps } from './fields';
+import { Check, CheckList, Field, Select, TextInput, channelItems, controlArea, entries, type FormProps } from './fields';
 
 interface BotFormProps {
   bot: BotDto;
@@ -25,7 +25,7 @@ function useBotDraft(bot: BotDto, onBotChange: (patch: BotPatch) => void) {
 export function StartChannelForm({ bot, catalog, onBotChange }: BotFormProps) {
   const { current, change } = useBotDraft(bot, onBotChange);
   return (
-    <div className="space-y-1">
+    <div className="space-y-3">
       <CheckList
         label="Canais"
         hint="Começa quando um contato abre uma conversa nova neste canal. Conversas que já estão abertas não são afetadas; para elas, use o bloco “Iniciar manualmente”. Se dois chatbots ativos usam o mesmo canal, inicia o mais antigo. A triagem simples não roda nesses canais."
@@ -34,7 +34,7 @@ export function StartChannelForm({ bot, catalog, onBotChange }: BotFormProps) {
         onChange={(startChannelIds) => change({ startChannelIds })}
       />
       {current.startChannelIds.length === 0 && (
-        <p role="alert" className="text-xs text-danger">
+        <p role="alert" className="text-xs font-semibold text-danger">
           Nenhum canal marcado: este chatbot não vai iniciar sozinho.
         </p>
       )}
@@ -45,7 +45,7 @@ export function StartChannelForm({ bot, catalog, onBotChange }: BotFormProps) {
 export function StartManualForm({ bot, onBotChange }: BotFormProps) {
   const { current, change } = useBotDraft(bot, onBotChange);
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Check
         label="Permitir que atendentes iniciem pela conversa"
         checked={current.manualStart}
@@ -72,14 +72,14 @@ const STICKY_COLORS: Record<StickyColor, string> = { yellow: 'Amarelo', blue: 'A
 
 export function StickyNoteForm({ config, onChange }: FormProps<StickyNoteConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Field label="Texto da anotação">
         <textarea
           aria-label="Texto da anotação"
           rows={4}
           value={config.text}
           onChange={(e) => onChange({ ...config, text: e.target.value })}
-          className={control}
+          className={controlArea}
         />
       </Field>
       <Select label="Cor" value={config.color} options={entries(STICKY_COLORS)} onChange={(color) => color && onChange({ ...config, color })} />

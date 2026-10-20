@@ -17,6 +17,7 @@ import type {
   TransferSectorConfig,
 } from '@talk/shared';
 import { api } from '../../../lib/api';
+import { fieldHint, fieldLabel } from '../../ui';
 import {
   Check,
   CheckList,
@@ -56,12 +57,12 @@ export function SendMessageForm({ config, onChange, catalog }: FormProps<SendMes
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <VarText label="Mensagem" value={config.text} onChange={(text) => onChange({ ...config, text })} catalog={catalog} />
       <Field label="Arquivo (opcional)" hint="Com arquivo, o texto vai como legenda. O chatbot não usa assinatura.">
         {config.attachment ? (
-          <div className="flex items-center gap-1">
-            <span className="truncate text-sm">{config.attachment.name}</span>
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold">{config.attachment.name}</span>
             <RemoveButton label="Remover arquivo" onClick={() => onChange({ ...config, attachment: null })} />
           </div>
         ) : (
@@ -74,12 +75,12 @@ export function SendMessageForm({ config, onChange, catalog }: FormProps<SendMes
               e.target.value = '';
               if (file) void upload(file);
             }}
-            className="text-xs"
+            className="block w-full text-xs text-muted file:mr-3 file:h-8 file:rounded-full file:border-0 file:bg-panel file:px-3 file:text-xs file:font-bold file:text-fg hover:file:bg-border"
           />
         )}
-        {busy && <p className="text-xs text-muted">Enviando…</p>}
+        {busy && <p className="mt-1.5 text-xs text-muted">Enviando…</p>}
         {error && (
-          <p role="alert" className="text-xs text-danger">
+          <p role="alert" className="mt-1.5 text-xs font-semibold text-danger">
             {error}
           </p>
         )}
@@ -156,18 +157,18 @@ export function AskChoiceForm({ config, onChange, catalog }: FormProps<AskChoice
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <VarText label="Mensagem" value={config.text} onChange={(text) => onChange({ ...config, text })} catalog={catalog} />
       <fieldset>
-        <legend className="text-xs font-medium text-muted">Opções</legend>
+        <legend className={fieldLabel}>Opções</legend>
         {options.map((o, i) => (
-          <div key={i} className="mt-1 flex items-center gap-1">
+          <div key={i} className="mt-2 flex items-center gap-2">
             <input
               aria-label={`Opção ${i + 1}: número`}
               value={o.key}
               maxLength={10}
               onChange={(e) => set(i, { key: e.target.value.trim() })}
-              className={`${control} w-14 shrink-0`}
+              className={`${control} basis-14 shrink-0`}
             />
             <input aria-label={`Opção ${i + 1}: texto`} value={o.label} maxLength={60} onChange={(e) => set(i, { label: e.target.value })} className={control} />
             <RemoveButton
@@ -177,7 +178,7 @@ export function AskChoiceForm({ config, onChange, catalog }: FormProps<AskChoice
             />
           </div>
         ))}
-        <p className="mt-1 text-xs text-muted">O contato pode digitar o número ou o texto. Mudar o número desconecta a saída da opção.</p>
+        <p className={fieldHint}>O contato pode digitar o número ou o texto. Mudar o número desconecta a saída da opção.</p>
       </fieldset>
       <button type="button" className={addBtn} disabled={options.length >= 20} onClick={add}>
         Adicionar opção
@@ -222,7 +223,7 @@ export function AskInputForm({ config, onChange, catalog }: FormProps<AskInputCo
   const problem = config.validator === 'regex' && config.regex ? regexProblem(config.regex) : null;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <VarText label="Mensagem" value={config.text} onChange={(text) => onChange({ ...config, text })} catalog={catalog} />
       <Select label="Tipo de resposta" value={config.validator} options={entries(VALIDATOR_LABELS)} onChange={(v) => v && setValidator(v)} />
       {config.validator === 'media' && (
@@ -243,7 +244,7 @@ export function AskInputForm({ config, onChange, catalog }: FormProps<AskInputCo
             onChange={(e) => onChange({ ...config, regex: e.target.value })}
             className={control}
           />
-          {problem && <p className="text-xs text-danger">{problem}</p>}
+          {problem && <p className="mt-1.5 text-xs font-semibold text-danger">{problem}</p>}
         </Field>
       )}
       <Check
@@ -266,7 +267,7 @@ export function AskInputForm({ config, onChange, catalog }: FormProps<AskInputCo
 
 export function SetContactFieldForm({ config, onChange, catalog }: FormProps<SetContactFieldConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select
         label="Campo"
         value={config.fieldId}
@@ -281,7 +282,7 @@ export function SetContactFieldForm({ config, onChange, catalog }: FormProps<Set
 
 export function EditTagsForm({ config, onChange, catalog }: FormProps<EditTagsConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <CheckList label="Adicionar ao contato" items={tagItems(catalog)} selected={config.add} onChange={(add) => onChange({ ...config, add })} />
       <CheckList label="Remover do contato" items={tagItems(catalog)} selected={config.remove} onChange={(remove) => onChange({ ...config, remove })} />
     </div>
@@ -290,7 +291,7 @@ export function EditTagsForm({ config, onChange, catalog }: FormProps<EditTagsCo
 
 export function TransferSectorForm({ config, onChange, catalog }: FormProps<TransferSectorConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select
         label="Setor"
         value={config.sectorId}
@@ -314,7 +315,7 @@ const AGENT_RULES: Record<TransferAgentConfig['rule'], string> = {
 
 export function TransferAgentForm({ config, onChange, catalog }: FormProps<TransferAgentConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select label="Como escolher o atendente" value={config.rule} options={entries(AGENT_RULES)} onChange={(rule) => rule && onChange({ ...config, rule })} />
       {config.rule === 'specific' ? (
         <CheckList label="Atendentes" items={userItems(catalog)} selected={config.userIds} onChange={(userIds) => onChange({ ...config, userIds })} />
@@ -341,7 +342,7 @@ export function PrivacyForm({ config, onChange }: FormProps<PrivacyConfig>) {
 
 export function NotifyAgentForm({ config, onChange, catalog }: FormProps<NotifyAgentConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <VarText label="Título" rows={1} value={config.title} onChange={(title) => onChange({ ...config, title })} catalog={catalog} />
       <VarText label="Texto" value={config.text} onChange={(text) => onChange({ ...config, text })} catalog={catalog} />
       <Select
@@ -365,7 +366,7 @@ export function CallFlowForm({ config, onChange, catalog, bot }: FormProps<CallF
     .filter((b) => b.id !== bot.id)
     .map((b) => [b.id, b.status === 'active' && b.publishedVersionId ? b.name : `${b.name} (inativo)`] as const);
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select
         label="Fluxo"
         hint="O fluxo escolhido precisa estar ativo e publicado."
@@ -385,7 +386,7 @@ export function CallFlowForm({ config, onChange, catalog, bot }: FormProps<CallF
 
 export function CloseChatForm({ config, onChange, catalog }: FormProps<CloseChatConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Check
         label="Enviar mensagem de finalização"
         checked={config.sendClosingMessage}

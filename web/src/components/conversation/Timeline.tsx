@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ArrowDown, Info, Robot } from '@phosphor-icons/react';
 import type { MessageDto } from '@talk/shared';
 import { api, qk, type TimelineCursor } from '../../lib/api';
+import { button } from '../ui';
 import { MessageBubble } from './MessageBubble';
 import {
   FOCUS_HIGHLIGHT_MS, TIMELINE_PAGE_SIZE, buildTimelineRows, eventText, mergeTimelinePages, newerCursor, olderCursor, timeOfDay,
@@ -137,7 +138,7 @@ export function Timeline({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto bg-sunken px-2 py-4">
+      <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto bg-sunken px-3 py-5">
         {view.isFetchingNextPage && <p className="py-2 text-center text-xs text-muted">Carregando mensagens anteriores…</p>}
         {view.isPending && <p className="py-6 text-center text-sm text-muted">Carregando…</p>}
         {view.isError && <p className="py-6 text-center text-sm text-danger">Não foi possível carregar a conversa.</p>}
@@ -145,18 +146,18 @@ export function Timeline({
           if (row.kind === 'date') {
             return (
               <div key={row.key} className="my-3 flex justify-center">
-                <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs font-semibold text-muted">{row.label}</span>
+                <span className="rounded-full bg-day px-3 py-1 text-xs font-semibold text-fg-2">{row.label}</span>
               </div>
             );
           }
           const item = row.item;
           if (item.type === 'event') {
             return (
-              <p key={row.key} className="my-2 flex items-center justify-center gap-1 px-4 text-center text-xs text-muted">
+              <p key={row.key} className="my-2 flex items-center justify-center gap-1.5 px-4 text-center text-xs font-medium text-muted">
                 {item.kind.startsWith('bot_') ? (
                   <Robot size={14} aria-hidden data-bot-event className="shrink-0" />
                 ) : (
-                  <Info size={14} className="shrink-0" />
+                  <Info size={14} aria-hidden className="shrink-0" />
                 )}
                 {eventText(item, names)} · {timeOfDay(item.createdAt)}
               </p>
@@ -172,9 +173,9 @@ export function Timeline({
         <button
           type="button"
           onClick={backToLive}
-          className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface px-3.5 py-1.5 text-sm font-medium text-fg shadow-lg hover:bg-sidebar-hover"
+          className={`${button('secondary')} absolute bottom-4 left-1/2 -translate-x-1/2 shadow-float`}
         >
-          <ArrowDown size={14} aria-hidden /> Ir para as mensagens recentes
+          <ArrowDown size={16} aria-hidden /> Ir para as mensagens recentes
         </button>
       )}
     </div>

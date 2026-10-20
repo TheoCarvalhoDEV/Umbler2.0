@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react';
+import { PlusIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import type { Role, SectorDto, UserDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { Avatar } from '../../components/Avatar';
-import { ErrorText, Loading, Section, btn, btnPrimary, field, send, useSend } from '../../components/settings/common';
+import { badge, badgeTone, button, checkbox, field, fieldLabel, fieldSelect } from '../../components/ui';
+import { ErrorText, Loading, Section, block, btnDanger, btnPrimary, btnSecondary, hint, send, useSend } from '../../components/settings/common';
 import { confirmDialog } from '../../lib/confirm';
 
 interface UserInput {
@@ -59,6 +61,7 @@ export function UsersSettings() {
       title="Atendentes"
       action={
         <button type="button" onClick={() => open('new')} className={btnPrimary}>
+          <PlusIcon size={16} weight="bold" aria-hidden />
           Novo atendente
         </button>
       }
@@ -76,44 +79,50 @@ export function UsersSettings() {
       )}
       {!target && <ErrorText error={save.error} />}
 
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-muted">
-            <th className="py-2 font-medium">Nome</th>
-            <th className="py-2 font-medium">E-mail</th>
-            <th className="py-2 font-medium">Papel</th>
-            <th className="py-2 font-medium">Setores</th>
-            <th className="py-2 font-medium">Situação</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {users.data.map((u) => (
-            <tr key={u.id} className={`border-b border-border ${u.active ? '' : 'text-muted'}`}>
-              <td className="py-2">
-                <span className="flex items-center gap-2">
-                  <Avatar name={u.name} src={u.avatarUrl} className="size-7 text-xs" />
-                  {u.name}
-                </span>
-              </td>
-              <td className="py-2">{u.email}</td>
-              <td className="py-2">{u.role === 'admin' ? 'Administrador' : 'Atendente'}</td>
-              <td className="py-2">{u.sectorIds.map((id) => sectorName.get(id)).filter(Boolean).join(', ') || '—'}</td>
-              <td className="py-2">{u.active ? 'Ativo' : 'Desativado'}</td>
-              <td className="space-x-2 py-2 text-right whitespace-nowrap">
-                <button type="button" onClick={() => open(u)} className={btn}>
-                  Editar
-                </button>
-                {u.id !== me.id && (
-                  <button type="button" onClick={() => toggleActive(u)} disabled={save.isPending} className={btn}>
-                    {u.active ? 'Desativar' : 'Reativar'}
-                  </button>
-                )}
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="text-xs leading-4 text-muted">
+              <th scope="col" className="h-10 px-3 font-semibold">Nome</th>
+              <th scope="col" className="h-10 px-3 font-semibold">E-mail</th>
+              <th scope="col" className="h-10 px-3 font-semibold">Papel</th>
+              <th scope="col" className="h-10 px-3 font-semibold">Setores</th>
+              <th scope="col" className="h-10 px-3 font-semibold">Situação</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {users.data.map((u) => (
+              <tr key={u.id} className={`border-t border-border transition-colors hover:bg-sidebar-hover ${u.active ? '' : 'text-muted'}`}>
+                <td className="h-[60px] px-3 py-1">
+                  <span className="flex items-center gap-3">
+                    <Avatar name={u.name} src={u.avatarUrl} className="size-9 text-[13px]" />
+                    <span className="font-bold whitespace-nowrap">{u.name}</span>
+                  </span>
+                </td>
+                <td className="px-3 py-1 text-[13px]">{u.email}</td>
+                <td className="px-3 py-1 text-[13px] whitespace-nowrap">{u.role === 'admin' ? 'Administrador' : 'Atendente'}</td>
+                <td className="px-3 py-1 text-[13px]">{u.sectorIds.map((id) => sectorName.get(id)).filter(Boolean).join(', ') || '—'}</td>
+                <td className="px-3 py-1">
+                  <span className={`${badge} ${u.active ? badgeTone.success : badgeTone.neutral}`}>{u.active ? 'Ativo' : 'Desativado'}</span>
+                </td>
+                <td className="px-3 py-1 text-right whitespace-nowrap">
+                  <span className="inline-flex gap-2">
+                    <button type="button" onClick={() => open(u)} className={btnSecondary}>
+                      Editar
+                    </button>
+                    {u.id !== me.id && (
+                      <button type="button" onClick={() => toggleActive(u)} disabled={save.isPending} className={u.active ? btnDanger : btnSecondary}>
+                        {u.active ? 'Desativar' : 'Reativar'}
+                      </button>
+                    )}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }
@@ -151,24 +160,24 @@ function UserForm({
   }
 
   return (
-    <form onSubmit={submit} className="mb-6 grid grid-cols-2 gap-4 rounded border border-border p-4">
-      <label className="block text-sm font-medium">
-        Nome
+    <form onSubmit={submit} className={`${block} mb-5 grid grid-cols-2 gap-4`}>
+      <label className="block">
+        <span className={fieldLabel}>Nome</span>
         <input required value={v.name} onChange={(e) => set({ name: e.target.value })} className={field} />
       </label>
-      <label className="block text-sm font-medium">
-        E-mail
+      <label className="block">
+        <span className={fieldLabel}>E-mail</span>
         <input required type="email" value={v.email} onChange={(e) => set({ email: e.target.value })} className={field} />
       </label>
-      <label className="block text-sm font-medium">
-        Papel
-        <select value={v.role} onChange={(e) => set({ role: e.target.value as Role })} className={field}>
+      <label className="block">
+        <span className={fieldLabel}>Papel</span>
+        <select value={v.role} onChange={(e) => set({ role: e.target.value as Role })} className={fieldSelect}>
           <option value="agent">Atendente</option>
           <option value="admin">Administrador</option>
         </select>
       </label>
-      <label className="block text-sm font-medium">
-        {initial ? 'Nova senha (deixe em branco para manter)' : 'Senha'}
+      <label className="block">
+        <span className={fieldLabel}>{initial ? 'Nova senha (deixe em branco para manter)' : 'Senha'}</span>
         <input
           type="password"
           autoComplete="new-password"
@@ -179,29 +188,29 @@ function UserForm({
           className={field}
         />
       </label>
-      <label className="col-span-2 block text-sm font-medium">
-        Assinatura (opcional)
+      <label className="col-span-2 block">
+        <span className={fieldLabel}>Assinatura (opcional)</span>
         <input value={v.signature} maxLength={60} onChange={(e) => set({ signature: e.target.value })} className={field} />
-        <span className="mt-1 block text-xs font-normal text-muted">Se ficar vazia, as mensagens saem como “Setor - Nome”.</span>
+        <span className={hint}>Se ficar vazia, as mensagens saem como “Setor - Nome”.</span>
       </label>
       <fieldset className="col-span-2">
-        <legend className="text-sm font-medium">Setores</legend>
-        <div className="mt-1 flex flex-wrap gap-4 text-sm">
+        <legend className="mb-2 text-[13px] leading-[18px] font-semibold">Setores</legend>
+        <div className="flex flex-wrap gap-x-6 gap-y-2.5 text-sm">
           {sectors.map((s) => (
-            <label key={s.id} className="flex items-center gap-1">
-              <input type="checkbox" checked={v.sectorIds.includes(s.id)} onChange={() => toggleSector(s.id)} />
+            <label key={s.id} className="flex cursor-pointer items-center gap-2">
+              <input type="checkbox" checked={v.sectorIds.includes(s.id)} onChange={() => toggleSector(s.id)} className={checkbox} />
               {s.name}
             </label>
           ))}
         </div>
-        <p className="mt-1 text-xs text-muted">
+        <p className={hint}>
           Administradores veem todas as conversas. Atendentes veem as dos seus setores e as que são deles.
         </p>
       </fieldset>
       <div className="col-span-2">
         <ErrorText error={error} />
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className={btn}>
+          <button type="button" onClick={onCancel} className={button('ghost')}>
             Cancelar
           </button>
           <button type="submit" disabled={pending} className={btnPrimary}>

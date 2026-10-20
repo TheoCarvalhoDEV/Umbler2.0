@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { TrashIcon } from '@phosphor-icons/react';
 import { NATIVE_CONTACT_FIELDS, RULE_OPERATOR_LABELS, type Logic, type Operand, type Rule, type RuleOperator } from '@talk/shared';
 import { FIXED_VARIABLES, insertAtCursor } from '../../settings/QuickAnswerForm';
+import { button, checkbox, field, fieldArea, fieldHint, fieldLabel, fieldSelect } from '../../ui';
 import type { EditorCatalog } from '../useEditorCatalog';
 
 /** Props of every config form. `config` is already merged over defaultConfig(type). */
@@ -15,8 +16,12 @@ export interface Item {
   label: string;
 }
 
-export const control = 'w-full rounded border border-border bg-surface px-2 py-1 text-sm';
-export const addBtn = 'rounded border border-border px-2 py-1 text-xs hover:bg-sidebar-hover disabled:opacity-50';
+// min-w-0: inputs side by side in a flex row may shrink below their intrinsic width.
+export const control = `${field} min-w-0`;
+export const controlSelect = `${fieldSelect} min-w-0`;
+/** Same box for a <textarea> (control has a fixed height). */
+export const controlArea = `${fieldArea} min-w-0`;
+export const addBtn = button('secondary', 'sm');
 
 export const entries = <V extends string>(r: Record<V, string>) => Object.entries(r) as Array<[V, string]>;
 export const sectorItems = (c: EditorCatalog): Item[] => c.sectors.map((s) => ({ id: s.id, label: s.name }));
@@ -39,9 +44,9 @@ export function clampInt(raw: string, min: number, max = Number.MAX_SAFE_INTEGER
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div>
-      <span className="block text-xs font-medium text-muted">{label}</span>
-      <div className="mt-0.5">{children}</div>
-      {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
+      <span className={fieldLabel}>{label}</span>
+      <div>{children}</div>
+      {hint && <p className={fieldHint}>{hint}</p>}
     </div>
   );
 }
@@ -65,7 +70,7 @@ export function Select<V extends string>({
 }) {
   return (
     <Field label={label} hint={hint}>
-      <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value as V | '')} className={control}>
+      <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value as V | '')} className={controlSelect}>
         {placeholder !== undefined && (
           <option value="" disabled={!allowEmpty}>
             {placeholder}
@@ -122,8 +127,8 @@ export function NumberInput({ label, value, min, max, onChange }: { label: strin
 
 export function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange(v: boolean): void }) {
   return (
-    <label className="flex items-center gap-2 text-sm">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className="flex items-center gap-2 text-[13px] font-semibold">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className={checkbox} />
       {label}
     </label>
   );
@@ -137,9 +142,10 @@ export function RemoveButton({ label, onClick, disabled = false }: { label: stri
       title="Remover"
       disabled={disabled}
       onClick={onClick}
-      className="shrink-0 rounded p-1 text-muted hover:bg-danger/15 hover:text-danger disabled:opacity-30"
+      // ponytail: 32px (dense rows inside a 280px node card); same look as the block's own delete button
+      className="grid size-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
     >
-      <TrashIcon size={14} />
+      <TrashIcon size={16} />
     </button>
   );
 }
@@ -163,21 +169,21 @@ export function CheckList({
   }
   return (
     <fieldset>
-      <legend className="text-xs font-medium text-muted">{label}</legend>
+      <legend className={fieldLabel}>{label}</legend>
       {items.length === 0 ? (
         <p className="text-xs text-muted">Nada cadastrado ainda.</p>
       ) : (
-        <div className="mt-0.5 max-h-40 space-y-0.5 overflow-y-auto">
+        <div className="max-h-40 space-y-1.5 overflow-y-auto">
           {items.map((it) => (
             // w-fit: only the checkbox and its text toggle, not a click anywhere across the node card
-            <label key={it.id} className="flex w-fit items-center gap-2 text-sm">
-              <input type="checkbox" checked={selected.includes(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} />
+            <label key={it.id} className="flex w-fit items-center gap-2 text-[13px] font-semibold">
+              <input type="checkbox" checked={selected.includes(it.id)} onChange={(e) => toggle(it.id, e.target.checked)} className={checkbox} />
               {it.label}
             </label>
           ))}
         </div>
       )}
-      {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
+      {hint && <p className={fieldHint}>{hint}</p>}
     </fieldset>
   );
 }
@@ -235,19 +241,19 @@ export function VarText({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className={control}
+        className={controlArea}
       />
       <button
         type="button"
         aria-label={`Inserir variável em ${label}`}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="text-xs text-primary hover:underline"
+        className="mt-1.5 text-xs font-bold text-link hover:underline"
       >
         Inserir variável
       </button>
       {open && (
-        <div className="mt-1 flex flex-wrap gap-1">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {variables.map(([variable, text]) => (
             <button
               key={variable}
@@ -256,7 +262,7 @@ export function VarText({
               // keep the textarea focused so its selection is not lost
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => insert(variable)}
-              className="rounded-full border border-border px-2 py-0.5 text-xs hover:bg-sidebar-hover"
+              className="inline-flex h-7 items-center rounded-full bg-panel px-2.5 text-xs font-bold text-fg-2 transition-colors hover:bg-border"
             >
               {text}
             </button>
@@ -293,12 +299,12 @@ const OPERAND_KINDS: Record<Operand['kind'], string> = { var: 'Resposta de bloco
 
 function OperandInput({ label, operand, onChange, catalog }: { label: string; operand: Operand; onChange(o: Operand): void; catalog: EditorCatalog }) {
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-2">
       <select
         aria-label={`${label}: tipo`}
         value={operand.kind}
         onChange={(e) => onChange({ kind: e.target.value as Operand['kind'], value: '' })}
-        className={`${control} w-32 shrink-0`}
+        className={`${controlSelect} basis-32 shrink-0`}
       >
         {entries(OPERAND_KINDS).map(([k, text]) => (
           <option key={k} value={k}>
@@ -307,7 +313,7 @@ function OperandInput({ label, operand, onChange, catalog }: { label: string; op
         ))}
       </select>
       {operand.kind === 'field' ? (
-        <select aria-label={`${label}: valor`} value={operand.value} onChange={(e) => onChange({ kind: 'field', value: e.target.value })} className={control}>
+        <select aria-label={`${label}: valor`} value={operand.value} onChange={(e) => onChange({ kind: 'field', value: e.target.value })} className={controlSelect}>
           <option value="" disabled>
             Escolha o campo…
           </option>
@@ -336,9 +342,9 @@ export function RuleRow({ label, rule, onChange, catalog }: { label: string; rul
     onChange(needsRight(operator) ? { ...rest, operator, right: right ?? { kind: 'literal', value: '' } } : { ...rest, operator });
   }
   return (
-    <div className="space-y-1">
+    <div className="space-y-3">
       <OperandInput label={`${label}: esquerda`} operand={rule.left} onChange={(left) => onChange({ ...rule, left })} catalog={catalog} />
-      <select aria-label={`${label}: operador`} value={rule.operator} onChange={(e) => setOperator(e.target.value as RuleOperator)} className={control}>
+      <select aria-label={`${label}: operador`} value={rule.operator} onChange={(e) => setOperator(e.target.value as RuleOperator)} className={controlSelect}>
         {entries(RULE_OPERATOR_LABELS).map(([op, text]) => (
           <option key={op} value={op}>
             {text}
@@ -374,21 +380,21 @@ export function RulesEditor({
   const list = rules ?? []; // an imported graph may lack the array
   const setRule = (i: number, r: Rule) => onChange({ logic, rules: list.map((x, j) => (j === i ? r : x)) });
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {list.length > 1 && (
         <select
           aria-label={`${prefix}Combinar regras`}
           value={logic}
           onChange={(e) => onChange({ logic: e.target.value as Logic, rules: list })}
-          className={control}
+          className={controlSelect}
         >
           <option value="and">Todas as regras valem (E)</option>
           <option value="or">Qualquer regra vale (OU)</option>
         </select>
       )}
       {list.map((r, i) => (
-        <div key={i} className="rounded border border-border p-2">
-          <div className="mb-1 flex items-center justify-between text-xs text-muted">
+        <div key={i} className="rounded-block bg-sunken p-3">
+          <div className="mb-2 flex items-center justify-between text-xs font-semibold text-fg-2">
             <span>Regra {i + 1}</span>
             <RemoveButton
               label={`${prefix}Remover regra ${i + 1}`}

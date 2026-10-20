@@ -2,13 +2,14 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockSimpleOpen, MagnifyingGlass, User, UserPlus,
+  ArrowCounterClockwise, ArrowsLeftRight, Check, LockSimple, LockSimpleOpen, MagnifyingGlass, User, UserPlus,
 } from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, ChatDetail } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { contactLabel } from '../../lib/format';
 import { Avatar } from '../Avatar';
+import { badge, badgeTone, button, iconButton, iconButtonOn, sectionTitle } from '../ui';
 import { BotRunningDialog, CloseDialog, TransferDialog } from './ChatDialogs';
 import { errorMessage, isConflict } from './model';
 
@@ -21,9 +22,7 @@ function HeaderButton(props: { label: string; onClick: () => void; disabled?: bo
       aria-pressed={props.pressed}
       disabled={props.disabled}
       onClick={props.onClick}
-      className={`flex size-10 items-center justify-center rounded-lg hover:bg-sidebar-hover disabled:cursor-not-allowed disabled:opacity-40 ${
-        props.pressed ? 'bg-primary-soft text-link' : 'text-muted'
-      }`}
+      className={props.pressed ? iconButtonOn : iconButton}
     >
       {props.children}
     </button>
@@ -133,77 +132,81 @@ export function ConversationHeader({
     setError(null);
   }
 
-  const pill = 'flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-semibold disabled:opacity-50';
-  const secondary = `${pill} border border-border bg-surface text-fg hover:bg-sidebar-hover`;
-
   return (
     <>
-      <header className="flex items-center gap-1 border-b border-border bg-surface py-3 pr-4 pl-6">
-        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="mr-2 size-11 shrink-0 text-sm" />
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-semibold text-fg">{contactLabel(chat.contact)}</h2>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">
-            <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-fg">{sectorName}</span>
-            <span>{ownerName}</span>
+      <header className="flex flex-wrap items-center gap-3 bg-surface px-[18px] py-3.5">
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-11 text-sm" />
+        <div className="min-w-[180px] flex-1">
+          <h2 className={`${sectionTitle} truncate text-fg`}>{contactLabel(chat.contact)}</h2>
+          {/* the board's subline: owner · sector in muted text; only states (Sem atendente, Privada…) are badges */}
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] leading-[18px] text-muted">
+            {/* nobody owns it: drawn as the "Sem atendente" state badge */}
+            <span className={chat.ownerId ? undefined : `${badge} ${badgeTone.warning}`}>{ownerName}</span>
+            <span aria-hidden>·</span>
+            <span>{sectorName}</span>
             {chat.private && (
-              <span className="flex items-center gap-0.5 text-private">
-                <LockSimple size={12} /> Privada
+              <span className={`${badge} ${badgeTone.brass}`}>
+                <LockSimple size={12} weight="bold" /> Privada
               </span>
             )}
-            {!open && <span>{chat.history ? 'Histórico do WhatsApp' : 'Finalizada'}</span>}
+            {!open && <span className={`${badge} ${badgeTone.neutral}`}>{chat.history ? 'Histórico do WhatsApp' : 'Finalizada'}</span>}
           </div>
         </div>
 
-        {open && !chat.ownerId && (
-          <button type="button" disabled={busy} onClick={() => void act({ kind: 'assume' })} className={`${pill} bg-primary text-white hover:bg-primary-hover`}>
-            <UserPlus size={16} /> Assumir
-          </button>
-        )}
-        {!open && !chat.history && (
-          <button type="button" disabled={busy} onClick={() => void act({ kind: 'reopen' })} className={secondary}>
-            <ArrowCounterClockwise size={16} /> Reabrir
-          </button>
-        )}
-
-        <HeaderButton label="Buscar na conversa" pressed={searchOpen} onClick={() => onToggleSearch?.()}>
-          <MagnifyingGlass size={20} />
-        </HeaderButton>
-        <HeaderButton label="Contato" pressed={contactPanelOpen} onClick={onToggleContactPanel}>
-          <User size={20} />
-        </HeaderButton>
-        {open && (
-          <>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
+          <HeaderButton label="Buscar na conversa" pressed={searchOpen} onClick={() => onToggleSearch?.()}>
+            <MagnifyingGlass size={18} />
+          </HeaderButton>
+          <HeaderButton label="Contato" pressed={contactPanelOpen} onClick={onToggleContactPanel}>
+            <User size={18} />
+          </HeaderButton>
+          {open && (
             <HeaderButton
               label={chat.private ? 'Tornar pública' : 'Tornar privada'}
               disabled={busy || !ownerOrAdmin}
               onClick={() => void act({ kind: 'privacy', private: !chat.private })}
             >
-              {chat.private ? <LockSimpleOpen size={20} /> : <LockSimple size={20} />}
+              {chat.private ? <LockSimpleOpen size={18} /> : <LockSimple size={18} />}
             </HeaderButton>
-            {/* the two workflow actions carry text: an icon-only ✓ read as "message sent" */}
-            <button
-              type="button"
-              disabled={busy || lockedByPrivacy}
-              onClick={() => setDialog('transfer')}
-              className={`${secondary} ml-2 disabled:cursor-not-allowed`}
-            >
-              <ArrowBendUpRight size={16} /> Transferir
+          )}
+
+          {open && !chat.ownerId && (
+            <button type="button" disabled={busy} onClick={() => void act({ kind: 'assume' })} className={button('primary')}>
+              <UserPlus size={16} /> Assumir
             </button>
-            <button
-              type="button"
-              disabled={busy || lockedByPrivacy}
-              onClick={() => setDialog('close')}
-              // one primary action at a time: Assumir while nobody owns the chat, then Finalizar
-              className={`${chat.ownerId ? `${pill} bg-primary text-white hover:bg-primary-hover` : secondary} ml-1 disabled:cursor-not-allowed`}
-            >
-              <CheckCircle size={16} /> Finalizar
+          )}
+          {!open && !chat.history && (
+            <button type="button" disabled={busy} onClick={() => void act({ kind: 'reopen' })} className={button('secondary')}>
+              <ArrowCounterClockwise size={16} /> Reabrir
             </button>
-          </>
-        )}
+          )}
+          {open && (
+            <>
+              {/* the two workflow actions carry text: an icon-only ✓ read as "message sent" */}
+              <button
+                type="button"
+                disabled={busy || lockedByPrivacy}
+                onClick={() => setDialog('transfer')}
+                className={button('secondary')}
+              >
+                <ArrowsLeftRight size={16} /> Transferir
+              </button>
+              <button
+                type="button"
+                disabled={busy || lockedByPrivacy}
+                onClick={() => setDialog('close')}
+                // one primary action at a time: Assumir while nobody owns the chat, then Finalizar
+                className={button(chat.ownerId ? 'primary' : 'secondary')}
+              >
+                <Check size={16} /> Finalizar
+              </button>
+            </>
+          )}
+        </div>
       </header>
 
       {error && !dialog && (
-        <p role="alert" className="border-b border-border bg-danger-soft px-6 py-2 text-sm text-danger">
+        <p role="alert" className="bg-danger-soft px-[18px] py-2.5 text-[13px] leading-[18px] font-semibold text-danger">
           {error}
         </p>
       )}

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ContactDto, CustomFieldDto } from '@talk/shared';
 import { api, qk, type ContactInput } from '../../lib/api';
 import { localDigits, maskPhone } from './phone';
+import { button, field, fieldError, fieldLabel, sectionTitle } from '../ui';
 
 // Keys follow Umbler's AddressModel so the importer can copy them unchanged.
 export const ADDRESS_FIELDS = [
@@ -18,13 +19,10 @@ export const FIELD_INPUT_TYPE: Record<CustomFieldDto['kind'], string> = {
   text: 'text', number: 'number', date: 'date', cpf: 'text', cnpj: 'text',
 };
 
-export const inputClass =
-  'w-full rounded-md border border-field px-3 py-2 text-sm focus:border-primary focus:outline-none';
-
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block font-medium text-fg">{label}</span>
+    <label className="block">
+      <span className={fieldLabel}>{label}</span>
       {children}
     </label>
   );
@@ -85,15 +83,15 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
   }
 
   return (
-    <form onSubmit={submit} noValidate className="space-y-6">
-      <fieldset className="space-y-3">
-        <legend className="mb-2 text-sm font-semibold text-fg">Informações básicas</legend>
+    <form onSubmit={submit} noValidate className="@container space-y-6">
+      <fieldset className="space-y-4">
+        <legend className={`${sectionTitle} mb-3`}>Informações básicas</legend>
         <Field label="Nome">
-          <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
+          <input className={field} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field label="Celular *">
           <input
-            className={inputClass}
+            className={field}
             inputMode="tel"
             aria-required="true"
             placeholder="(65) 99999-9999"
@@ -103,12 +101,12 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
         </Field>
       </fieldset>
 
-      <fieldset className="space-y-3">
-        <legend className="mb-2 text-sm font-semibold text-fg">Dados complementares</legend>
-        <div className="grid gap-3 sm:grid-cols-2">
+      <fieldset className="space-y-4">
+        <legend className={`${sectionTitle} mb-3`}>Dados complementares</legend>
+        <div className="grid gap-4 @sm:grid-cols-2">
           <Field label="Telefone fixo">
             <input
-              className={inputClass}
+              className={field}
               inputMode="tel"
               placeholder="(65) 3222-1111"
               value={landline}
@@ -116,12 +114,12 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
             />
           </Field>
           <Field label="E-mail">
-            <input className={inputClass} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input className={field} type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </Field>
           {ADDRESS_FIELDS.map(([key, label]) => (
             <Field key={key} label={label}>
               <input
-                className={inputClass}
+                className={field}
                 value={address[key] ?? ''}
                 onChange={(e) => setAddress({ ...address, [key]: e.target.value })}
               />
@@ -131,12 +129,12 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
       </fieldset>
 
       {!!customFields.data?.length && (
-        <fieldset className="space-y-3">
-          <legend className="mb-2 text-sm font-semibold text-fg">Campos personalizados</legend>
+        <fieldset className="space-y-4">
+          <legend className={`${sectionTitle} mb-3`}>Campos personalizados</legend>
           {customFields.data.map((f) => (
             <Field key={f.id} label={f.name}>
               <input
-                className={inputClass}
+                className={field}
                 type={FIELD_INPUT_TYPE[f.kind]}
                 value={fields[f.id] ?? ''}
                 onChange={(e) => setFields({ ...fields, [f.id]: e.target.value })}
@@ -146,17 +144,13 @@ export function ContactForm({ contact, onSaved, onCancel }: Props) {
         </fieldset>
       )}
 
-      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className={fieldError}>{error}</p>}
 
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="rounded-md px-4 py-2 text-sm hover:bg-sidebar-hover">
+        <button type="button" onClick={onCancel} className={button('ghost')}>
           Cancelar
         </button>
-        <button
-          type="submit"
-          disabled={saving}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-        >
+        <button type="submit" disabled={saving} className={button('primary')}>
           Salvar
         </button>
       </div>

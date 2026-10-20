@@ -4,7 +4,8 @@ import type { Me } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { Avatar } from '../../components/Avatar';
-import { ErrorText, Section, btn, btnPrimary, field, send, useSend } from '../../components/settings/common';
+import { blockTitle, field, fieldLabel } from '../../components/ui';
+import { ErrorText, Section, block, btnPrimary, btnSecondary, hint, okText, send, useSend } from '../../components/settings/common';
 
 export function ProfileSettings() {
   const me = useCurrentUser();
@@ -18,7 +19,7 @@ export function ProfileSettings() {
   return (
     <Section title="Perfil">
       <PhotoEditor me={me} />
-      <dl className="mb-6 grid grid-cols-[10rem_1fr] gap-y-2 text-sm">
+      <dl className={`${block} mb-5 grid grid-cols-[10rem_1fr] gap-x-4 gap-y-2.5 text-sm`}>
         <dt className="text-muted">E-mail</dt>
         <dd>{me.email}</dd>
         <dt className="text-muted">Papel</dt>
@@ -58,9 +59,9 @@ function PhotoEditor({ me }: { me: Me }) {
   });
 
   return (
-    <div className="mb-6 flex items-center gap-4">
+    <div className="mb-5 flex flex-wrap items-center gap-3">
       <Avatar name={me.name} src={me.avatarUrl} className="size-16 text-xl" />
-      <label className={`${btn} cursor-pointer has-[:disabled]:opacity-50`}>
+      <label className={`${btnSecondary} cursor-pointer has-[:disabled]:opacity-50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary`}>
         Trocar foto
         <input
           type="file"
@@ -75,7 +76,7 @@ function PhotoEditor({ me }: { me: Me }) {
         />
       </label>
       {me.avatarUrl && (
-        <button type="button" onClick={() => save.mutate(null)} disabled={save.isPending} className={btn}>
+        <button type="button" onClick={() => save.mutate(null)} disabled={save.isPending} className={btnSecondary}>
           Remover foto
         </button>
       )}
@@ -105,33 +106,35 @@ function ProfileForm({ me }: { me: Me }) {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <label className="block text-sm font-medium">
-        Nome
+    <form onSubmit={submit} className="space-y-5">
+      <label className="block">
+        <span className={fieldLabel}>Nome</span>
         <input value={name} onChange={(e) => setName(e.target.value)} className={field} />
       </label>
-      <label className="block text-sm font-medium">
-        Assinatura
+      <label className="block">
+        <span className={fieldLabel}>Assinatura</span>
         <input value={signature} maxLength={60} onChange={(e) => setSignature(e.target.value)} className={field} />
-        <span className="mt-1 block text-xs font-normal text-muted">
-          Prévia no WhatsApp: <b>*{signature.trim() || `Setor da conversa - ${name.trim()}`}:*</b>. Se ficar vazia, usa “Setor - Nome”.
+        <span className={hint}>
+          Prévia no WhatsApp: <b className="font-bold text-fg-2">*{signature.trim() || `Setor da conversa - ${name.trim()}`}:*</b>. Se ficar vazia, usa “Setor - Nome”.
         </span>
       </label>
-      <fieldset className="space-y-2 rounded border border-border p-3">
-        <legend className="px-1 text-sm font-medium">Trocar senha (opcional)</legend>
-        <label className="block text-sm">
-          Nova senha
-          <input type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
-        </label>
-        <label className="block text-sm">
-          Repita a nova senha
-          <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={field} />
-        </label>
-        {password && mismatch && <p className="text-sm text-danger">As senhas não conferem.</p>}
-        <p className="text-xs text-muted">Ao trocar a senha, você sai de todos os aparelhos e entra de novo.</p>
+      <fieldset className={block}>
+        <legend className={`${blockTitle} float-left mb-4 w-full`}>Trocar senha (opcional)</legend>
+        <div className="clear-both space-y-4">
+          <label className="block">
+            <span className={fieldLabel}>Nova senha</span>
+            <input type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
+          </label>
+          <label className="block">
+            <span className={fieldLabel}>Repita a nova senha</span>
+            <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={field} />
+          </label>
+          {password && mismatch && <p className="text-[13px] font-semibold text-danger">As senhas não conferem.</p>}
+          <p className="text-[13px] leading-[18px] text-muted">Ao trocar a senha, você sai de todos os aparelhos e entra de novo.</p>
+        </div>
       </fieldset>
       <ErrorText error={save.error} />
-      {save.isSuccess && !password && <p className="text-sm text-success">Perfil salvo.</p>}
+      {save.isSuccess && !password && <p className={okText}>Perfil salvo.</p>}
       <button type="submit" disabled={save.isPending || mismatch || !name.trim()} className={btnPrimary}>
         Salvar
       </button>

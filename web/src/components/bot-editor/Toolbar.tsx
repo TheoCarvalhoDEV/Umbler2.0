@@ -10,7 +10,7 @@ import {
   TreeStructureIcon,
 } from '@phosphor-icons/react';
 import type { BotDto } from '@talk/shared';
-import { btn, btnPrimary } from '../settings/common';
+import { badge, badgeTone, button, iconButton, iconButtonGhost, iconButtonOn } from '../ui';
 
 export interface ToolbarProps {
   name: string;
@@ -43,7 +43,7 @@ function IconButton(props: { label: string; onClick(): void; disabled?: boolean;
       aria-pressed={props.pressed}
       disabled={props.disabled}
       onClick={props.onClick}
-      className={`rounded p-1.5 text-muted hover:bg-sidebar-hover hover:text-fg disabled:opacity-40 ${props.pressed ? 'bg-sidebar-active text-fg' : ''}`}
+      className={props.pressed ? iconButtonOn : iconButtonGhost}
     >
       {props.children}
     </button>
@@ -69,7 +69,7 @@ function NameInput({ name, disabled, onRename }: { name: string; disabled: boole
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
       }}
-      className="w-64 rounded border border-transparent bg-transparent px-2 py-1 text-sm font-semibold hover:border-border focus:border-border"
+      className="h-10 w-64 min-w-0 rounded-block border border-transparent bg-transparent px-3 text-base font-bold text-fg hover:border-field focus:border-field disabled:opacity-60"
     />
   );
 }
@@ -77,50 +77,45 @@ function NameInput({ name, disabled, onRename }: { name: string; disabled: boole
 export function Toolbar(p: ToolbarProps) {
   const active = p.status === 'active';
   return (
-    <header className="flex flex-wrap items-center gap-2 border-b border-border bg-panel px-3 py-2">
-      <Link
-        to="/configuracoes/chatbots"
-        aria-label="Voltar para a lista de chatbots"
-        title="Voltar"
-        className="rounded p-1.5 text-muted hover:bg-sidebar-hover hover:text-fg"
-      >
-        <ArrowLeftIcon size={18} />
+    <header className="flex flex-wrap items-center gap-2 rounded-card bg-surface px-3 py-2.5">
+      <Link to="/configuracoes/chatbots" aria-label="Voltar para a lista de chatbots" title="Voltar" className={iconButton}>
+        <ArrowLeftIcon size={20} />
       </Link>
       <NameInput name={p.name} disabled={p.readOnly} onRename={p.onRename} />
-      <span className={`rounded px-2 py-0.5 text-xs ${active ? 'bg-success/20 text-success' : 'bg-border text-muted'}`}>
-        {active ? 'Ativo' : 'Pausado'}
-      </span>
-      <span className="text-xs text-muted">
+      <span className={`${badge} ${active ? badgeTone.success : badgeTone.neutral}`}>{active ? 'Ativo' : 'Pausado'}</span>
+      <span className="text-[13px] text-muted">
         {p.publishedVersionNumber ? `Publicada: versão ${p.publishedVersionNumber}` : 'Nenhuma versão publicada'}
       </span>
-      {p.dirty && <span className="text-xs text-amber-400">Alterações não salvas</span>}
-      <div className="ml-auto flex flex-wrap items-center gap-1">
-        <IconButton label="Paleta de blocos (Tab)" pressed={p.paletteOpen} disabled={p.readOnly} onClick={p.onTogglePalette}>
-          <SquaresFourIcon size={18} />
-        </IconButton>
-        <IconButton label="Desfazer" disabled={!p.canUndo} onClick={p.onUndo}>
-          <ArrowCounterClockwiseIcon size={18} />
-        </IconButton>
-        <IconButton label="Refazer" disabled={!p.canRedo} onClick={p.onRedo}>
-          <ArrowClockwiseIcon size={18} />
-        </IconButton>
-        <IconButton label="Auto-organizar" disabled={p.readOnly} onClick={p.onLayout}>
-          <TreeStructureIcon size={18} />
-        </IconButton>
-        <IconButton label="Versões" pressed={p.versionsOpen} onClick={p.onToggleVersions}>
-          <ClockCounterClockwiseIcon size={18} />
-        </IconButton>
-        <a href={p.exportUrl} download title="Baixa a última versão salva" className={`${btn} inline-flex items-center gap-1`}>
+      {p.dirty && <span className={`${badge} ${badgeTone.warning}`}>Alterações não salvas</span>}
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-0.5">
+          <IconButton label="Paleta de blocos (Tab)" pressed={p.paletteOpen} disabled={p.readOnly} onClick={p.onTogglePalette}>
+            <SquaresFourIcon size={20} />
+          </IconButton>
+          <IconButton label="Desfazer" disabled={!p.canUndo} onClick={p.onUndo}>
+            <ArrowCounterClockwiseIcon size={20} />
+          </IconButton>
+          <IconButton label="Refazer" disabled={!p.canRedo} onClick={p.onRedo}>
+            <ArrowClockwiseIcon size={20} />
+          </IconButton>
+          <IconButton label="Auto-organizar" disabled={p.readOnly} onClick={p.onLayout}>
+            <TreeStructureIcon size={20} />
+          </IconButton>
+          <IconButton label="Versões" pressed={p.versionsOpen} onClick={p.onToggleVersions}>
+            <ClockCounterClockwiseIcon size={20} />
+          </IconButton>
+        </div>
+        <a href={p.exportUrl} download title="Baixa a última versão salva" className={button()}>
           <DownloadSimpleIcon size={16} aria-hidden />
           Exportar
         </a>
-        <button type="button" className={btn} disabled={p.busy} onClick={p.onToggleStatus}>
+        <button type="button" className={button()} disabled={p.busy} onClick={p.onToggleStatus}>
           {active ? 'Pausar' : 'Ativar'}
         </button>
-        <button type="button" className={btn} disabled={p.busy || p.readOnly} onClick={() => p.onSave(false)}>
+        <button type="button" className={button()} disabled={p.busy || p.readOnly} onClick={() => p.onSave(false)}>
           Salvar rascunho
         </button>
-        <button type="button" className={btnPrimary} disabled={p.busy || p.readOnly} onClick={() => p.onSave(true)}>
+        <button type="button" className={button('primary')} disabled={p.busy || p.readOnly} onClick={() => p.onSave(true)}>
           Salvar e publicar
         </button>
       </div>

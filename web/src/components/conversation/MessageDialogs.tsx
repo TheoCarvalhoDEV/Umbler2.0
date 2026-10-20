@@ -7,6 +7,7 @@ import { contactLabel } from '../../lib/format';
 import { applyWsEvent } from '../../lib/ws';
 import { BotRunningDialog, Modal } from './ChatDialogs';
 import { errorMessage } from './model';
+import { button, field, fieldLabel, iconButton, menuItem } from '../ui';
 
 const SOURCE_LABEL: Record<MessageEditDto['source'], string> = { office: 'Atendente', contact: 'Contato', phone: 'Celular' };
 
@@ -20,14 +21,14 @@ export function EditHistoryDialog({ messageId, onClose }: { messageId: string; o
     <Modal title="Versões anteriores" onCancel={onClose}>
       {edits.isPending && <p className="text-sm text-muted">Carregando…</p>}
       {edits.isError && (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className="text-[13px] font-semibold text-danger">
           Não foi possível carregar as versões.
         </p>
       )}
-      <ol className="max-h-80 space-y-2 overflow-y-auto">
+      <ol className="flex max-h-80 flex-col gap-2 overflow-y-auto">
         {edits.data?.map((e) => (
-          <li key={e.id} className="rounded bg-surface px-3 py-2 text-sm">
-            <p className="mb-1 text-xs text-muted">
+          <li key={e.id} className="rounded-block bg-sunken px-3.5 py-2.5">
+            <p className="mb-1 text-xs text-muted tabular-nums">
               {when(e.editedAt)} · {e.editedByName ?? SOURCE_LABEL[e.source]}
               {e.newTextUnavailable ? ' · novo texto indisponível' : ''}
             </p>
@@ -35,8 +36,8 @@ export function EditHistoryDialog({ messageId, onClose }: { messageId: string; o
           </li>
         ))}
       </ol>
-      <div className="mt-5 flex justify-end">
-        <button type="button" onClick={onClose} className="rounded px-3 py-2 text-sm hover:bg-surface">
+      <div className="mt-6 flex justify-end">
+        <button type="button" onClick={onClose} className={button('secondary')}>
           Fechar
         </button>
       </div>
@@ -44,8 +45,6 @@ export function EditHistoryDialog({ messageId, onClose }: { messageId: string; o
   );
 }
 
-const field = 'mt-1 block w-full rounded border border-field bg-surface px-2 py-1.5 text-sm text-fg';
-const option = 'w-full rounded px-2 py-1.5 text-left text-sm hover:bg-surface disabled:opacity-50';
 
 /**
  * Spec §7: one destination per forward, searched like "Nova conversa". Open chats come first; a contact with an open
@@ -95,17 +94,17 @@ export function ForwardDialog({ message, onClose }: { message: MessageDto; onClo
 
   return (
     <Modal title="Encaminhar mensagem" onCancel={onClose}>
-      <label className="block text-sm">
-        Conversa ou contato
+      <label className="block">
+        <span className={fieldLabel}>Conversa ou contato</span>
         <input autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Nome ou telefone" className={field} />
       </label>
       {openChats.length > 0 && (
         <section className="mt-3">
-          <h4 className="px-2 text-xs font-semibold text-muted">Conversas abertas</h4>
+          <h4 className="px-3 pb-1 text-xs font-bold text-muted">Conversas abertas</h4>
           <ul>
             {openChats.map((c) => (
               <li key={c.id}>
-                <button type="button" disabled={busy} onClick={() => void forward({ chatId: c.id })} className={option}>
+                <button type="button" disabled={busy} onClick={() => void forward({ chatId: c.id })} className={menuItem}>
                   {contactLabel(c.contact)}
                 </button>
               </li>
@@ -115,11 +114,11 @@ export function ForwardDialog({ message, onClose }: { message: MessageDto; onClo
       )}
       {others.length > 0 && (
         <section className="mt-3">
-          <h4 className="px-2 text-xs font-semibold text-muted">Contatos</h4>
+          <h4 className="px-3 pb-1 text-xs font-bold text-muted">Contatos</h4>
           <ul>
             {others.map((c) => (
               <li key={c.id}>
-                <button type="button" disabled={busy} onClick={() => void forward({ contactId: c.id })} className={option}>
+                <button type="button" disabled={busy} onClick={() => void forward({ contactId: c.id })} className={menuItem}>
                   {contactLabel(c)}
                 </button>
               </li>
@@ -128,15 +127,15 @@ export function ForwardDialog({ message, onClose }: { message: MessageDto; onClo
         </section>
       )}
       {searching && chats.isSuccess && contacts.isSuccess && openChats.length === 0 && others.length === 0 && (
-        <p className="mt-3 text-sm text-muted">Nenhuma conversa ou contato encontrado.</p>
+        <p className="mt-4 text-sm text-muted">Nenhuma conversa ou contato encontrado.</p>
       )}
       {error && (
-        <p role="alert" className="mt-3 text-sm text-danger">
+        <p role="alert" className="mt-4 text-[13px] font-semibold text-danger">
           {error}
         </p>
       )}
-      <div className="mt-5 flex justify-end">
-        <button type="button" onClick={onClose} className="rounded px-3 py-2 text-sm hover:bg-surface">
+      <div className="mt-6 flex justify-end">
+        <button type="button" onClick={onClose} className={button('secondary')}>
           Cancelar
         </button>
       </div>
@@ -176,28 +175,28 @@ export function MediaViewer({ media, kind, onClose }: { media: MediaDto; kind: M
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose(); // a click on the backdrop
       }}
-      className="m-auto h-[calc(100%-2rem)] w-[calc(100%-2rem)] max-w-5xl flex-col overflow-hidden rounded-lg bg-panel p-0 text-fg shadow-xl backdrop:bg-black/70 open:flex"
+      className="m-auto h-[calc(100%-2rem)] w-[calc(100%-2rem)] max-w-5xl flex-col overflow-hidden rounded-card bg-surface p-0 text-fg shadow-pop open:flex"
     >
-      <header className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{name}</p>
+      <header className="flex items-center gap-2 px-[18px] py-3">
+        <p className="min-w-0 flex-1 truncate font-bold">{name}</p>
         <a
           href={media.url}
           download={media.name ?? ''}
-          className="flex items-center gap-1 rounded px-2 py-1 text-sm hover:bg-surface"
+          className={button('secondary')}
         >
           <DownloadSimple size={16} /> Baixar
         </a>
-        <button type="button" onClick={onClose} aria-label="Fechar" title="Fechar" className="rounded p-1 hover:bg-surface">
+        <button type="button" onClick={onClose} aria-label="Fechar" title="Fechar" className={iconButton}>
           <X size={18} />
         </button>
       </header>
-      <div className="flex min-h-0 flex-1 items-center justify-center bg-black/80">
+      <div className="flex min-h-0 flex-1 items-center justify-center bg-sunken">
         {image ? (
           <img src={media.url} alt={name} className="max-h-full max-w-full object-contain" />
         ) : pdf ? (
-          <iframe title={name} src={media.url} className="size-full bg-white" />
+          <iframe title={name} src={media.url} className="size-full" />
         ) : (
-          <p className="px-4 text-center text-sm text-white/80">Este tipo de arquivo não tem pré-visualização. Use “Baixar”.</p>
+          <p className="px-4 text-center text-sm text-muted">Este tipo de arquivo não tem pré-visualização. Use “Baixar”.</p>
         )}
       </div>
     </dialog>

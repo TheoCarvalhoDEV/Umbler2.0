@@ -12,6 +12,7 @@ import { QuickAnswersSettings } from './QuickAnswersSettings';
 import { TriageSettings } from './TriageSettings';
 import { ChatSettings } from './ChatSettings';
 import { BotsSettings } from './bots/BotsSettings';
+import { card, sectionTitle } from '../../components/ui';
 
 const GROUPS = ['Você', 'Atendimento', 'Equipe e cadastros'] as const;
 
@@ -39,23 +40,23 @@ export function SettingsPage() {
   const Page = current.page;
 
   return (
-    <div className="flex h-full min-h-0">
-      <nav aria-label="Configurações" className="w-60 shrink-0 overflow-y-auto border-r border-border bg-surface px-3.5 py-7">
-        <h2 className="mb-5 px-2.5 text-xl font-semibold tracking-tight">Configurações</h2>
+    <div className="flex h-full min-h-0 gap-3">
+      <nav aria-label="Configurações" className={`${card} flex w-[248px] shrink-0 flex-col gap-5 overflow-y-auto px-3 py-[22px]`}>
+        <h2 className={`${sectionTitle} px-3`}>Configurações</h2>
         {GROUPS.map((group) => {
           const items = visible.filter((s) => s.group === group);
           if (items.length === 0) return null;
           return (
-            <div key={group} className="mb-5">
-              <h3 className="mb-1.5 px-2.5 text-[11px] font-semibold tracking-wider text-muted uppercase">{group}</h3>
-              <ul className="space-y-0.5">
+            <div key={group} className="flex flex-col gap-1.5">
+              <h3 className="px-3 text-xs leading-4 font-semibold text-muted">{group}</h3>
+              <ul className="flex flex-col gap-0.5">
                 {items.map((s) => (
                   <li key={s.path}>
                     <NavLink
                       to={`/configuracoes/${s.path}`}
                       className={({ isActive }) =>
-                        `flex h-9 items-center rounded-lg px-2.5 text-sm ${
-                          isActive ? 'bg-sidebar-active font-semibold text-link' : 'font-medium text-muted hover:bg-sidebar-hover hover:text-fg'
+                        `flex h-10 items-center rounded-block px-3 text-sm transition-colors ${
+                          isActive ? 'bg-sidebar-active font-bold text-accent-ink' : 'font-medium text-fg-2 hover:bg-sidebar-hover hover:text-fg'
                         }`
                       }
                     >
@@ -68,7 +69,7 @@ export function SettingsPage() {
           );
         })}
       </nav>
-      <main className="min-w-0 flex-1 overflow-y-auto px-10 py-8">
+      <main className={`${card} min-w-0 flex-1 overflow-y-auto px-[18px] py-[22px]`}>
         <Page />
       </main>
     </div>

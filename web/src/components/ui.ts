@@ -11,12 +11,11 @@ const buttonSizes = {
 const buttonVariants = {
   /** The one main action of an area. */
   primary: 'bg-primary text-on-primary hover:bg-primary-hover',
+  /** Also Cancelar in a dialog (Dialogos.dc.html). */
   secondary: 'bg-panel text-fg hover:bg-border',
-  /** Destructive but not final (Excluir in a list, Bloquear). */
+  /** Destructive actions, including the confirm of a destructive dialog (Excluir setor). */
   danger: 'bg-danger-soft text-danger hover:brightness-95',
-  /** The confirm button of a destructive dialog. */
-  dangerSolid: 'bg-danger-strong text-white hover:brightness-110',
-  /** Text-only action (Cancelar in a dialog, Carregar mais). */
+  /** Text-only action: Cancelar of an inline form, Carregar mais, or Cancelar beside another secondary choice. */
   ghost: 'text-fg hover:bg-panel',
 } as const;
 
@@ -31,7 +30,11 @@ export const iconButton =
 export const iconButtonGhost =
   'grid size-10 shrink-0 place-items-center rounded-full text-fg-2 transition-colors hover:bg-panel disabled:cursor-not-allowed disabled:opacity-50';
 /** Icon button that toggles something on (Contato panel open, search open). */
-export const iconButtonOn = 'grid size-10 shrink-0 place-items-center rounded-full bg-primary-soft text-accent-ink';
+export const iconButtonOn =
+  'grid size-10 shrink-0 place-items-center rounded-full bg-primary-soft text-accent-ink disabled:cursor-not-allowed disabled:opacity-50';
+/** Round primary action (Nova conversa). The composer's send button is the same at 44px. */
+export const iconButtonPrimary =
+  'grid size-10 shrink-0 place-items-center rounded-full bg-primary text-on-primary transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50';
 
 /** An area of the screen: list, conversation, panel, page body. */
 export const card = 'rounded-card bg-surface';
@@ -44,12 +47,21 @@ export const searchInput = 'min-w-0 flex-1 bg-transparent text-sm text-fg outlin
 
 /** Form field label, shown above the control. */
 export const fieldLabel = 'mb-1.5 block text-[13px] font-semibold text-fg';
-/** Text input / select box (44px). For a textarea use fieldArea. */
+/** Text input (44px). For a <select> use fieldSelect, for a textarea fieldArea. */
 export const field =
   'block h-11 w-full rounded-block border border-field bg-surface px-3.5 text-sm text-fg disabled:opacity-60';
 export const fieldArea =
   'block w-full rounded-block border border-field bg-surface px-3.5 py-2.5 text-sm text-fg disabled:opacity-60';
-export const fieldError = 'mt-1.5 text-[13px] font-semibold text-danger';
+/** <select> with the board's chevron (forced-colors mode keeps the native arrow). */
+export const fieldSelect = `${field} appearance-none pr-10 select-chevron forced-colors:appearance-auto`;
+export const fieldError = 'mt-1.5 text-xs leading-4 font-semibold text-danger';
+/** Help text under a control. */
+export const fieldHint = 'mt-1.5 block text-[13px] leading-[18px] font-normal text-muted';
+/** Checkbox and radio drawn as on Fundamentos (forced-colors mode keeps the native control). */
+export const checkbox =
+  'size-[18px] shrink-0 cursor-pointer appearance-none rounded-[6px] border border-field bg-surface checked:border-primary checked:bg-primary checked:check-mark disabled:cursor-not-allowed disabled:opacity-50 forced-colors:appearance-auto';
+export const radio =
+  'size-[18px] shrink-0 cursor-pointer appearance-none rounded-full border border-field bg-surface checked:border-[5px] checked:border-primary disabled:cursor-not-allowed disabled:opacity-50 forced-colors:appearance-auto';
 
 /** Pill tabs / segmented filters: wrap in role="tablist" with tabList. */
 export const tabList = 'flex flex-wrap gap-2';
@@ -79,8 +91,8 @@ export const menuItem =
   'flex w-full items-center gap-2.5 rounded-[10px] px-3 py-2 text-left text-sm hover:bg-sidebar-hover disabled:cursor-not-allowed disabled:opacity-50';
 
 /** Native <dialog> box (the backdrop comes from index.css). */
-export const dialog = 'm-auto w-[min(30rem,calc(100%-2rem))] rounded-card bg-surface p-6 text-fg shadow-pop';
-export const dialogTitle = 'text-lg leading-6 font-bold';
+export const dialog = 'm-auto w-[min(28rem,calc(100%-2rem))] rounded-card bg-surface p-6 text-fg shadow-pop';
+export const dialogTitle = 'text-base leading-[22px] font-bold';
 
 /** Page title (once per screen) and card / section titles. */
 export const pageTitle = 'text-[22px] leading-7 font-bold tracking-[-0.02em]';

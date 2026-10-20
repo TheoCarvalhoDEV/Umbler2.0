@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { BotGraph, BotVersionDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { btn, Loading } from '../settings/common';
+import { badge, badgeTone, fieldError, sectionTitle } from '../ui';
 import { errorMessage } from '../conversation/model';
 
 export interface VersionsPanelProps {
@@ -33,24 +34,24 @@ export function VersionsPanel({ botId, onRestore, onView }: VersionsPanelProps) 
   }
 
   return (
-    <section aria-label="Versões" className="border-t border-border p-3 first:border-t-0">
-      <h2 className="mb-2 text-sm font-semibold">Versões</h2>
+    <section aria-label="Versões" className="border-t border-border p-4 first:border-t-0">
+      <h2 className={`mb-3 ${sectionTitle}`}>Versões</h2>
       {!list.data ? (
         <Loading error={list.error} />
       ) : (
-        <ul className="divide-y divide-border rounded border border-border">
+        <ul className="space-y-2">
           {list.data.map((v) => (
-            <li key={v.id} className="p-2 text-sm">
+            <li key={v.id} className="rounded-item bg-sunken p-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">Versão {v.number}</span>
-                {v.published && <span className="rounded bg-success/20 px-1.5 text-xs text-success">Publicada</span>}
-                {!v.valid && <span className="rounded bg-danger/20 px-1.5 text-xs text-danger">Com problemas</span>}
+                <span className="font-bold">Versão {v.number}</span>
+                {v.published && <span className={`${badge} ${badgeTone.success}`}>Publicada</span>}
+                {!v.valid && <span className={`${badge} ${badgeTone.danger}`}>Com problemas</span>}
               </div>
-              <p className="text-xs text-muted">
+              <p className="mt-1 text-[13px] leading-[18px] text-muted">
                 {when(v.createdAt)} · {v.createdByName ?? 'Sistema'}
                 {v.label ? ` · ${v.label}` : ''}
               </p>
-              <div className="mt-1 flex flex-wrap gap-1">
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {onView && (
                   <button type="button" className={btn} disabled={loading !== null} onClick={() => void open(v.number, onView)}>
                     Visualizar
@@ -70,7 +71,7 @@ export function VersionsPanel({ botId, onRestore, onView }: VersionsPanelProps) 
         </ul>
       )}
       {error && (
-        <p role="alert" className="mt-2 text-sm text-danger">
+        <p role="alert" className={fieldError}>
           {error}
         </p>
       )}

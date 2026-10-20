@@ -6,15 +6,15 @@ import { previewText, shortDateTime } from './model';
 export function FavoritesList({ chatId, onJump }: { chatId: string; onJump: (messageId: string) => void }) {
   const favorites = useQuery({ queryKey: qk.chatFavorites(chatId), queryFn: () => api.chats.favorites(chatId) });
   if (favorites.isPending) return <p className="text-sm text-muted">Carregando…</p>;
-  if (favorites.isError) return <p className="text-sm text-danger">Não foi possível carregar as favoritas.</p>;
+  if (favorites.isError) return <p className="text-[13px] font-semibold text-danger">Não foi possível carregar as favoritas.</p>;
   if (favorites.data.length === 0) return <p className="text-sm text-muted">Nenhuma mensagem favorita.</p>;
   return (
-    <ul className="divide-y divide-border">
+    <ul className="flex flex-col gap-1.5">
       {favorites.data.map((m) => (
         <li key={m.id}>
-          <button type="button" onClick={() => onJump(m.id)} className="block w-full rounded px-1 py-2 text-left hover:bg-sidebar-hover">
+          <button type="button" onClick={() => onJump(m.id)} className="block w-full rounded-item bg-sunken px-3 py-2.5 text-left transition-colors hover:bg-panel">
             <span className="line-clamp-2 text-sm text-fg">{previewText(m.body, m.kind)}</span>
-            <span className="mt-0.5 block text-xs text-muted">
+            <span className="mt-0.5 block text-xs text-muted tabular-nums">
               {shortDateTime(m.sentAt)}
               {m.favorite?.byName ? ` · por ${m.favorite.byName}` : ''}
             </span>

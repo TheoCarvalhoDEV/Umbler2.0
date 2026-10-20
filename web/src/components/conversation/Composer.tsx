@@ -5,6 +5,7 @@ import type { BotAction, BotRunningErrorBody, MessageDto, QuickAnswerDto } from 
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { preferencesOf } from '../../lib/auth';
 import { applyWsEvent } from '../../lib/ws';
+import { button, checkbox, iconButtonGhost, menu, tab } from '../ui';
 import { BotPanel } from './BotPanel';
 import { BotRunningDialog } from './ChatDialogs';
 import { errorMessage, isSendKey, previewText } from './model';
@@ -48,15 +49,15 @@ async function fetchQuickAnswerFile(qa: QuickAnswerDto): Promise<File> {
 
 const duration = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
+// The one primary action of the composer: send, save the note or start recording.
+const roundPrimary =
+  'grid size-11 shrink-0 place-items-center rounded-full bg-primary text-on-primary transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50';
+// "Nota interna" tab while note mode is on: the note colors instead of the neutral "on" chip
+const noteTabOn = 'inline-flex h-8 items-center gap-1.5 rounded-full bg-note-label px-3.5 text-[13px] font-semibold text-note';
+
 function ToolButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className="flex size-10 items-center justify-center rounded-lg text-muted hover:bg-sidebar-hover hover:text-fg"
-    >
+    <button type="button" aria-label={label} title={label} onClick={onClick} className={iconButtonGhost}>
       {children}
     </button>
   );
@@ -259,28 +260,22 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const canSend = text.trim() !== '' || file !== null;
 
   return (
-    <div className="bg-sunken px-6 pt-2 pb-5">
+    <div className="bg-sunken px-4 pt-3 pb-4">
       <div
-        className={`rounded-2xl border p-2 shadow-sm ${isNote ? 'border-note-line bg-note text-note-fg' : 'border-border bg-surface'}`}
+        className={`rounded-[26px] p-1.5 shadow-float ${isNote ? 'bg-note text-note-fg' : 'bg-surface text-fg'}`}
         onDragOver={(e) => {
           if (!isNote) e.preventDefault(); // allows the drop
         }}
         onDrop={onDrop}
       >
-        <div className="mb-1 flex gap-1 text-xs font-semibold">
+        <div className="flex flex-wrap gap-1.5 px-1.5 pt-1.5 pb-1">
           {(['message', 'note'] as const).map((m) => (
             <button
               key={m}
               type="button"
               aria-pressed={mode === m}
               onClick={() => switchMode(m)}
-              className={`h-8 rounded-lg px-3 ${
-                mode === m
-                  ? m === 'note'
-                    ? 'bg-note-line/60 text-note-fg'
-                    : 'bg-primary-soft text-link'
-                  : 'text-muted hover:bg-sidebar-hover'
-              }`}
+              className={mode === m && m === 'note' ? noteTabOn : tab(mode === m)}
             >
               {m === 'message' ? 'Mensagem' : 'Nota interna'}
             </button>
@@ -288,44 +283,49 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
         </div>
 
         {replyTo && !isNote && (
-          <div className="mb-2 flex items-center gap-2 rounded-lg bg-primary-soft px-3 py-2 text-sm text-fg">
-            <ArrowBendUpLeft size={16} className="shrink-0 text-muted" />
+          <div className="mx-1.5 mt-1.5 flex items-center gap-2 rounded-block bg-primary-soft py-1 pr-1 pl-3 text-[13px] text-accent-ink">
+            <ArrowBendUpLeft size={16} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">Respondendo: {previewText(replyTo.body, replyTo.kind)}</span>
-            <button type="button" aria-label="Cancelar resposta" onClick={onClearReply} className="text-muted hover:text-fg">
+            <button
+              type="button"
+              aria-label="Cancelar resposta"
+              onClick={onClearReply}
+              className="grid size-8 shrink-0 place-items-center rounded-full transition-colors hover:bg-surface"
+            >
               <X size={16} />
             </button>
           </div>
         )}
 
         {file && (
-          <div className="mb-2 flex items-center gap-2 rounded-lg bg-panel px-3 py-2 text-sm text-fg">
-            <Paperclip size={16} className="shrink-0 text-muted" />
-            <span className="min-w-0 flex-1 truncate">{file.name}</span>
-            <button type="button" aria-label="Remover arquivo" onClick={() => setFile(null)} className="text-muted hover:text-fg">
+          <div className="mx-1.5 mt-1.5 flex items-center gap-2 rounded-block bg-panel py-1 pr-1 pl-3 text-[13px] text-fg">
+            <Paperclip size={16} className="shrink-0 text-fg-2" />
+            <span className="min-w-0 flex-1 truncate font-semibold">{file.name}</span>
+            <button
+              type="button"
+              aria-label="Remover arquivo"
+              onClick={() => setFile(null)}
+              className="grid size-8 shrink-0 place-items-center rounded-full text-fg-2 transition-colors hover:bg-border"
+            >
               <X size={16} />
             </button>
           </div>
         )}
 
         {error && (
-          <p role="alert" className="mb-1 text-sm text-danger">
+          <p role="alert" className="mx-3 mt-1.5 text-[13px] font-semibold text-danger">
             {error}
           </p>
         )}
 
         {recorder.recording ? (
-          <div className="flex items-center gap-3 py-2 text-fg">
-            <span className="size-2 animate-pulse rounded-full bg-danger" />
-            <span className="flex-1 text-sm tabular-nums">Gravando {duration(recorder.seconds)}</span>
+          <div className="flex items-center gap-2 pt-1 pl-3">
+            <span className="size-2.5 shrink-0 animate-pulse rounded-full bg-danger" />
+            <span className="flex-1 text-sm font-semibold tabular-nums">Gravando {duration(recorder.seconds)}</span>
             <ToolButton label="Descartar áudio" onClick={recorder.discard}>
               <Trash size={20} />
             </ToolButton>
-            <button
-              type="button"
-              disabled={sending}
-              onClick={() => void toggleRecording()}
-              className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
-            >
+            <button type="button" disabled={sending} onClick={() => void toggleRecording()} className={button('primary')}>
               Enviar áudio <PaperPlaneRight size={16} />
             </button>
           </div>
@@ -344,13 +344,13 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                     ? 'Digite sua nota interna, visível só para a equipe…'
                     : 'Digite sua mensagem ou arraste um arquivo… ("/" para respostas rápidas)'
                 }
-                className={`field-sizing-content block max-h-48 min-h-12 w-full resize-none bg-transparent px-2 py-2 text-sm outline-none ${
+                className={`field-sizing-content block max-h-48 min-h-12 w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none ${
                   isNote ? 'text-note-fg placeholder:text-note-fg/70' : 'text-fg placeholder:text-muted'
                 }`}
               />
             </div>
 
-            <div className="mt-1 flex items-center gap-1">
+            <div className="flex flex-wrap items-center gap-1.5">
               {!isNote && (
                 <>
                   <ToolButton label="Arquivo" onClick={() => fileInputRef.current?.click()}>
@@ -381,13 +381,13 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                   <Smiley size={20} />
                 </ToolButton>
                 {emojiOpen && (
-                  <div className="absolute bottom-full left-0 z-10 mb-1 grid w-72 grid-cols-8 gap-1 rounded-md border border-border bg-panel p-2 shadow-lg">
+                  <div className={`${menu} absolute bottom-full left-0 z-10 mb-2 grid w-72 grid-cols-8 gap-1`}>
                     {EMOJIS.map((emoji) => (
                       <button
                         key={emoji}
                         type="button"
                         aria-label={emoji}
-                        className="rounded text-lg hover:bg-surface"
+                        className="grid aspect-square place-items-center rounded-full text-lg transition-colors hover:bg-sidebar-hover"
                         onClick={() => {
                           insertAtCursor(emoji);
                           setEmojiOpen(false);
@@ -420,24 +420,36 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                 {botOpen && <BotPanel chatId={chatId} onClose={() => setBotOpen(false)} />}
               </div>
               {!isNote && (
-                <label className="ml-2 flex items-center gap-1.5 text-xs text-muted">
-                  <input type="checkbox" checked={signature} onChange={(e) => toggleSignature(e.target.checked)} />
+                <label className="ml-1 flex h-10 cursor-pointer items-center gap-2 rounded-full px-3 text-xs font-semibold text-fg-2 transition-colors hover:bg-panel">
+                  <input
+                    type="checkbox"
+                    checked={signature}
+                    onChange={(e) => toggleSignature(e.target.checked)}
+                    className={checkbox}
+                  />
                   Assinatura
                 </label>
               )}
               <div className="ml-auto">
                 {!isNote && !canSend ? (
-                  <ToolButton label="Gravar áudio" onClick={() => void toggleRecording()}>
+                  <button
+                    type="button"
+                    aria-label="Gravar áudio"
+                    title="Gravar áudio"
+                    onClick={() => void toggleRecording()}
+                    className={roundPrimary}
+                  >
                     <Microphone size={20} />
-                  </ToolButton>
+                  </button>
                 ) : (
+                  // keeps its visible text: "Salvar nota" tells the agent the note does not reach the contact
                   <button
                     type="button"
                     onClick={() => void send()}
                     disabled={sending || !canSend}
-                    className="flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50"
+                    className={button('primary')}
                   >
-                    {isNote ? 'Salvar nota' : 'Enviar'} <PaperPlaneRight size={16} />
+                    {isNote ? 'Salvar nota' : 'Enviar'} <PaperPlaneRight size={16} weight="fill" />
                   </button>
                 )}
               </div>

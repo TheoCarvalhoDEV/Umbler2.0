@@ -27,12 +27,8 @@ function NavItem({ to, label, icon: IconCmp }: { to: string; label: string; icon
         }`
       }
     >
-      {({ isActive }) => (
-        <>
-          <IconCmp size={20} weight={isActive ? 'fill' : 'regular'} aria-hidden />
-          {label}
-        </>
-      )}
+      <IconCmp size={20} aria-hidden />
+      {label}
     </NavLink>
   );
 }
@@ -47,7 +43,7 @@ function ThemePicker() {
   const [pref, setPref] = useState(readThemePref);
   return (
     <fieldset className="px-3 py-2">
-      <legend className="mb-1 text-xs text-muted">Tema</legend>
+      <legend className="mb-1.5 text-xs font-semibold text-muted">Tema</legend>
       <div className="flex gap-0.5 rounded-full bg-panel p-0.5">
         {THEMES.map(([value, label]) => (
           <button
@@ -86,7 +82,7 @@ function UserMenu() {
       <div
         id="user-menu"
         popover="auto"
-        className={`${menu} inset-auto bottom-3 left-[100px] m-0 w-64 p-2`}
+        className={`${menu} inset-auto bottom-3 left-[100px] m-0 w-64`}
       >
         <div className="px-3 py-2">
           <p className="truncate text-sm font-bold">{me.name}</p>
@@ -99,7 +95,7 @@ function UserMenu() {
           onClick={() => logout.mutate()}
           className={menuItem}
         >
-          <SignOutIcon size={18} /> Sair
+          <SignOutIcon size={18} aria-hidden /> Sair
         </button>
       </div>
     </>

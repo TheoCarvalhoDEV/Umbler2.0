@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { PaperclipIcon } from '@phosphor-icons/react';
+import { PaperclipIcon, PlusIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import type { QuickAnswerDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { QuickAnswerForm, type QuickAnswerInput } from '../../components/settings/QuickAnswerForm';
-import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
+import { badge, badgeTone } from '../../components/ui';
+import { ErrorText, Loading, Section, btnDanger, btnPrimary, btnSecondary, listRow, send, useSend } from '../../components/settings/common';
 import { confirmDialog } from '../../lib/confirm';
 
 export function QuickAnswersSettings() {
@@ -55,6 +56,7 @@ export function QuickAnswersSettings() {
       title="Respostas rápidas"
       action={
         <button type="button" onClick={() => open('new')} className={btnPrimary}>
+          <PlusIcon size={16} weight="bold" aria-hidden />
           Nova resposta rápida
         </button>
       }
@@ -73,28 +75,28 @@ export function QuickAnswersSettings() {
       )}
       {!target && <ErrorText error={save.error} />}
       {sorted.length === 0 && <p className="text-sm text-muted">Nenhuma resposta rápida.</p>}
-      <ul className="divide-y divide-border rounded border border-border">
+      <ul>
         {sorted.map((a) => (
-          <li key={a.id} className="flex items-start gap-2 px-3 py-2 text-sm">
-            <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-2 font-medium">
+          <li key={a.id} className={listRow}>
+            <div className="flex min-w-0 flex-[1_1_240px] flex-col gap-1">
+              <p className="flex flex-wrap items-center gap-2 font-bold">
                 /{a.name}
-                {a.hasAttachment && <PaperclipIcon size={14} aria-label="Com anexo" />}
-                <span className="rounded-full bg-surface px-2 py-0.5 text-xs font-normal text-muted">
+                {a.hasAttachment && <PaperclipIcon size={16} aria-label="Com anexo" className="text-fg-2" />}
+                <span className={`${badge} ${a.visibility === 'all' ? badgeTone.accent : badgeTone.neutral}`}>
                   {a.visibility === 'all' ? 'Para todos' : a.ownerId === me.id ? 'Apenas para mim' : 'Particular de outro atendente'}
                 </span>
               </p>
-              <p className="line-clamp-2 whitespace-pre-line text-muted">{a.body}</p>
+              <p className="line-clamp-2 text-[13px] leading-[18px] whitespace-pre-line text-muted">{a.body}</p>
             </div>
             {canEdit(a) && (
-              <>
-                <button type="button" onClick={() => open(a)} className={btn}>
+              <span className="flex items-center gap-2">
+                <button type="button" onClick={() => open(a)} className={btnSecondary}>
                   Editar
                 </button>
-                <button type="button" onClick={() => remove(a)} className={btn}>
+                <button type="button" onClick={() => remove(a)} className={btnDanger}>
                   Excluir
                 </button>
-              </>
+              </span>
             )}
           </li>
         ))}

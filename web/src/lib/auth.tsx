@@ -2,6 +2,7 @@ import { MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQuery
 import { useEffect, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { DEFAULT_PREFERENCES, type Me, type UserPreferences } from '@talk/shared';
+import { button, card } from '../components/ui';
 import { api, ApiError, qk } from './api';
 
 /** One QueryClient for the app: any 401 logs the user out locally; client errors are not retried. */
@@ -119,18 +120,16 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (me.data) return children;
   if (me.data === null) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   if (me.isPending) {
-    return <div className="flex h-dvh items-center justify-center text-muted">Carregando…</div>;
+    return <div className="flex h-dvh items-center justify-center bg-ground text-muted">Carregando…</div>;
   }
   return (
-    <div className="flex h-dvh flex-col items-center justify-center gap-3 text-muted">
-      <p>Não foi possível conectar ao servidor.</p>
-      <button
-        type="button"
-        onClick={() => void me.refetch()}
-        className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-      >
-        Tentar novamente
-      </button>
+    <div className="grid h-dvh place-items-center bg-ground p-3">
+      <div className={`${card} flex flex-col items-center gap-4 px-8 py-7 text-center`}>
+        <p className="text-muted">Não foi possível conectar ao servidor.</p>
+        <button type="button" onClick={() => void me.refetch()} className={button('primary')}>
+          Tentar novamente
+        </button>
+      </div>
     </div>
   );
 }

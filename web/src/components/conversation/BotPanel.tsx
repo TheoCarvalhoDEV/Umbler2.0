@@ -3,6 +3,7 @@ import { Robot } from '@phosphor-icons/react';
 import { api, qk } from '../../lib/api';
 import { useWsEvent } from '../../lib/ws';
 import { ErrorText, useSend } from '../settings/common';
+import { button, menu, menuItem } from '../ui';
 
 export interface BotPanelProps {
   chatId: string;
@@ -28,18 +29,18 @@ export function BotPanel({ chatId, onClose }: BotPanelProps) {
   const bots = manual.data ?? [];
 
   return (
-    <div className="absolute bottom-full left-0 z-10 mb-1 w-72 rounded-md border border-border bg-panel p-2 text-sm text-fg shadow-lg">
+    <div className={`${menu} absolute bottom-full left-0 z-10 mb-2 w-72 text-sm`}>
       {running.length > 0 && (
-        <ul aria-label="Chatbots em execução" className="mb-2 border-b border-border pb-2">
+        <ul aria-label="Chatbots em execução" className="mb-1.5 border-b border-border pb-1.5">
           {running.map((r) => (
-            <li key={r.id} className="flex items-center gap-2 px-1 py-1">
+            <li key={r.id} className="flex items-center gap-2.5 py-1 pr-1 pl-3">
               <Robot size={16} weight="fill" aria-hidden className="shrink-0 text-primary" />
               <span className="min-w-0 flex-1 truncate">{r.botName}</span>
               <button
                 type="button"
                 disabled={act.isPending}
                 onClick={() => act.mutate(() => api.botRuns.stop(r.id), { onSuccess: onClose })}
-                className="rounded px-2 py-1 text-xs font-medium text-danger hover:bg-surface disabled:opacity-50"
+                className={button('danger', 'sm')}
               >
                 Parar chatbot
               </button>
@@ -47,11 +48,11 @@ export function BotPanel({ chatId, onClose }: BotPanelProps) {
           ))}
         </ul>
       )}
-      <h4 className="px-1 pb-1 text-xs font-semibold text-muted uppercase">Executar chatbot</h4>
+      <h4 className="px-3 pt-1 pb-1.5 text-xs font-bold text-muted">Executar chatbot</h4>
       {manual.isPending ? (
-        <p className="px-1 py-1 text-muted">Carregando…</p>
+        <p className="px-3 py-2 text-muted">Carregando…</p>
       ) : bots.length === 0 ? (
-        <p className="px-1 py-1 text-muted">
+        <p className="px-3 py-2 text-[13px] leading-[18px] text-muted">
           Nenhum chatbot pode ser iniciado por aqui. No editor, use o bloco “Iniciar manualmente” e marque “Permitir que atendentes
           iniciem pela conversa”.
         </p>
@@ -66,16 +67,16 @@ export function BotPanel({ chatId, onClose }: BotPanelProps) {
                   disabled={act.isPending || alreadyRunning}
                   title={alreadyRunning ? 'Já em execução nesta conversa' : undefined}
                   onClick={() => act.mutate(() => api.botRuns.start(chatId, b.id), { onSuccess: onClose })}
-                  className="w-full truncate rounded px-2 py-1.5 text-left hover:bg-surface disabled:opacity-50"
+                  className={menuItem}
                 >
-                  {b.title}
+                  <span className="min-w-0 truncate">{b.title}</span>
                 </button>
               </li>
             );
           })}
         </ul>
       )}
-      <ErrorText error={act.error ?? manual.error ?? runs.error} />
+      <ErrorText error={act.error ?? manual.error ?? runs.error} className="px-3" />
     </div>
   );
 }

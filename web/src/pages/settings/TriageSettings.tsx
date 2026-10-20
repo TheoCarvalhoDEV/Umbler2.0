@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { SectorDto, SettingsDto, TriageMenuDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { TriageOptionsEditor } from '../../components/settings/TriageOptionsEditor';
-import { ErrorText, Loading, Section, btnPrimary, field, send, useSend } from '../../components/settings/common';
+import { checkbox, fieldArea, fieldLabel } from '../../components/ui';
+import { ErrorText, Loading, Section, block, btnPrimary, hint, okText, send, useSend } from '../../components/settings/common';
 
 export function TriageSettings() {
   const settings = useQuery({ queryKey: qk.settings, queryFn: api.settings.get });
@@ -39,36 +40,36 @@ function TriageForm({ settings, sectors }: { settings: SettingsDto; sectors: Sec
 
   return (
     <Section title="Triagem">
-      <form onSubmit={submit} className="space-y-4">
-        <label className="flex items-center gap-2 text-sm font-medium">
-          <input type="checkbox" checked={menu.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+      <form onSubmit={submit} className="space-y-5">
+        <label className="flex cursor-pointer items-center gap-3 text-sm font-bold">
+          <input type="checkbox" checked={menu.enabled} onChange={(e) => set({ enabled: e.target.checked })} className={checkbox} />
           Enviar menu de triagem quando um contato começa uma conversa
         </label>
-        <label className="block text-sm font-medium">
-          Mensagem de boas-vindas
-          <textarea rows={3} value={menu.welcomeText} onChange={(e) => set({ welcomeText: e.target.value })} className={field} />
+        <label className="block">
+          <span className={fieldLabel}>Mensagem de boas-vindas</span>
+          <textarea rows={3} value={menu.welcomeText} onChange={(e) => set({ welcomeText: e.target.value })} className={fieldArea} />
         </label>
         <div>
-          <span className="block text-sm font-medium">Opções</span>
-          <p className="mb-2 text-xs text-muted">O contato responde com o número ou com o nome do setor.</p>
+          <span className="block text-[13px] leading-[18px] font-semibold">Opções</span>
+          <p className="mb-2 text-[13px] leading-[18px] text-muted">O contato responde com o número ou com o nome do setor.</p>
           <TriageOptionsEditor options={menu.options} sectors={sectors} onChange={(options) => set({ options })} />
         </div>
-        <label className="block text-sm font-medium">
-          Mensagem para resposta inválida
-          <textarea rows={2} value={menu.invalidText} onChange={(e) => set({ invalidText: e.target.value })} className={field} />
-          <span className="mt-1 block text-xs font-normal text-muted">
+        <label className="block">
+          <span className={fieldLabel}>Mensagem para resposta inválida</span>
+          <textarea rows={2} value={menu.invalidText} onChange={(e) => set({ invalidText: e.target.value })} className={fieldArea} />
+          <span className={hint}>
             Enviada uma única vez. Depois disso, a conversa fica no setor padrão.
           </span>
         </label>
         {preview && (
           <div>
-            <span className="block text-sm font-medium">Como o contato recebe</span>
-            <pre className="mt-1 whitespace-pre-wrap rounded bg-surface p-3 font-sans text-sm">{preview}</pre>
+            <span className={fieldLabel}>Como o contato recebe</span>
+            <pre className={`${block} font-sans text-sm whitespace-pre-wrap`}>{preview}</pre>
           </div>
         )}
-        {issue && <p className="text-sm text-danger">{issue}</p>}
+        {issue && <p className="text-[13px] font-semibold text-danger">{issue}</p>}
         <ErrorText error={save.error} />
-        {save.isSuccess && <p className="text-sm text-success">Triagem salva.</p>}
+        {save.isSuccess && <p className={okText}>Triagem salva.</p>}
         <button type="submit" disabled={!!issue || save.isPending} className={btnPrimary}>
           Salvar
         </button>

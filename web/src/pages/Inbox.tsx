@@ -10,6 +10,7 @@ import { ChatListItem } from '../components/inbox/ChatListItem';
 import { FilterPanel } from '../components/inbox/FilterPanel';
 import { NewChatDialog } from '../components/inbox/NewChatDialog';
 import { buildChatQuery, EMPTY_FILTERS, type InboxFilters } from '../components/inbox/chat-query';
+import { card, iconButton, iconButtonOn, iconButtonPrimary, pageTitle, searchInput, searchPill, tab as tabClass, tabList } from '../components/ui';
 
 const TABS: Array<{ tab: ChatTab; label: string }> = [
   { tab: 'inbox', label: 'Entrada' },
@@ -133,105 +134,106 @@ export function Inbox() {
   const activeFilters = [filters.sectorId, filters.ownerId, filters.tagId].filter(Boolean).length + (filters.period === 'any' ? 0 : 1);
 
   return (
-    <div className="flex h-full min-h-0">
-      <aside className="flex w-[360px] shrink-0 flex-col border-r border-border bg-surface">
-        <div className="flex items-center gap-1 pt-4 pr-3 pl-5">
-          <h1 className="mr-auto text-xl font-semibold tracking-tight">Conversas</h1>
-          {me?.role === 'admin' && (
+    <div className="flex h-full min-h-0 gap-3">
+      <aside className={`${card} flex w-[352px] shrink-0 flex-col overflow-hidden`}>
+        <div className="flex min-h-0 flex-col gap-3.5 overflow-y-auto px-[18px] pt-5 pb-3">
+          <div className="flex items-center gap-2">
+            <h1 className={`${pageTitle} mr-auto`}>Conversas</h1>
+            {me?.role === 'admin' && (
+              <button
+                type="button"
+                aria-label="Ver todos os setores"
+                aria-pressed={me.seeAllSectors}
+                title={me.seeAllSectors ? 'Vendo todos os setores' : 'Vendo só os seus setores'}
+                disabled={view.isPending}
+                onClick={() => view.mutate(!me.seeAllSectors)}
+                className={me.seeAllSectors ? iconButtonOn : iconButton}
+              >
+                {me.seeAllSectors ? <Eye size={18} /> : <EyeSlash size={18} />}
+              </button>
+            )}
             <button
               type="button"
-              aria-label="Ver todos os setores"
-              aria-pressed={me.seeAllSectors}
-              title={me.seeAllSectors ? 'Vendo todos os setores' : 'Vendo só os seus setores'}
-              disabled={view.isPending}
-              onClick={() => view.mutate(!me.seeAllSectors)}
-              className={`flex size-10 items-center justify-center rounded-lg hover:bg-sidebar-hover ${me.seeAllSectors ? 'bg-primary-soft text-link' : 'text-muted'}`}
+              aria-label="Nova conversa"
+              title="Nova conversa"
+              onClick={() => setShowNew(true)}
+              className={iconButtonPrimary}
             >
-              {me.seeAllSectors ? <Eye size={20} /> : <EyeSlash size={20} />}
+              <Plus size={18} weight="bold" aria-hidden />
             </button>
-          )}
-          <button
-            type="button"
-            aria-label="Nova conversa"
-            title="Nova conversa"
-            onClick={() => setShowNew(true)}
-            className="flex h-9 items-center gap-1.5 rounded-lg bg-primary pr-3 pl-2.5 text-sm font-semibold text-white hover:bg-primary-hover"
-          >
-            <Plus size={16} weight="bold" aria-hidden /> Nova
-          </button>
-        </div>
+          </div>
 
-        <div role="tablist" className="mx-4 mt-3 flex gap-0.5 rounded-xl bg-panel p-[3px]">
-          {TABS.map(({ tab: t, label }) => (
+          <div className="flex items-center gap-2">
+            <label className={`${searchPill} flex-1`}>
+              <MagnifyingGlass size={16} aria-hidden="true" className="shrink-0" />
+              <input
+                type="search"
+                aria-label="Buscar conversas"
+                placeholder="Buscar por nome ou telefone"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className={searchInput}
+              />
+            </label>
             <button
-              key={t}
               type="button"
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-              className={`flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg text-sm ${
-                tab === t ? 'bg-surface font-semibold text-fg shadow-sm' : 'font-medium text-muted hover:text-fg'
-              }`}
+              aria-label="Filtrar conversas"
+              aria-expanded={showFilters}
+              onClick={() => setShowFilters((v) => !v)}
+              className={`${showFilters ? iconButtonOn : iconButton} relative`}
             >
-              {label}
-              {badges[t] > 0 && (
+              <Funnel size={18} weight={activeFilters ? 'fill' : 'regular'} />
+              {activeFilters > 0 && (
                 <span
-                  aria-label={`Conversas não lidas: ${badges[t]}`}
-                  className={`min-w-5 rounded-full px-1.5 text-[11px] font-bold ${t === 'waiting' ? 'bg-brass-soft text-brass' : 'bg-primary text-white'}`}
+                  aria-hidden
+                  className="absolute -top-1 -right-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1 text-[11px] font-bold text-on-primary tabular-nums ring-2 ring-surface"
                 >
-                  {badges[t]}
+                  {activeFilters}
                 </span>
               )}
             </button>
-          ))}
-        </div>
+          </div>
 
-        <div className="flex items-center gap-2 px-4 pt-3 pb-2">
-          <label className="flex h-10 flex-1 items-center gap-2 rounded-lg border border-border bg-surface px-3 focus-within:ring-2 focus-within:ring-primary">
-            <MagnifyingGlass aria-hidden="true" className="text-muted" />
-            <input
-              type="search"
-              aria-label="Buscar conversas"
-              placeholder="Buscar por nome ou telefone"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-transparent py-1.5 text-sm outline-none"
+          {showFilters && (
+            <FilterPanel
+              value={filters}
+              onChange={setFilters}
+              sectors={sectors.data ?? []}
+              users={users.data ?? []}
+              tags={tags.data ?? []}
             />
-          </label>
-          <button
-            type="button"
-            aria-label="Filtrar conversas"
-            aria-expanded={showFilters}
-            onClick={() => setShowFilters((v) => !v)}
-            className={`relative flex size-10 items-center justify-center rounded-lg border border-border hover:bg-sidebar-hover ${activeFilters ? 'text-link' : 'text-muted'}`}
-          >
-            <Funnel size={18} weight={activeFilters ? 'fill' : 'regular'} />
-            {activeFilters > 0 && (
-              <span aria-hidden className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
-                {activeFilters}
-              </span>
-            )}
-          </button>
+          )}
+
+          <div role="tablist" className={tabList}>
+            {TABS.map(({ tab: t, label }) => (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={tab === t}
+                onClick={() => setTab(t)}
+                className={tabClass(tab === t)}
+              >
+                {label}
+                {badges[t] > 0 && (
+                  <span aria-label={`Conversas não lidas: ${badges[t]}`} className="tabular-nums">
+                    {badges[t]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {showFilters && (
-          <FilterPanel
-            value={filters}
-            onChange={setFilters}
-            sectors={sectors.data ?? []}
-            users={users.data ?? []}
-            tags={tags.data ?? []}
-          />
-        )}
         {actionError && (
-          <p role="alert" className="mx-3 mb-2 rounded bg-danger/15 px-3 py-2 text-sm text-danger">
+          <p role="alert" className="mx-[18px] mb-2 rounded-block bg-danger-soft px-3.5 py-2.5 text-[13px] font-semibold text-danger">
             {actionError}
           </p>
         )}
 
-        <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2" onScroll={onScroll}>
+        <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pt-1 pb-2.5" onScroll={onScroll}>
           {me?.role === 'admin' && !me.seeAllSectors && me.sectorIds.length === 0 && (
-            <li className="px-4 pb-4 text-sm text-muted">
+            <li className="mx-1 mb-2 rounded-block bg-sunken px-3.5 py-3 text-[13px] text-muted">
               Você não está em nenhum setor. Ative “Ver todos os setores” para ver as conversas do escritório.
             </li>
           )}
@@ -254,10 +256,12 @@ export function Inbox() {
               onDelete={me?.role === 'admin' ? () => void confirmRemove(c.id) : undefined}
             />
           ))}
-          {list.isPending && <li className="p-4 text-sm text-muted">Carregando…</li>}
-          {list.isError && <li className="p-4 text-sm text-danger">Não foi possível carregar as conversas.</li>}
-          {list.isSuccess && chats.length === 0 && <li className="p-4 text-sm text-muted">Nenhuma conversa</li>}
-          {list.isFetchingNextPage && <li className="p-4 text-sm text-muted">Carregando…</li>}
+          {list.isPending && <li className="px-3 py-10 text-center text-[13px] text-muted">Carregando…</li>}
+          {list.isError && (
+            <li className="mx-1 rounded-block bg-danger-soft px-3.5 py-2.5 text-[13px] font-semibold text-danger">Não foi possível carregar as conversas.</li>
+          )}
+          {list.isSuccess && chats.length === 0 && <li className="px-3 py-10 text-center text-[13px] text-muted">Nenhuma conversa</li>}
+          {list.isFetchingNextPage && <li className="px-3 py-3 text-center text-[13px] text-muted">Carregando…</li>}
         </ul>
       </aside>
 
