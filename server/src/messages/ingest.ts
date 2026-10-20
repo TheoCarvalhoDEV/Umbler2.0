@@ -14,6 +14,7 @@ import { normalizePhoneBR } from '../whatsapp/phone.js';
 import type { InboundEvent } from '../whatsapp/types.js';
 import { messagePreview } from './dto.js';
 import { saveMedia } from './media.js';
+import { stripSignature } from './signature.js';
 
 export type MessageEvent = Extract<InboundEvent, { type: 'message' }>;
 type StatusEvent = Extract<InboundEvent, { type: 'status' }>;
@@ -239,11 +240,13 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
       // Spec §5.1: a channel bot has priority; the triage runs only when no bot took the new chat.
       if (!(await hooks.startChannelBot(ctx, stored.chat))) await hooks.startTriage(ctx, stored.chat);
     } else {
-      if (stored.chat.triagePending) await hooks.handleTriageReply(ctx, stored.chat, ev.body);
+      // What the contact typed: an agent signature in front (a reply sent from another installation of this system) is not part of the answer.
+      const answer = ev.body === null ? null : stripSignature(ev.body);
+      if (stored.chat.triagePending) await hooks.handleTriageReply(ctx, stored.chat, answer);
       const reply: InboundReply = {
         messageId: stored.messageId,
         kind: ev.kind,
-        body: ev.body,
+        body: answer,
         mediaMime: ev.mediaMime,
         mediaName: ev.mediaName,
         createdAt: stored.createdAt, // compared with bot_runs.waiting_since by resumeOnReply (Review Focus 1)

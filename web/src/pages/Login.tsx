@@ -25,7 +25,7 @@ export default function Login() {
     <main className="flex min-h-dvh flex-col bg-ground md:flex-row">
       {/* The rail colour in both themes: the gold logo is drawn for a dark background. */}
       <section className="flex flex-col justify-between gap-10 bg-rail p-8 text-nav-on md:w-[46%] md:p-14">
-        <img src="/logo-mark.png" alt="" className="size-16" />
+        <img src="/logo-mark.svg" alt="" className="size-16" />
         <div className="max-w-md">
           <p className="mb-3 text-xs font-semibold tracking-widest text-[#d9ae5a] uppercase">Atendimento</p>
           <p className="text-3xl leading-tight font-semibold tracking-tight">Todas as conversas do escritório em um só lugar.</p>

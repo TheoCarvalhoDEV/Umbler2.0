@@ -33,6 +33,7 @@ import {
   type GraphProblem,
 } from '@talk/shared';
 import { api, graphProblems, qk } from '../../lib/api';
+import { confirmDialog } from '../../lib/confirm';
 import { btn } from '../settings/common';
 import { errorMessage } from '../conversation/model';
 import { BlockNode, NodeActionsContext, type NodeActions } from './BlockNode';
@@ -161,8 +162,9 @@ function EditorCanvas({ bot, initial }: BotEditorProps) {
   const blocker = useBlocker(dirty);
   useEffect(() => {
     if (blocker.state !== 'blocked') return;
-    if (window.confirm(LEAVE_PROMPT)) blocker.proceed();
-    else blocker.reset();
+    void confirmDialog({ title: LEAVE_PROMPT, confirmLabel: 'Sair sem salvar', cancelLabel: 'Continuar editando' }).then((ok) =>
+      ok ? blocker.proceed() : blocker.reset(),
+    );
   }, [blocker]);
   useEffect(() => {
     if (!dirty) return;
