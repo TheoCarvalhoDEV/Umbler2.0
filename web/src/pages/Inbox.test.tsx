@@ -48,17 +48,27 @@ function json(data: unknown, status = 200): Response {
 
 let channelsReply: ChannelDto[] = [];
 let bulkReply: BulkResultDto = { done: [], failed: [] };
+let bulkGate: Promise<void> | null = null;
+let chatBSector = 's1';
+let withDefaultSector = false;
 
 beforeEach(() => {
   channelsReply = [];
   bulkReply = { done: ['a', 'b'], failed: [] };
+  bulkGate = null;
+  chatBSector = 's1';
+  withDefaultSector = false;
   localStorage.clear();
   calls.length = 0;
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost');
     const method = init?.method ?? 'GET';
     calls.push({ method, url, body: typeof init?.body === 'string' ? init.body : undefined });
-    if (url.pathname === '/api/sectors') return json([{ id: 's1', name: 'Financeiro', position: 1, isDefault: false }]);
+    if (url.pathname === '/api/sectors') {
+      const s1 = { id: 's1', name: 'Financeiro', position: 1, isDefault: false };
+      const others = [{ id: 's0', name: 'Geral', position: 0, isDefault: true }, { id: 's2', name: 'Suporte', position: 2, isDefault: false }];
+      return json(withDefaultSector ? [...others, s1] : [s1]);
+    }
     if (url.pathname === '/api/users') {
       return json([{ id: 'u1', name: 'Maria Lima', email: 'maria@exemplo.com.br', role: 'agent', signature: null, active: true, sectorIds: ['s1'], avatarUrl: '/api/users/u1/avatar?v=abc' }]);
     }
@@ -70,9 +80,12 @@ beforeEach(() => {
       return json({ ...adminMe, seeAllSectors: JSON.parse(String(init?.body)).seeAllSectors });
     }
     if (url.pathname === '/api/channels') return json(channelsReply);
-    if (url.pathname.startsWith('/api/chats/bulk/') && method === 'POST') return json(bulkReply);
+    if (url.pathname.startsWith('/api/chats/bulk/') && method === 'POST') {
+      await bulkGate;
+      return json(bulkReply);
+    }
     if (url.pathname === '/api/chats') {
-      return json({ items: url.searchParams.get('tab') === 'inbox' ? [chatA, chatB] : [], nextCursor: null });
+      return json({ items: url.searchParams.get('tab') === 'inbox' ? [chatA, { ...chatB, sectorId: chatBSector }] : [], nextCursor: null });
     }
     return json({ error: 'inesperado' }, 500);
   }));
@@ -357,4 +370,46 @@ it('transfers the selection in one request to the chosen sector (spec §4)', asy
   expect((await screen.findByRole('status')).textContent).toBe('2 de 2 concluídas.');
   const post = calls.find((c) => c.url.pathname === '/api/chats/bulk/transfer');
   expect(JSON.parse(post!.body!)).toEqual({ chatIds: ['a', 'b'], sectorId: 's1', ownerId: null });
+});
+
+it('Cancelar is disabled while a bulk request runs, and a late result never pre-ticks the next selection', async () => {
+  let release!: () => void;
+  bulkGate = new Promise((r) => (release = r));
+  bulkReply = { done: ['b'], failed: [{ chatId: 'a', error: 'Conversa finalizada' }] };
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' }));
+  fireEvent.click(screen.getByLabelText('Selecionar Ana Souza'));
+  fireEvent.click(screen.getByRole('button', { name: 'Marcar como lida' }));
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Cancelar' }) as HTMLButtonElement).disabled).toBe(true));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' })); // header exit mid-run
+  release();
+  await screen.findByRole('status');
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' }));
+  expect(screen.getByText('0 selecionadas')).toBeTruthy();
+  expect((screen.getByLabelText('Selecionar Ana Souza') as HTMLInputElement).checked).toBe(false);
+});
+
+it("bulk transfer starts on the chats' common sector, else on the default sector", async () => {
+  withDefaultSector = true;
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' }));
+  fireEvent.click(screen.getByLabelText('Selecionar Ana Souza'));
+  fireEvent.click(screen.getByLabelText('Selecionar +55 65 99999-0000'));
+  fireEvent.click(screen.getByRole('button', { name: 'Transferir' }));
+  const dialog = await screen.findByLabelText('Transferir 2 conversas');
+  expect((within(dialog).getByLabelText('Setor') as HTMLSelectElement).value).toBe('s1');
+  cleanup();
+
+  chatBSector = 's2'; // mixed sectors: fall back to the default one
+  renderInbox(adminMe);
+  await screen.findByText('Ana Souza');
+  fireEvent.click(screen.getByRole('button', { name: 'Selecionar' }));
+  fireEvent.click(screen.getByLabelText('Selecionar Ana Souza'));
+  fireEvent.click(screen.getByLabelText('Selecionar +55 65 99999-0000'));
+  fireEvent.click(screen.getByRole('button', { name: 'Transferir' }));
+  const mixed = await screen.findByLabelText('Transferir 2 conversas');
+  expect((within(mixed).getByLabelText('Setor') as HTMLSelectElement).value).toBe('s0');
 });

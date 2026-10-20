@@ -86,6 +86,8 @@ export function Inbox() {
   useEffect(() => setSelected(new Set()), [tab, q, filters, sort]);
   // Review Focus 7: a chat that left the list (WS, someone else's transfer) drops out of the count and of the request
   const selectedIds = chats.filter((c) => selected.has(c.id)).map((c) => c.id);
+  const sectorsOfSelected = new Set(chats.filter((c) => selected.has(c.id)).map((c) => c.sectorId));
+  const selectedSector = sectorsOfSelected.size === 1 ? [...sectorsOfSelected][0] : undefined;
   const toggleSelected = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -187,7 +189,10 @@ export function Inbox() {
             onClick={() => {
               setNotice(null);
               if (selecting) stopSelecting();
-              else setSelecting(true);
+              else {
+                setSelected(new Set()); // a late result of a cancelled run must not pre-tick chats
+                setSelecting(true);
+              }
             }}
             className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium hover:bg-sidebar-hover ${selecting ? 'bg-primary-soft text-link' : 'text-muted'}`}
           >
@@ -341,6 +346,7 @@ export function Inbox() {
           <BulkBar
             chatIds={selectedIds}
             tab={tab}
+            commonSectorId={selectedSector}
             onCancel={stopSelecting}
             onResult={(summary, failedIds) => {
               setNotice(summary);
