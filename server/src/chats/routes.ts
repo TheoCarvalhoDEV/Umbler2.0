@@ -1,6 +1,7 @@
 import multipart from '@fastify/multipart';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
 import { stopRunsForChat } from '../bots/engine.js';
 import { applyBotRunningBehavior } from '../bots/hooks.js';
 import type { AppCtx } from '../ctx.js';
@@ -9,7 +10,7 @@ import {
   assumeChat, closeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
   startChat, transferChat, type ChatRow,
 } from '../inbox/chats.js';
-import { getChatDetail, getTimeline, listChats, toChatDetail } from '../inbox/queries.js';
+import { getChatDetail, getTimeline, listChats, searchChat, toChatDetail } from '../inbox/queries.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest } from '../lib/http-error.js';
 import {
@@ -32,10 +33,16 @@ const listQuery = z.object({
   cursor: z.string().max(500).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
-const timelineQuery = z.object({
-  before: z.uuid().optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
-});
+/** before = older than, after = newer than, around = centered on a message (spec 2026-10-19 §4); one at a time. */
+const timelineQuery = z
+  .object({
+    before: z.uuid().optional(),
+    after: z.uuid().optional(),
+    around: z.uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+  })
+  .refine((q) => [q.before, q.after, q.around].filter(Boolean).length <= 1, 'Use um cursor só');
+const searchQuery = z.object({ q: z.string().trim().min(SEARCH_MIN_CHARS).max(SEARCH_MAX_CHARS) });
 const startBody = z
   .object({
     contactId: z.uuid().optional(),
@@ -128,6 +135,10 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
       const { id } = idParams.parse(req.params);
       return getTimeline(ctx, req.user, id, timelineQuery.parse(req.query));
     });
+
+    r.get('/api/chats/:id/search', async (req) =>
+      searchChat(ctx, req.user, idParams.parse(req.params).id, searchQuery.parse(req.query).q),
+    );
 
     // The detail is built from the row the service returned, without a second visibility check:
     // after a transfer the caller may no longer see the chat but still gets its new state.

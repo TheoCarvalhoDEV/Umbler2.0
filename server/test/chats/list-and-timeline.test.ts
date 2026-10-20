@@ -251,3 +251,43 @@ describe('GET /api/chats/:id/timeline', () => {
     expect(await get(`?before=${first}`)).toEqual([]);
   });
 });
+
+describe('GET /api/chats/:id/timeline around and after (spec 2026-10-19 §4)', () => {
+  it('loads the page around a message and pages newer with after=<newest id> (Review Focus 1)', async () => {
+    const chat = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    const m: string[] = [];
+    for (let i = 0; i < 7; i++) m.push(await seedMessage(ctx, chat.chatId, s.channelId, t(i)));
+    const ev = await seedEvent(ctx, chat.chatId, 'assigned', new Date(t(3).getTime() + 30_000));
+    const { headers } = await loginAs(app, s.agentA.email);
+    const get = async (q: string) => {
+      const res = await app.inject({ method: 'GET', url: `/api/chats/${chat.chatId}/timeline${q}`, headers });
+      expect(res.statusCode).toBe(200);
+      return (res.json() as TimelineItem[]).map((i) => i.id);
+    };
+
+    expect(await get(`?around=${m[3]}&limit=4`)).toEqual([m[1], m[2], m[3], ev, m[4]]);
+    expect(await get(`?around=${m[0]}&limit=4`)).toEqual([m[0], m[1], m[2]]);
+    expect(await get(`?after=${m[4]}&limit=2`)).toEqual([m[5], m[6]]);
+    expect(await get(`?after=${ev}&limit=10`)).toEqual([m[4], m[5], m[6]]);
+    expect(await get(`?after=${m[6]}`)).toEqual([]);
+    expect(await get('?limit=3')).toEqual([m[4], m[5], m[6]]); // no cursor: the newest, as before
+  });
+
+  it('refuses an around that is an event or another chat message, and two cursors at once', async () => {
+    const chat = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    const mine = await seedMessage(ctx, chat.chatId, s.channelId, t(1));
+    const ev = await seedEvent(ctx, chat.chatId, 'created', t(0));
+    const other = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    const theirs = await seedMessage(ctx, other.chatId, s.channelId, t(2));
+    const { headers } = await loginAs(app, s.agentA.email);
+    const status = async (q: string, h = headers) =>
+      (await app.inject({ method: 'GET', url: `/api/chats/${chat.chatId}/timeline${q}`, headers: h })).statusCode;
+
+    expect(await status(`?around=${ev}`)).toBe(400);
+    expect(await status(`?around=${theirs}`)).toBe(400);
+    expect(await status(`?before=${mine}&after=${mine}`)).toBe(400);
+    expect(await status(`?around=${mine}&before=${mine}`)).toBe(400);
+    const bruno = await loginAs(app, s.agentB.email);
+    expect(await status(`?around=${mine}`, bruno.headers)).toBe(404);
+  });
+});
