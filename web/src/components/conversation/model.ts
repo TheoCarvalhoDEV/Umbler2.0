@@ -1,4 +1,4 @@
-import { SEARCH_LIMIT, type ChatEventDto, type MessageDto, type TimelineItem } from '@talk/shared';
+import { SEARCH_LIMIT, formatOfficeDateTime, type ChatEventDto, type MessageDto, type TimelineItem } from '@talk/shared';
 import { ApiError, type TimelineCursor } from '../../lib/api';
 
 export const TIMELINE_PAGE_SIZE = 50;
@@ -126,7 +126,7 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
     case 'privacy_changed':
       return `Conversa tornada ${e.data.private === true ? 'privada' : 'pública'}${by}${viaBot}`;
     case 'closed':
-      return `Conversa finalizada${by}${viaBot}`;
+      return e.data.reason === 'inactivity' ? 'Finalizada por inatividade' : `Conversa finalizada${by}${viaBot}`;
     case 'reopened':
       return `Conversa reaberta${by}`;
     case 'triage_routed':
@@ -155,6 +155,14 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
       return 'Contato sem número juntado a este contato';
     case 'note_deleted':
       return `Nota apagada${by}`;
+    case 'message_scheduled': {
+      const when = typeof e.data.sendAt === 'string' ? ` para ${formatOfficeDateTime(e.data.sendAt)}` : '';
+      return `Mensagem agendada${e.data.edited === true ? ' alterada' : ''}${by}${when}`;
+    }
+    case 'scheduled_canceled':
+      return `Mensagem agendada cancelada${by}`;
+    case 'returned_to_queue':
+      return `Devolvida à fila: sem resposta há ${Number(e.data.minutes ?? 0)} min`;
   }
 }
 

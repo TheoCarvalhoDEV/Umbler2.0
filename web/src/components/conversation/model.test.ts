@@ -108,6 +108,28 @@ describe('eventText', () => {
   });
 });
 
+describe('eventText for scheduled messages and automatic rules (spec 2026-10-20 agendamentos)', () => {
+  it('describes each new kind in Portuguese, dates in Cuiabá time', () => {
+    const sendAt = '2026-10-21T12:00:00.000Z'; // 08:00 in Cuiabá
+    expect(eventText(event({ kind: 'message_scheduled', authorName: 'Bia', data: { scheduledId: 's1', sendAt } }), new Map())).toBe(
+      'Mensagem agendada por Bia para 21/10/2026 08:00',
+    );
+    expect(
+      eventText(event({ kind: 'message_scheduled', authorName: 'Bia', data: { scheduledId: 's1', sendAt, edited: true } }), new Map()),
+    ).toBe('Mensagem agendada alterada por Bia para 21/10/2026 08:00');
+    expect(eventText(event({ kind: 'scheduled_canceled', authorName: 'Bia', data: { scheduledId: 's1' } }), new Map())).toBe(
+      'Mensagem agendada cancelada por Bia',
+    );
+    expect(eventText(event({ kind: 'returned_to_queue', data: { minutes: 30, previousOwnerId: 'u-ana' } }), new Map())).toBe(
+      'Devolvida à fila: sem resposta há 30 min',
+    );
+    expect(eventText(event({ kind: 'closed', data: { closingMessageSent: true, reason: 'inactivity', hours: 24 } }), new Map())).toBe(
+      'Finalizada por inatividade',
+    );
+    expect(eventText(event({ kind: 'closed', authorName: 'Bia' }), new Map())).toBe('Conversa finalizada por Bia');
+  });
+});
+
 describe('eventText for history events', () => {
   it('describes an import into a history chat and a contact merge', () => {
     expect(eventText(event({ kind: 'history_imported', data: { count: 1234 } }), new Map())).toBe(
