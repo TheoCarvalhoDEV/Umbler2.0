@@ -224,7 +224,7 @@ export async function closeChat(
     ctx,
     chatId,
     eq(chats.state, 'open'),
-    { state: 'closed', closedAt: new Date(), waiting: false, triagePending: false },
+    { state: 'closed', closedAt: new Date(), waiting: false, waitingSince: null, triagePending: false },
     { kind: 'closed', data: { closingMessageSent }, authorId: user.id },
   );
 }
@@ -475,7 +475,7 @@ export async function closeChatAsBot(
     ctx,
     chatId,
     eq(chats.state, 'open'),
-    { state: 'closed', closedAt: new Date(), waiting: false, triagePending: false },
+    { state: 'closed', closedAt: new Date(), waiting: false, waitingSince: null, triagePending: false },
     { kind: 'closed', data: { closingMessageSent, ...actorData(actor) } },
   );
 }

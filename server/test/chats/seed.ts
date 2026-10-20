@@ -15,6 +15,9 @@ export interface SeedChatOpts {
   private?: boolean;
   unread?: number;
   at?: Date;
+  /** Defaults to `at`. */
+  createdAt?: Date;
+  waitingSince?: Date | null;
 }
 
 export async function seedChat(ctx: AppCtx, o: SeedChatOpts): Promise<{ chatId: string; contactId: string }> {
@@ -31,7 +34,8 @@ export async function seedChat(ctx: AppCtx, o: SeedChatOpts): Promise<{ chatId: 
   await ctx.db.insert(chats).values({
     id: chatId, contactId, channelId: o.channelId, sectorId: o.sectorId, ownerId: o.ownerId ?? null,
     state, waiting: o.waiting ?? false, private: o.private ?? false, triagePending: false,
-    unread: o.unread ?? 0, lastMessageAt: at, lastMessagePreview: 'oi', createdAt: at,
+    unread: o.unread ?? 0, lastMessageAt: at, lastMessagePreview: 'oi', createdAt: o.createdAt ?? at,
+    waitingSince: o.waitingSince ?? null,
     closedAt: state === 'closed' ? at : null,
   });
   return { chatId, contactId };
