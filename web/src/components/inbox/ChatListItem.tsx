@@ -57,7 +57,7 @@ export function ChatListItem({
         aria-current={active ? 'true' : undefined}
         className="flex min-w-0 flex-1 gap-3 rounded-xl py-3 pl-3 text-left"
       >
-        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 shrink-0 text-sm bg-panel" />
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 shrink-0 text-sm" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1">
             <span className={`truncate ${unread || active ? 'font-semibold' : 'font-medium'}`}>{title}</span>
@@ -92,7 +92,7 @@ export function ChatListItem({
                 aria-label={`Responsável: ${owner.name}`}
                 className="flex min-w-0 items-center gap-1 rounded-full border border-border py-px pr-2 pl-px text-muted"
               >
-                <Avatar name={owner.name} src={owner.avatarUrl} className="size-4 shrink-0 text-[8px] bg-primary text-white" />
+                <Avatar name={owner.name} src={owner.avatarUrl} className="size-4 shrink-0 text-[8px]" />
                 <span aria-hidden className="truncate">{owner.name.split(' ')[0]}</span>
               </span>
             ) : (

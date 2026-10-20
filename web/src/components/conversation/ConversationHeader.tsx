@@ -139,7 +139,7 @@ export function ConversationHeader({
   return (
     <>
       <header className="flex items-center gap-1 border-b border-border bg-surface py-3 pr-4 pl-6">
-        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="mr-2 size-11 shrink-0 text-sm bg-panel" />
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="mr-2 size-11 shrink-0 text-sm" />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-base font-semibold text-fg">{contactLabel(chat.contact)}</h2>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted">

@@ -92,7 +92,7 @@ export function UsersSettings() {
             <tr key={u.id} className={`border-b border-border ${u.active ? '' : 'text-muted'}`}>
               <td className="py-2">
                 <span className="flex items-center gap-2">
-                  <Avatar name={u.name} src={u.avatarUrl} className="size-7 text-xs bg-primary text-white" />
+                  <Avatar name={u.name} src={u.avatarUrl} className="size-7 text-xs" />
                   {u.name}
                 </span>
               </td>

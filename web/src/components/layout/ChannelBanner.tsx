@@ -27,7 +27,7 @@ export function ChannelBanner() {
   const down = isAdmin ? downChannels(data ?? [], now) : [];
   if (down.length === 0) return null;
   return (
-    <div role="alert" className="flex flex-col gap-0.5 bg-danger-strong px-4 py-2 text-sm font-medium text-white">
+    <div role="alert" className="flex flex-col gap-0.5 rounded-card bg-danger-strong px-4 py-2.5 text-sm font-semibold text-white">
       {down.map((c) => (
         <p key={c.id} className="flex items-center gap-2">
           <WarningCircleIcon size={18} weight="fill" aria-hidden />

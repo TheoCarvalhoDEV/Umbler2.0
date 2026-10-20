@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { request } from '../../lib/api';
+import { button, field as fieldBox, pageTitle } from '../ui';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; // GET: the Canais page polls the channel QR
 
@@ -18,15 +19,15 @@ export function useSend(...refresh: QueryKey[]) {
   });
 }
 
-export const btn = 'rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-sidebar-hover disabled:opacity-50';
-export const btnPrimary = 'rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50';
-export const field = 'mt-1 w-full rounded-lg border border-field bg-surface px-3 py-2 text-sm';
+export const btn = button('secondary', 'sm');
+export const btnPrimary = button('primary');
+export const field = `mt-1.5 ${fieldBox}`;
 
 export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="max-w-3xl">
       <header className="mb-6 flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1 className={pageTitle}>{title}</h1>
         {action}
       </header>
       {children}

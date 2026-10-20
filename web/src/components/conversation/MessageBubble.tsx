@@ -409,7 +409,7 @@ export function MessageBubble({ m, onReply, chatOpen = false, highlighted = fals
       {m.authorId && (
         // sent by an agent (notes included); phone/triage sends have no author
         <span data-author-avatar className="ml-2 self-end">
-          <Avatar name={m.authorName} src={m.authorAvatarUrl} className="size-7 text-xs bg-primary text-white" />
+          <Avatar name={m.authorName} src={m.authorAvatarUrl} className="size-7 text-xs" />
         </span>
       )}
       {!right && menu}

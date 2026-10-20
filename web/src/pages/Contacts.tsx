@@ -107,7 +107,7 @@ export function ContactsPage() {
                 <tr key={c.id} onClick={() => setOpenId(c.id)} className="cursor-pointer hover:bg-sidebar-hover">
                   <td className="px-5 py-2.5">
                     <button type="button" className="flex items-center gap-3 text-left" onClick={() => setOpenId(c.id)}>
-                      <Avatar name={c.name} src={c.avatarUrl} className="size-9 shrink-0 text-xs bg-panel ring-1 ring-field/50 ring-inset" />
+                      <Avatar name={c.name} src={c.avatarUrl} className="size-9 shrink-0 text-xs" />
                       <span>
                         <span className="block font-semibold">{c.name || 'Sem nome'}</span>
                         {c.blocked && (

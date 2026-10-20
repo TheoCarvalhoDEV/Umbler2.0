@@ -37,9 +37,9 @@ export function NotificationToasts() {
           key={n.id}
           to={`/chats/${n.chatId}`}
           onClick={() => dismiss(n.id)}
-          className="block rounded-lg border border-border bg-panel p-3 text-fg shadow-xl hover:bg-sidebar-hover"
+          className="block rounded-block bg-surface p-3.5 text-fg shadow-pop hover:bg-sidebar-hover"
         >
-          <p className="flex items-center gap-1.5 text-sm font-semibold">
+          <p className="flex items-center gap-1.5 text-sm font-bold">
             <BellRingingIcon size={16} weight="fill" aria-hidden className="shrink-0 text-primary" />
             {titleOf(n)}
           </p>

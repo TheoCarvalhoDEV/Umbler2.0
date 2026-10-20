@@ -59,7 +59,7 @@ function PhotoEditor({ me }: { me: Me }) {
 
   return (
     <div className="mb-6 flex items-center gap-4">
-      <Avatar name={me.name} src={me.avatarUrl} className="size-16 text-xl bg-primary text-white" />
+      <Avatar name={me.name} src={me.avatarUrl} className="size-16 text-xl" />
       <label className={`${btn} cursor-pointer has-[:disabled]:opacity-50`}>
         Trocar foto
         <input

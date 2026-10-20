@@ -175,7 +175,7 @@ function ContactTab({ contact, onClose, besideChat }: { contact: ContactDto; onC
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Avatar name={contact.name} src={contact.avatarUrl} className="size-12 text-base bg-primary text-white" />
+        <Avatar name={contact.name} src={contact.avatarUrl} className="size-12 text-base" />
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold">{contactLabel(contact)}</p>
           <p className="text-sm text-muted">{formatPhone(contact.phone)}</p>
