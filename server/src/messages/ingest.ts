@@ -81,7 +81,9 @@ async function applyStatus(ctx: AppCtx, channelId: string, ev: StatusEvent): Pro
       ),
     )
     .returning({ id: messages.id, chatId: messages.chatId });
-  if (row) await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
+  if (!row) return;
+  await ctx.hub.publishMessage(row.chatId, 'message.updated', row.id);
+  await ctx.hub.publishChat(row.chatId); // the list shows the last message's ticks
 }
 
 /**
@@ -216,7 +218,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
           lastMessagePreview: sql`case when ${isNewest} then ${preview} else ${chats.lastMessagePreview} end`,
           ...(inbound
             ? { unread: sql`${chats.unread} + 1`, waiting: true }
-            : { waiting: false, triagePending: false }),
+            : { waiting: false, triagePending: false, unread: 0 }), // answering from the phone means it was read
         })
         .where(eq(chats.id, chat.id))
         .returning();

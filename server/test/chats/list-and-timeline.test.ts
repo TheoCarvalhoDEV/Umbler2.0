@@ -48,6 +48,24 @@ describe('GET /api/chats', () => {
     expect(ids(await list(headers, '?tab=closed'))).toEqual([c.chatId]);
   });
 
+  it('lastOutStatus: the ticks of the last message when the office sent it, null when the contact did (notes ignored)', async () => {
+    const mine = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    await seedMessage(ctx, mine.chatId, s.channelId, t(1));
+    await seedMessage(ctx, mine.chatId, s.channelId, t(2), { direction: 'out', status: 'read' });
+    await seedMessage(ctx, mine.chatId, s.channelId, t(3), { direction: 'out', kind: 'note', status: 'sent' });
+    const theirs = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    await seedMessage(ctx, theirs.chatId, s.channelId, t(1), { direction: 'out', status: 'delivered' });
+    await seedMessage(ctx, theirs.chatId, s.channelId, t(2));
+    const empty = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
+    await enableSeeAll(ctx, s.admin);
+    const { headers } = await loginAs(app, s.admin.email);
+
+    const byId = new Map((await list(headers)).items.map((i) => [i.id, i.lastOutStatus]));
+    expect(byId.get(mine.chatId)).toBe('read');
+    expect(byId.get(theirs.chatId)).toBeNull();
+    expect(byId.get(empty.chatId)).toBeNull();
+  });
+
   it('filters by sector, owner, unassigned, contact tag, period, name and phone', async () => {
     const c1 = await seedChat(ctx, {
       channelId: s.channelId, sectorId: s.sectorA, ownerId: s.agentA.id,

@@ -1,5 +1,5 @@
 import {
-  and, asc, desc, eq, gte, ilike, inArray, isNull, like, lte, notInArray, or, sql, type AnyColumn, type SQL,
+  and, asc, desc, eq, gte, ilike, inArray, isNull, like, lte, ne, notInArray, or, sql, type AnyColumn, type SQL,
 } from 'drizzle-orm';
 import { z } from 'zod';
 import { FOLD_FROM, FOLD_TO, SEARCH_LIMIT, foldText } from '@talk/shared';
@@ -59,6 +59,14 @@ export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string)
     .innerJoin(tags, eq(tags.id, contactTags.tagId))
     .where(eq(contactTags.contactId, chat.contactId))
     .orderBy(asc(tags.position));
+  // the message the preview shows (notes never set it): who sent it and, if the office did, its ticks
+  // ponytail: one more small query per list item, like the three above; join them if the list gets slow
+  const [last] = await db
+    .select({ direction: messages.direction, status: messages.status })
+    .from(messages)
+    .where(and(eq(messages.chatId, chat.id), ne(messages.kind, 'note')))
+    .orderBy(desc(messages.sentAt))
+    .limit(1);
   return {
     id: chat.id,
     contact: contact
@@ -76,6 +84,7 @@ export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string)
     pinned: pin.length > 0,
     tagIds: tagRows.map((r) => r.id),
     history: chat.history,
+    lastOutStatus: last?.direction === 'out' ? last.status : null,
   };
 }
 

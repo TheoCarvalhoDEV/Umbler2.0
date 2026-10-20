@@ -160,7 +160,7 @@ describe('handleInbound: messages', () => {
     expect(await allMessages()).toHaveLength(1);
   });
 
-  it('a message typed on the office phone is out, clears waiting and triage, keeps unread (Review Focus 3)', async () => {
+  it('a message typed on the office phone is out, clears waiting, triage and unread (Review Focus 3)', async () => {
     await ingest(msg({ body: 'preciso de ajuda' }));
     const [open] = await allChats();
     await ctx.db.update(chats).set({ triagePending: true }).where(eq(chats.id, open.id));
@@ -173,7 +173,7 @@ describe('handleInbound: messages', () => {
     );
 
     const [chat] = await allChats();
-    expect(chat).toMatchObject({ waiting: false, triagePending: false, unread: 1, lastMessagePreview: 'Já te respondo' });
+    expect(chat).toMatchObject({ waiting: false, triagePending: false, unread: 0, lastMessagePreview: 'Já te respondo' });
     const out = (await allMessages()).find((m) => m.externalId === 'RF3OUT');
     expect(out).toMatchObject({ direction: 'out', authorId: null, chatId: chat.id });
     expect(triage.calls).toEqual([]);

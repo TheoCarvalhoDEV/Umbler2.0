@@ -113,7 +113,7 @@ Conversa ordenada por `(sent_at, created_at, id)` (ordem de chegada no mesmo seg
 4. **Contato:** procura por `normalizePhoneBR(phone)`, depois por `lid`; se o payload trouxer os dois (remoteJid `@lid` + `senderPn`/`remoteJidAlt`), preenche o que faltar no contato achado. Cria só se nenhum casar (`INSERT … ON CONFLICT DO NOTHING` + nova leitura, para dois webhooks simultâneos). Atualiza nome se vazio. Contato bloqueado → descarta.
 5. **Conversa** (depende da direção):
    - `in`: usa a aberta `(contato, canal)`; se não há, cria (setor padrão, `waiting=true`, evento `created`) e aciona a triagem (§5.4). Atualiza `unread+1`, `waiting=true`, `last_message_*`.
-   - `out` vinda do celular: usa a aberta; se não há, cria com `waiting=false`, `triage_pending=false`, **sem triagem**. Atualiza só `last_message_*`, `waiting=false`, `triage_pending=false`; `unread` não muda.
+   - `out` vinda do celular: usa a aberta; se não há, cria com `waiting=false`, `triage_pending=false`, **sem triagem**. Atualiza `last_message_*`, `waiting=false`, `triage_pending=false` e `unread=0` (emenda de 20/10/2026, pedido do usuário: quem respondeu pelo celular leu a conversa).
    - Criação de conversa usa `INSERT … ON CONFLICT DO NOTHING` no índice único parcial + nova leitura (corrida de dois webhooks).
 6. **Mídia:** baixa via `POST /chat/getBase64FromMediaMessage/{instance}` passando o objeto do webhook (`{ message: { key, message } }`) e salva em `/data/media`. Falhou → mensagem gravada com `media_path=null` e `error` ("mídia indisponível"); a mensagem nunca se perde. O download roda fora da transação e atualiza a mensagem depois.
 7. Publica `message.created` e `chat.updated` (§5.5).
