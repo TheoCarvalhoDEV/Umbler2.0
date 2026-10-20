@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import type { ChannelDto, ChatDetail, ChatListItem, MessageDto, TimelineItem } from '@talk/shared';
-import { qk, type ChatListData, type TimelineData } from './api';
+import { qk, type AnchoredTimelineData, type ChatListData, type TimelineData } from './api';
 import { applyWsEvent, connectWs, onWsEvent } from './ws';
 
 const chat = (id: string, over: Partial<ChatListItem> = {}): ChatListItem => ({
@@ -186,6 +186,40 @@ describe('applyWsEvent', () => {
     applyWsEvent(qc, { type: 'users.changed' });
     for (const key of keys) expect(qc.getQueryState(key)!.isInvalidated, JSON.stringify(key)).toBe(true);
     expect(qc.getQueryState(qk.channels)!.isInvalidated).toBe(false);
+  });
+
+  it('message.updated reaches an anchored timeline too; message.created only the live one (Review Focus 1)', () => {
+    const qc = new QueryClient();
+    qc.setQueryData<TimelineData>(qk.timeline('c1'), { pages: [[item(msg('m9', '2026-10-14T10:00:00.000Z'))]], pageParams: [undefined] });
+    qc.setQueryData<AnchoredTimelineData>(qk.timelineAt('c1', 'm1'), {
+      pages: [[item(msg('m1', '2026-10-01T10:00:00.000Z'))]], pageParams: [{ around: 'm1' }],
+    });
+    const anchored = () => qc.getQueryData<AnchoredTimelineData>(qk.timelineAt('c1', 'm1'))!.pages.flat();
+
+    applyWsEvent(qc, {
+      type: 'message.updated',
+      message: msg('m1', '2026-10-01T10:00:00.000Z', { favorite: { at: '2026-10-19T12:00:00.000Z', byName: 'Ana' } }),
+    });
+    expect(anchored()[0]).toMatchObject({ id: 'm1', favorite: { byName: 'Ana' } });
+
+    applyWsEvent(qc, { type: 'message.created', message: msg('m10', '2026-10-14T11:00:00.000Z') });
+    expect(anchored().map((i) => i.id)).toEqual(['m1']);
+    expect(qc.getQueryData<TimelineData>(qk.timeline('c1'))!.pages[0]!.map((i) => i.id)).toEqual(['m9', 'm10']);
+  });
+
+  it('keeps the favorites list in step: a new star goes first, a removed one leaves, an update replaces', () => {
+    const qc = new QueryClient();
+    const star = { at: '2026-10-19T12:00:00.000Z', byName: 'Ana' };
+    qc.setQueryData<MessageDto[]>(qk.chatFavorites('c1'), [msg('m1', '2026-10-14T08:00:00.000Z', { favorite: star })]);
+    const list = () => qc.getQueryData<MessageDto[]>(qk.chatFavorites('c1'))!;
+
+    applyWsEvent(qc, { type: 'message.updated', message: msg('m2', '2026-10-14T09:00:00.000Z', { favorite: star }) });
+    expect(list().map((m) => m.id)).toEqual(['m2', 'm1']);
+    applyWsEvent(qc, { type: 'message.updated', message: msg('m1', '2026-10-14T08:00:00.000Z', { favorite: null }) });
+    expect(list().map((m) => m.id)).toEqual(['m2']);
+    applyWsEvent(qc, { type: 'message.updated', message: msg('m2', '2026-10-14T09:00:00.000Z', { favorite: star, status: 'read' }) });
+    expect(list()).toHaveLength(1);
+    expect(list()[0]!.status).toBe('read');
   });
 });
 

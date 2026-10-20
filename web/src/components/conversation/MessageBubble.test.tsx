@@ -47,12 +47,12 @@ const ME: Me = {
   id: 'u1', name: 'Ana Lima', email: 'ana@teste.local', role: 'agent', signature: null, sectorIds: [], seeAllSectors: false, avatarUrl: null,
 };
 
-function renderBubble(m: MessageDto, opts: { chatOpen?: boolean } = {}) {
+function renderBubble(m: MessageDto, opts: { chatOpen?: boolean; me?: Me; highlighted?: boolean } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  qc.setQueryData(qk.me, ME);
+  qc.setQueryData(qk.me, opts.me ?? ME);
   return render(
     <QueryClientProvider client={qc}>
-      <MessageBubble m={m} onReply={() => {}} chatOpen={opts.chatOpen ?? false} />
+      <MessageBubble m={m} onReply={() => {}} chatOpen={opts.chatOpen ?? false} highlighted={opts.highlighted} />
     </QueryClientProvider>,
   ).container;
 }
@@ -139,7 +139,7 @@ describe('MessageBubble action menu', () => {
   it('offers every action on my recent text in an open chat', () => {
     renderBubble(recent, { chatOpen: true });
     openMenu();
-    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar', 'Editar', 'Apagar para todos']);
+    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar', 'Favoritar', 'Editar', 'Apagar para todos']);
     expect(screen.getAllByRole('menuitem').every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
   });
 
@@ -159,15 +159,15 @@ describe('MessageBubble action menu', () => {
   it('leaves out what does not apply: inbound, deleted and closed-chat messages', () => {
     renderBubble({ ...recent, direction: 'in', authorId: null, authorName: null, authorAvatarUrl: null }, { chatOpen: true });
     openMenu();
-    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar']);
+    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar', 'Favoritar']);
     cleanup();
     renderBubble({ ...recent, deleted: { at: recent.sentAt, source: 'office', byName: 'Ana Lima' } }, { chatOpen: true });
     openMenu();
-    expect(labels()).toEqual(['Copiar']);
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
     cleanup();
     renderBubble(recent, { chatOpen: false });
     openMenu();
-    expect(labels()).toEqual(['Copiar']);
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
   });
 
   it('reacts with a quick emoji', async () => {
@@ -310,5 +310,79 @@ describe('MessageBubble media viewer', () => {
     expect(viewer()?.querySelector('iframe')).toBeNull();
     expect(viewer()?.textContent).toContain('não tem pré-visualização');
     expect(viewer()?.querySelector('a[download="peticao.docx"]')).toBeTruthy();
+  });
+});
+
+describe('MessageBubble notes, favorites and focus (spec 2026-10-19 §3, §4, §5)', () => {
+  const note: MessageDto = { ...base, kind: 'note', body: 'Cliente pediu retorno', sentAt: new Date(Date.now() - 60_000).toISOString() };
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Ações da mensagem' }));
+  const labels = () => screen.getAllByRole('menuitem').map((b) => b.firstChild?.textContent);
+  const item = (name: string) => screen.getByRole('menuitem', { name: new RegExp(`^${name}`) }) as HTMLButtonElement;
+
+  it('offers Editar nota and Apagar nota to the author, only Apagar nota to an admin, neither to another agent', () => {
+    renderBubble(note, { chatOpen: true });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar', 'Editar nota', 'Apagar nota']);
+    cleanup();
+    renderBubble({ ...note, authorId: 'u2' }, { chatOpen: true, me: { ...ME, role: 'admin' } });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar', 'Apagar nota']);
+    cleanup();
+    renderBubble({ ...note, authorId: 'u2' }, { chatOpen: true });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
+    cleanup();
+    renderBubble(note, { chatOpen: false });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
+  });
+
+  it('edits a note in place through the same PATCH', async () => {
+    stubFetch({ 'PATCH /api/messages/m1': { ...note, body: 'Cliente pediu retorno amanhã' } });
+    renderBubble(note, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Editar nota'));
+    const box = screen.getByLabelText('Editar mensagem') as HTMLTextAreaElement;
+    expect(box.value).toBe('Cliente pediu retorno');
+    fireEvent.change(box, { target: { value: 'Cliente pediu retorno amanhã' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() =>
+      expect(calls).toEqual([{ method: 'PATCH', path: '/api/messages/m1', body: { text: 'Cliente pediu retorno amanhã' } }]),
+    );
+  });
+
+  it('asks before deleting a note, with the spec text, then calls DELETE /api/notes/:id', async () => {
+    stubFetch({ 'DELETE /api/notes/m1': null });
+    renderBubble(note, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Apagar nota'));
+    await waitFor(() => expect(calls).toEqual([{ method: 'DELETE', path: '/api/notes/m1', body: undefined }]));
+    expect(confirmDialog).toHaveBeenCalledWith({
+      title: 'Apagar nota?', body: 'A nota sai da conversa para todos.', confirmLabel: 'Apagar nota',
+    });
+  });
+
+  it('stars and unstars, also in a closed chat, and shows the star with who marked it', async () => {
+    const starred = { ...base, favorite: { at: base.sentAt, byName: 'Bia' } };
+    stubFetch({ 'PUT /api/messages/m1/favorite': starred, 'DELETE /api/messages/m1/favorite': base });
+    renderBubble(base);
+    expect(document.querySelector('[data-tag="favorite"]')).toBeNull();
+    openMenu();
+    fireEvent.click(item('Favoritar'));
+    await waitFor(() => expect(calls).toEqual([{ method: 'PUT', path: '/api/messages/m1/favorite', body: undefined }]));
+    cleanup();
+    renderBubble(starred);
+    expect(screen.getByTitle('Favoritada por Bia')).toBeTruthy();
+    openMenu();
+    fireEvent.click(item('Remover dos favoritos'));
+    await waitFor(() => expect(calls.at(-1)).toEqual({ method: 'DELETE', path: '/api/messages/m1/favorite', body: undefined }));
+  });
+
+  it('marks the focused message for the timeline', () => {
+    const c = renderBubble(base, { highlighted: true });
+    const root = c.querySelector('[data-message-id="m1"]');
+    expect(root?.getAttribute('data-highlighted')).toBe('true');
+    cleanup();
+    expect(renderBubble(base).querySelector('[data-message-id="m1"]')?.hasAttribute('data-highlighted')).toBe(false);
   });
 });

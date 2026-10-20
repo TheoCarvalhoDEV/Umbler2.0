@@ -22,6 +22,7 @@ import type {
   Me,
   MessageDto,
   MessageEditDto,
+  MessageSearchHit,
   OfficeTemplateInput,
   QuickAnswerDto,
   RecentStickerDto,
@@ -31,6 +32,7 @@ import type {
   TagDto,
   TimelineItem,
   UserDto,
+  UserPreferences,
 } from '@talk/shared';
 
 export class ApiError extends Error {
@@ -69,6 +71,10 @@ export type ChatPage = Page<ChatListItem>;
 export type ChatListData = InfiniteData<ChatPage, string | undefined>;
 /** Timeline infinite query: pages[0] = newest page; each page ascending; next pages are older (pageParam = before). */
 export type TimelineData = InfiniteData<TimelineItem[], string | undefined>;
+/** One page of a timeline anchored on a message (spec 2026-10-19 §4): older than, newer than, or around an item. */
+export type TimelineCursor = { before: string } | { after: string } | { around: string };
+/** Anchored timeline (qk.timelineAt): pages[0] = newest loaded, each ascending; next pages are older, previous pages newer. */
+export type AnchoredTimelineData = InfiniteData<TimelineItem[], TimelineCursor>;
 
 export interface StartChatInput { contactId?: string; phone?: string; name?: string; sectorId?: string }
 export interface SendTextInput { text: string; signature: boolean; replyToId?: string; botAction?: BotAction }
@@ -161,13 +167,19 @@ export const api = Object.assign(call, {
       return request<Me>('POST', '/api/auth/me/avatar', form);
     },
     removeAvatar: () => request<Me>('DELETE', '/api/auth/me/avatar'),
+    /** Spec 2026-10-19 §6: only the fields that changed. */
+    setPreferences: (patch: Partial<UserPreferences>) => request<Me>('PUT', '/api/auth/me/preferences', patch),
   },
   chats: {
     list: (f: ChatListFilters) => request<ChatPage>('GET', `/api/chats${qs(f)}`),
     start: (input: StartChatInput) => request<ChatDetail>('POST', '/api/chats', input),
     get: (id: string) => request<ChatDetail>('GET', `/api/chats/${enc(id)}`),
-    timeline: (id: string, q: { before?: string; limit?: number } = {}) =>
+    timeline: (id: string, q: { before?: string; after?: string; around?: string; limit?: number } = {}) =>
       request<TimelineItem[]>('GET', `/api/chats/${enc(id)}/timeline${qs(q)}`),
+    /** Spec 2026-10-19 §4: newest first, at most 50. */
+    search: (id: string, q: string) => request<MessageSearchHit[]>('GET', `/api/chats/${enc(id)}/search${qs({ q })}`),
+    /** Spec 2026-10-19 §5: newest star first. */
+    favorites: (id: string) => request<MessageDto[]>('GET', `/api/chats/${enc(id)}/favorites`),
     assume: (id: string) => request<ChatDetail>('POST', `/api/chats/${enc(id)}/assume`),
     reopen: (id: string) => request<ChatDetail>('POST', `/api/chats/${enc(id)}/reopen`),
     markRead: (id: string) => request<void>('POST', `/api/chats/${enc(id)}/read`),
@@ -210,6 +222,13 @@ export const api = Object.assign(call, {
     /** Returns the new message, in the destination chat. */
     forward: (messageId: string, input: ForwardInput) =>
       request<MessageDto>('POST', `/api/messages/${enc(messageId)}/forward`, input),
+    /** The team's shared star: true marks, false removes. */
+    favorite: (messageId: string, on: boolean) =>
+      request<MessageDto>(on ? 'PUT' : 'DELETE', `/api/messages/${enc(messageId)}/favorite`),
+  },
+  notes: {
+    /** Spec 2026-10-19 §3: the note leaves the chat for everyone (editing is api.messages.edit). */
+    remove: (messageId: string) => request<void>('DELETE', `/api/notes/${enc(messageId)}`),
   },
   stickers: {
     recent: () => request<RecentStickerDto[]>('GET', '/api/stickers/recent'),
@@ -290,6 +309,11 @@ export const qk = {
   chatList: (f: ChatListFilters) => ['chats', 'list', f] as const,
   chat: (id: string) => ['chats', 'detail', id] as const,
   timeline: (id: string) => ['chats', 'timeline', id] as const,
+  /** Every anchored timeline of a chat (prefix); one per message jumped to (spec 2026-10-19 §4). */
+  timelineAnchors: (chatId: string) => ['chats', 'timeline', chatId, 'at'] as const,
+  timelineAt: (chatId: string, messageId: string) => ['chats', 'timeline', chatId, 'at', messageId] as const,
+  chatSearch: (chatId: string, q: string) => ['chats', 'search', chatId, q] as const,
+  chatFavorites: (chatId: string) => ['chats', 'favorites', chatId] as const,
   /** Under ['chats'] so the WS reconnect invalidation refreshes it too. */
   messageEdits: (messageId: string) => ['chats', 'edits', messageId] as const,
   recentStickers: ['chats', 'stickers'] as const,

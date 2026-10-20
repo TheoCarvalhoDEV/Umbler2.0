@@ -1,6 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, Robot, ShareFat, WarningCircle } from '@phosphor-icons/react';
+import { Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, Robot, ShareFat, Star, WarningCircle } from '@phosphor-icons/react';
 import type { Me, MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
@@ -159,9 +159,11 @@ export interface MessageBubbleProps {
   onReply: (m: MessageDto) => void;
   /** Spec §2: no action in a closed chat (only Copiar). */
   chatOpen?: boolean;
+  /** Spec 2026-10-19 §4: the search hit or favorite the timeline just jumped to. */
+  highlighted?: boolean;
 }
 
-export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubbleProps) {
+export function MessageBubble({ m, onReply, chatOpen = false, highlighted = false }: MessageBubbleProps) {
   const qc = useQueryClient();
   const [resending, setResending] = useState(false);
   const [resendError, setResendError] = useState<string | null>(null);
@@ -190,8 +192,8 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
       ? 'rounded-2xl rounded-tr-sm bg-bubble-out text-fg'
       : 'rounded-2xl rounded-tl-sm bg-bubble-in text-fg shadow-sm';
   // me is loaded before any chat renders (RequireAuth); read it without subscribing
-  const meId = qc.getQueryData<Me | null>(qk.me)?.id ?? null;
-  const items = menuItems(m, meId, chatOpen, Date.now());
+  const me = qc.getQueryData<Me | null>(qk.me);
+  const items = menuItems(m, me?.id ?? null, chatOpen, Date.now(), me?.role === 'admin');
 
   async function resend() {
     setResending(true);
@@ -206,11 +208,12 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
   }
 
   /** Runs one action; its answer goes through the same cache path as the WS echo. */
-  async function act(call: () => Promise<MessageDto>): Promise<boolean> {
+  async function act(call: () => Promise<MessageDto | void>): Promise<boolean> {
     setBusy(true);
     setActionError(null);
     try {
-      applyWsEvent(qc, { type: 'message.updated', message: await call() });
+      const message = await call();
+      if (message) applyWsEvent(qc, { type: 'message.updated', message });
       return true;
     } catch (e) {
       setActionError(errorMessage(e));
@@ -237,18 +240,35 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
     if (ok) await act(() => api.messages.remove(m.id));
   }
 
+  /** Spec 2026-10-19 §3: the row goes away, so reload the timeline (chat.updated does the same on the other screens). */
+  async function removeNote() {
+    const ok = await confirmDialog({ title: 'Apagar nota?', body: 'A nota sai da conversa para todos.', confirmLabel: 'Apagar nota' });
+    if (ok && (await act(() => api.notes.remove(m.id)))) void qc.invalidateQueries({ queryKey: qk.timeline(m.chatId) });
+  }
+
   function onAction(action: Exclude<MenuAction, 'react'>) {
-    if (action === 'reply') onReply(m);
-    else if (action === 'forward') setForwarding(true);
-    else if (action === 'copy') void copy();
-    else if (action === 'download') {
-      if (m.media) saveFile(m.media.url, m.media.name);
+    switch (action) {
+      case 'reply':
+        return onReply(m);
+      case 'forward':
+        return setForwarding(true);
+      case 'copy':
+        return void copy();
+      case 'download':
+        if (m.media) saveFile(m.media.url, m.media.name);
+        return;
+      case 'favorite':
+        return void act(() => api.messages.favorite(m.id, !m.favorite));
+      case 'edit':
+        setDraft(m.body ?? '');
+        setActionError(null);
+        setEditing(true);
+        return;
+      case 'delete':
+        return void remove();
+      case 'deleteNote':
+        return void removeNote();
     }
-    else if (action === 'edit') {
-      setDraft(m.body ?? '');
-      setActionError(null);
-      setEditing(true);
-    } else void remove();
   }
 
   async function saveEdit() {
@@ -281,7 +301,11 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
   );
 
   return (
-    <div className={`group flex px-4 py-1 ${right ? 'justify-end' : 'justify-start'}`}>
+    <div
+      data-message-id={m.id}
+      data-highlighted={highlighted || undefined}
+      className={`group flex px-4 py-1 ${right ? 'justify-end' : 'justify-start'}`}
+    >
       {right && menu}
       <div
         onContextMenu={(e) => {
@@ -290,7 +314,9 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
           e.preventDefault();
           setMenuOpen(true);
         }}
-        className={`relative max-w-[70%] px-3 py-2 ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''}`}
+        className={`relative max-w-[70%] px-3 py-2 ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''} ${
+          highlighted ? 'ring-2 ring-brass' : ''
+        }`}
       >
         {label && (
           <p className="mb-1 flex items-center gap-1 text-xs font-semibold opacity-75">
@@ -343,6 +369,11 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
             >
               {editedTag(m.edited)}
             </button>
+          )}
+          {m.favorite && (
+            <span data-tag="favorite" title={`Favoritada por ${m.favorite.byName ?? 'atendente'}`} className="text-brass">
+              <Star size={12} weight="fill" aria-label="Favorita" />
+            </span>
           )}
           <time dateTime={m.sentAt}>{timeOfDay(m.sentAt)}</time>
           {showStatus && <StatusTick status={m.status} />}

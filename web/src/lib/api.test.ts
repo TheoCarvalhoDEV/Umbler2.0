@@ -211,3 +211,29 @@ describe('bot client', () => {
     expect([...(fetchMock.mock.calls[7]![1]?.body as FormData).keys()]).toEqual(['signature', 'asSticker', 'file']);
   });
 });
+
+describe('api routes of the 2026-10-19 delivery', () => {
+  it('calls the timeline cursors, search, favorites, notes and preferences routes', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, []));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.chats.timeline('c1', { around: 'm1', limit: 50 });
+    await api.chats.timeline('c1', { after: 'm2' });
+    await api.chats.search('c1', 'ação 10%');
+    await api.chats.favorites('c1');
+    await api.messages.favorite('m1', true);
+    await api.messages.favorite('m1', false);
+    await api.notes.remove('m1');
+    await api.auth.setPreferences({ sounds: false });
+    expect(fetchMock.mock.calls.map(([url, init]) => `${init?.method} ${String(url)}`)).toEqual([
+      'GET /api/chats/c1/timeline?around=m1&limit=50',
+      'GET /api/chats/c1/timeline?after=m2',
+      'GET /api/chats/c1/search?q=a%C3%A7%C3%A3o+10%25',
+      'GET /api/chats/c1/favorites',
+      'PUT /api/messages/m1/favorite',
+      'DELETE /api/messages/m1/favorite',
+      'DELETE /api/notes/m1',
+      'PUT /api/auth/me/preferences',
+    ]);
+    expect(fetchMock.mock.calls.at(-1)![1]!.body).toBe('{"sounds":false}');
+  });
+});
