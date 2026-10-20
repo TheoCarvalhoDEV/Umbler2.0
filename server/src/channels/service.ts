@@ -6,7 +6,7 @@ import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { botRuns, bots, channels, chats, messages } from '../db/schema.js';
 import { latestImports, startHistoryImport, toHistoryImportDto, type HistoryImportRow } from '../history/imports.js';
-import { chatMediaPaths, removeMediaFiles, unusedMediaPaths } from '../inbox/chats.js';
+import { chatMediaPaths, removeMediaFiles, scheduledMediaPaths, unusedMediaPaths } from '../inbox/chats.js';
 import { HttpError, notFound } from '../lib/http-error.js';
 import { GatewayError, type ChannelStatus } from '../whatsapp/types.js';
 
@@ -135,7 +135,7 @@ export async function deleteChannel(ctx: AppCtx, channelId: string, userId: stri
 
   // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
   const orphanPaths = await ctx.db.transaction(async (tx) => {
-    const paths = await chatMediaPaths(tx, eq(messages.channelId, channelId));
+    const paths = [...(await chatMediaPaths(tx, eq(messages.channelId, channelId))), ...(await scheduledMediaPaths(tx, chatIds))];
     await tx.delete(chats).where(eq(chats.channelId, channelId));
     await tx
       .update(bots)

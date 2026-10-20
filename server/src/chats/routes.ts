@@ -97,7 +97,8 @@ const forwardBody = z.union([
 /** Spec 2026-10-20 §5: same limit as the contact's tags. */
 const tagsBody = z.object({ tagIds: z.array(z.uuid()).max(50) });
 
-async function readMultipart(req: FastifyRequest): Promise<SendInput> {
+/** Every field and the one file of a multipart body; 413 past 64 MB. The scheduled-message route reads it too. */
+export async function readParts(req: FastifyRequest): Promise<{ fields: Record<string, string>; file?: SendInput['file'] }> {
   const fields: Record<string, string> = {};
   let file: SendInput['file'];
   try {
@@ -115,6 +116,11 @@ async function readMultipart(req: FastifyRequest): Promise<SendInput> {
     }
     throw err;
   }
+  return { fields, file };
+}
+
+async function readMultipart(req: FastifyRequest): Promise<SendInput> {
+  const { fields, file } = await readParts(req);
   if (!file) throw badRequest('Arquivo ausente');
   const f = multipartFields.parse(fields);
   return {
