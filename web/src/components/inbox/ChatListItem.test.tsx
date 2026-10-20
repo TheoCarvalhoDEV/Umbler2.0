@@ -46,6 +46,14 @@ describe('ChatListItem menu', () => {
     expect(screen.getByText('Excluir conversa').className).toContain('text-danger');
   });
 
+  it('marks an imported history chat, and only that one', () => {
+    renderItem({ state: 'closed', history: true });
+    expect(screen.getByText('Histórico do WhatsApp')).toBeTruthy();
+    cleanup();
+    renderItem({ state: 'closed' });
+    expect(screen.queryByText('Histórico do WhatsApp')).toBeNull();
+  });
+
   it('a closed or history chat cannot be transferred or finished', () => {
     renderItem({ state: 'closed' });
     expect(items()).toEqual(['Fixar', 'Marcar como não lida']);

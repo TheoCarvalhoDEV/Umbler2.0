@@ -26,6 +26,8 @@ export interface WhatsAppGateway {
   createInstance(instance: string, webhookUrl: string): Promise<void>;
   connect(instance: string): Promise<{ qrBase64: string | null }>;
   connectionState(instance: string): Promise<ChannelStatus>;
+  /** Logs the WhatsApp session out (the phone drops the linked device) and removes the instance; GatewayError 404 = already gone. */
+  deleteInstance(instance: string): Promise<void>;
   sendText(instance: string, phone: string, text: string, quoted?: QuotedRef): Promise<SendResult>;
   sendMedia(instance: string, phone: string, media: OutgoingMedia, quoted?: QuotedRef): Promise<SendResult>;
   sendAudio(instance: string, phone: string, base64: string, quoted?: QuotedRef): Promise<SendResult>;

@@ -293,12 +293,7 @@ export async function deleteChat(ctx: AppCtx, user: AuthUser, chatId: string): P
   const now = ctx.botRuntime.now();
   // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
   const orphanPaths = await ctx.db.transaction(async (tx) => {
-    const rows = await tx
-      .selectDistinct({ path: messages.mediaPath })
-      .from(messages)
-      .where(and(eq(messages.chatId, chatId), isNotNull(messages.mediaPath)));
-    // chatbot library files are shared by every chat that ran the bot
-    const paths = rows.flatMap((r) => (r.path && !r.path.startsWith('bots/') ? [r.path] : []));
+    const paths = await chatMediaPaths(tx, eq(messages.chatId, chatId));
     // a phone clock ahead of the server can stamp a message after `now`: cover every message of the chat
     const [last] = await tx.select({ at: max(messages.sentAt) }).from(messages).where(eq(messages.chatId, chatId));
     const until = last?.at && last.at > now ? last.at : now;
@@ -306,25 +301,41 @@ export async function deleteChat(ctx: AppCtx, user: AuthUser, chatId: string): P
       id: randomUUID(), contactId: chat.contactId, channelId: chat.channelId, until, deletedBy: user.id, deletedAt: now,
     });
     await tx.delete(chats).where(eq(chats.id, chatId));
-    if (paths.length === 0) return [];
-    // a forwarded or resent file is shared with the copy's row: keep any path something else still uses
-    const stillUsed = new Set<string | null>([
-      ...(await tx.select({ p: messages.mediaPath }).from(messages).where(inArray(messages.mediaPath, paths))).map((r) => r.p),
-      ...(await tx.select({ p: quickAnswers.attachmentPath }).from(quickAnswers).where(inArray(quickAnswers.attachmentPath, paths)))
-        .map((r) => r.p),
-    ]);
-    return paths.filter((p) => !stillUsed.has(p));
+    return unusedMediaPaths(tx, paths);
   });
+  await removeMediaFiles(ctx, orphanPaths, { chatId });
+  ctx.hub.publishChatRemoved(chatId);
+  console.info('chat deleted', { chatId, userId: user.id });
+}
+
+/** Media files of the messages `where` selects. Chatbot library files (bots/) are left out: every chat that ran the bot shares them. */
+export async function chatMediaPaths(tx: Tx, where: SQL): Promise<string[]> {
+  const rows = await tx.selectDistinct({ path: messages.mediaPath }).from(messages).where(and(where, isNotNull(messages.mediaPath)));
+  return rows.flatMap((r) => (r.path && !r.path.startsWith('bots/') ? [r.path] : []));
+}
+
+/** Of `paths`, those no message or quick answer uses any more. Call in the tx that deleted the rows, after the delete. */
+export async function unusedMediaPaths(tx: Tx, paths: string[]): Promise<string[]> {
+  if (paths.length === 0) return [];
+  // a forwarded or resent file is shared with the copy's row: keep any path something else still uses
+  const stillUsed = new Set<string | null>([
+    ...(await tx.select({ p: messages.mediaPath }).from(messages).where(inArray(messages.mediaPath, paths))).map((r) => r.p),
+    ...(await tx.select({ p: quickAnswers.attachmentPath }).from(quickAnswers).where(inArray(quickAnswers.attachmentPath, paths)))
+      .map((r) => r.p),
+  ]);
+  return paths.filter((p) => !stillUsed.has(p));
+}
+
+/** Removes files under mediaDir after their rows are gone; a failure is logged with `logCtx`, never thrown. */
+export async function removeMediaFiles(ctx: AppCtx, paths: string[], logCtx: Record<string, string>): Promise<void> {
   const root = resolve(ctx.config.mediaDir);
-  for (const rel of orphanPaths) {
+  for (const rel of paths) {
     const file = resolve(root, rel);
     if (!file.startsWith(root + sep)) continue;
     await rm(file, { force: true }).catch((err: unknown) =>
-      console.error('chat media not removed', { chatId, err: err instanceof Error ? err.name : 'unknown' }),
+      console.error('chat media not removed', { ...logCtx, err: err instanceof Error ? err.name : 'unknown' }),
     );
   }
-  ctx.hub.publishChatRemoved(chatId);
-  console.info('chat deleted', { chatId, userId: user.id });
 }
 
 export async function pinChat(ctx: AppCtx, user: AuthUser, chatId: string, pinned: boolean): Promise<void> {

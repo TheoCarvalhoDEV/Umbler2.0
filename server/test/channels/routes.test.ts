@@ -1,7 +1,13 @@
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { channels } from '../../src/db/schema.js';
+import { STARTER_GRAPH, createBot } from '../../src/bots/repo.js';
+import { bots, channels, chats, contacts, messages } from '../../src/db/schema.js';
+import { GatewayError } from '../../src/whatsapp/types.js';
+import { seedChat, seedMessage } from '../chats/seed.js';
 import { handleInbound } from '../../src/messages/ingest.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -152,5 +158,82 @@ describe('history routes (§5.1)', () => {
     const url = `/api/channels/${seed.channelId}/connect`;
     expect((await app.inject({ method: 'POST', url, headers: admin.headers })).statusCode).toBe(200);
     expect((await app.inject({ method: 'POST', url, headers: admin.headers, payload: { historyPeriod: 'x' } })).statusCode).toBe(400);
+  });
+});
+
+describe('DELETE /api/channels/:id', () => {
+  const url = (id = seed.channelId) => `/api/channels/${id}`;
+  const channelIds = async () => (await ctx.db.select({ id: channels.id }).from(channels)).map((c) => c.id);
+
+  /** A chat on the seed channel with its own file and a file it shares with a chat on another channel; a bot starting on both. */
+  async function seedChannelData() {
+    const [other] = await ctx.db
+      .insert(channels)
+      .values({ name: 'Outro', evolutionInstance: 'talk-outro', status: 'connected' })
+      .returning({ id: channels.id });
+    const at = new Date('2026-10-10T12:00:00Z');
+    await mkdir(join(ctx.config.mediaDir, '2026/10'), { recursive: true });
+    await writeFile(join(ctx.config.mediaDir, '2026/10/foto.jpg'), 'x');
+    await writeFile(join(ctx.config.mediaDir, '2026/10/compartilhada.jpg'), 'x');
+    const mine = await seedChat(ctx, { channelId: seed.channelId, sectorId: seed.sectorA, phone: '5565999990001' });
+    await seedMessage(ctx, mine.chatId, seed.channelId, at, { kind: 'image', mediaPath: '2026/10/foto.jpg', externalId: 'C1' });
+    await seedMessage(ctx, mine.chatId, seed.channelId, at, { kind: 'image', mediaPath: '2026/10/compartilhada.jpg', externalId: 'C2' });
+    const kept = await seedChat(ctx, { channelId: other!.id, sectorId: seed.sectorA, contactId: mine.contactId });
+    await seedMessage(ctx, kept.chatId, other!.id, at, { kind: 'image', mediaPath: '2026/10/compartilhada.jpg', externalId: 'C3' });
+    const bot = await createBot(ctx.db, {
+      name: 'Recepção', graph: STARTER_GRAPH(), valid: true, publish: false, createdBy: null, startChannelIds: [seed.channelId, other!.id],
+    });
+    return { otherId: other!.id, mine, kept, botId: bot.id };
+  }
+
+  it('is admin only, and 404 for an unknown channel', async () => {
+    const agent = await loginAs(app, seed.agentA.email);
+    expect((await app.inject({ method: 'DELETE', url: url(), headers: agent.headers })).statusCode).toBe(403);
+    expect(await channelIds()).toContain(seed.channelId);
+
+    const admin = await loginAs(app, seed.admin.email);
+    expect((await app.inject({ method: 'DELETE', url: url(crypto.randomUUID()), headers: admin.headers })).statusCode).toBe(404);
+  });
+
+  it('logs WhatsApp out and deletes the channel with its chats, messages and own files; contacts, other channels and shared files stay', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { otherId, mine, kept, botId } = await seedChannelData();
+    const admin = await loginAs(app, seed.admin.email);
+
+    const res = await app.inject({ method: 'DELETE', url: url(), headers: admin.headers });
+
+    expect(res.statusCode).toBe(204);
+    expect(ctx.wa.sent).toContainEqual({ method: 'deleteInstance', instance: seed.instance, payload: null });
+    expect(await channelIds()).toEqual([otherId]);
+    expect(await ctx.db.select().from(chats).where(eq(chats.channelId, seed.channelId))).toEqual([]);
+    expect(await ctx.db.select().from(messages).where(eq(messages.chatId, mine.chatId))).toEqual([]);
+    expect(await ctx.db.select().from(chats).where(eq(chats.id, kept.chatId))).toHaveLength(1);
+    expect(await ctx.db.select().from(contacts).where(eq(contacts.id, mine.contactId))).toHaveLength(1);
+    expect(existsSync(join(ctx.config.mediaDir, '2026/10/foto.jpg'))).toBe(false);
+    expect(existsSync(join(ctx.config.mediaDir, '2026/10/compartilhada.jpg'))).toBe(true); // the other channel still uses it
+    const [bot] = await ctx.db.select().from(bots).where(eq(bots.id, botId));
+    expect(bot!.startChannelIds).toEqual([otherId]);
+    expect(ctx.hub.events).toContainEqual({ type: 'chat.removed', chatId: mine.chatId });
+    expect(ctx.hub.events).toContainEqual({ type: 'channel.removed', channelId: seed.channelId });
+    expect(console.info).toHaveBeenCalledWith('channel deleted', { channelId: seed.channelId, userId: seed.admin.id, chats: 1 });
+  });
+
+  it('keeps everything when Evolution fails (502); an instance already gone (404) does not block', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { mine } = await seedChannelData();
+    const remove = vi.spyOn(ctx.wa, 'deleteInstance');
+    const admin = await loginAs(app, seed.admin.email);
+
+    remove.mockRejectedValueOnce(new GatewayError('Evolution DELETE failed: 500', 500));
+    const failed = await app.inject({ method: 'DELETE', url: url(), headers: admin.headers });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json().error).toBe('Não foi possível desconectar o WhatsApp deste canal. Tente de novo.');
+    expect(await channelIds()).toContain(seed.channelId);
+    expect(await ctx.db.select().from(chats).where(eq(chats.id, mine.chatId))).toHaveLength(1);
+
+    remove.mockRejectedValueOnce(new GatewayError('Evolution DELETE failed: 404', 404));
+    expect((await app.inject({ method: 'DELETE', url: url(), headers: admin.headers })).statusCode).toBe(204);
+    expect(await channelIds()).not.toContain(seed.channelId);
   });
 });

@@ -229,6 +229,19 @@ describe('createEvolutionGateway', () => {
     expect(req().url).toBe('http://evolution:8080/instance/connectionState/a%20b');
   });
 
+  it('deleteInstance logs the session out, then deletes the instance; a failed logout (session not open) does not stop it', async () => {
+    const { wa, req, fetchMock } = setup(200, { status: 'SUCCESS', error: false });
+    fetchMock.mockResolvedValueOnce(new Response('{"status":400,"error":"Bad Request"}', { status: 400 }));
+    await expect(wa.deleteInstance('talk-abc')).resolves.toBeUndefined();
+    expect(req(0)).toEqual({ url: 'http://evolution:8080/instance/logout/talk-abc', method: 'DELETE', headers: JSON_HEADERS, body: undefined });
+    expect(req(1)).toEqual({ url: 'http://evolution:8080/instance/delete/talk-abc', method: 'DELETE', headers: JSON_HEADERS, body: undefined });
+  });
+
+  it('deleteInstance rejects with the status when the delete itself fails', async () => {
+    const { wa } = setup(404, { status: 404, error: 'Not Found' });
+    await expect(wa.deleteInstance('talk-abc')).rejects.toMatchObject({ name: 'GatewayError', status: 404 });
+  });
+
   it('findMessages posts both ISO bounds, the offset and the page, and reads the page', async () => {
     const record = { key: { id: 'A1', remoteJid: '556599999999@s.whatsapp.net', fromMe: false }, messageTimestamp: 1790000000 };
     const { wa, req } = setup(200, { messages: { total: 1, pages: 1, currentPage: 2, records: [record] } });

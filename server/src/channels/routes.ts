@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppCtx } from '../ctx.js';
 import { requireAdmin, requireUser } from '../auth/plugin.js';
-import { connectChannel, createChannel, getChannelQrById, importChannelHistory, listChannels } from './service.js';
+import { connectChannel, createChannel, deleteChannel, getChannelQrById, importChannelHistory, listChannels } from './service.js';
 
 const createBody = z.object({ name: z.string().trim().min(1).max(60) });
 const idParams = z.object({ id: z.uuid() });
@@ -20,6 +20,13 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: AppCtx): void {
     await requireAdmin(request);
     const { name } = createBody.parse(request.body);
     return createChannel(ctx, name);
+  });
+
+  app.delete('/api/channels/:id', async (request, reply) => {
+    await requireAdmin(request);
+    const { id } = idParams.parse(request.params);
+    await deleteChannel(ctx, id, request.user.id);
+    return reply.code(204).send();
   });
 
   app.post('/api/channels/:id/connect', async (request) => {

@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, ne, or, sql } from 'drizzle-orm';
-import type { ChannelDto, HistoryPeriod } from '@talk/shared';
+import { and, asc, eq, inArray, ne, or, sql } from 'drizzle-orm';
+import { NON_TERMINAL_RUN_STATES, type ChannelDto, type HistoryPeriod } from '@talk/shared';
+import { stopRunsForChat } from '../bots/engine.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
-import { channels } from '../db/schema.js';
+import { botRuns, bots, channels, chats, messages } from '../db/schema.js';
 import { latestImports, startHistoryImport, toHistoryImportDto, type HistoryImportRow } from '../history/imports.js';
+import { chatMediaPaths, removeMediaFiles, unusedMediaPaths } from '../inbox/chats.js';
 import { HttpError, notFound } from '../lib/http-error.js';
-import type { ChannelStatus } from '../whatsapp/types.js';
+import { GatewayError, type ChannelStatus } from '../whatsapp/types.js';
 
 type ChannelRow = typeof channels.$inferSelect;
 
@@ -100,6 +102,53 @@ export async function connectChannel(
   const status = qrBase64 ? 'connecting' : await ctx.wa.connectionState(row.evolutionInstance);
   await setChannelStatus(ctx, row.evolutionInstance, status);
   return { qrBase64 };
+}
+
+/**
+ * Admin only (the route checks). The WhatsApp session is logged out and the Evolution instance removed first: when
+ * that fails nothing is deleted, so the admin can retry (404 = the instance is already gone). Then, in one
+ * transaction, the channel's chats go with their messages, events, pins and bot runs (FK cascades), the channel with
+ * its history imports and tombstones, and the channel leaves every bot's start channels. Contacts stay. Last, the
+ * media files no other row uses are removed.
+ */
+export async function deleteChannel(ctx: AppCtx, channelId: string, userId: string): Promise<void> {
+  const [row] = await ctx.db.select().from(channels).where(eq(channels.id, channelId));
+  if (!row) throw notFound();
+  try {
+    await ctx.wa.deleteInstance(row.evolutionInstance);
+  } catch (err) {
+    if (!(err instanceof GatewayError && err.status === 404)) {
+      console.error('channel instance not removed', { channelId, err: err instanceof Error ? err.name : 'unknown' });
+      throw new HttpError(502, 'Não foi possível desconectar o WhatsApp deste canal. Tente de novo.');
+    }
+  }
+  setChannelQr(ctx, row.evolutionInstance, null);
+
+  const chatIds = (await ctx.db.select({ id: chats.id }).from(chats).where(eq(chats.channelId, channelId))).map((c) => c.id);
+  // as in deleteChat: a bot step in flight then fails its conditional save and ends silently
+  const busy = await ctx.db
+    .selectDistinct({ chatId: botRuns.chatId })
+    .from(botRuns)
+    .innerJoin(chats, eq(chats.id, botRuns.chatId))
+    .where(and(eq(chats.channelId, channelId), inArray(botRuns.state, [...NON_TERMINAL_RUN_STATES])));
+  for (const { chatId } of busy) await stopRunsForChat(ctx, chatId, { userId, reason: 'chat_closed' });
+
+  // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
+  const orphanPaths = await ctx.db.transaction(async (tx) => {
+    const paths = await chatMediaPaths(tx, eq(messages.channelId, channelId));
+    await tx.delete(chats).where(eq(chats.channelId, channelId));
+    await tx
+      .update(bots)
+      .set({ startChannelIds: sql`array_remove(${bots.startChannelIds}, ${channelId}::uuid)` })
+      .where(sql`${channelId}::uuid = any(${bots.startChannelIds})`);
+    // messages.channel_id has no cascade on purpose: every message sits in a chat of its own channel, gone above
+    await tx.delete(channels).where(eq(channels.id, channelId));
+    return unusedMediaPaths(tx, paths);
+  });
+  await removeMediaFiles(ctx, orphanPaths, { channelId });
+  for (const chatId of chatIds) ctx.hub.publishChatRemoved(chatId);
+  ctx.hub.publishChannelRemoved(channelId);
+  console.info('channel deleted', { channelId, userId, chats: chatIds.length });
 }
 
 /** "Importar histórico" (§5.1): copies what Evolution already stored, no QR. 409 while an import runs. */
