@@ -7,7 +7,7 @@ import { api, qk } from '../../lib/api';
 import { ADDRESS_FIELDS, ContactForm } from './ContactForm';
 import { CustomFieldsEditor } from './CustomFieldsEditor';
 import { NotesList } from './NotesList';
-import { TagsEditor } from './TagsEditor';
+import { ChatTagsEditor, TagsEditor } from './TagsEditor';
 import { contactLabel, formatPhone } from '../../lib/format';
 import { Avatar } from '../Avatar';
 import { confirmDialog } from '../../lib/confirm';
@@ -315,6 +315,9 @@ function ChatDetailsTab({ chatId, onJump }: { chatId: string; onJump: (messageId
   return (
     <div className="flex flex-col gap-5">
       <Rows rows={rows} />
+      <Section title="Etiquetas da conversa">
+        <ChatTagsEditor chat={c} />
+      </Section>
       <Section title="Favoritas">
         <FavoritesList chatId={chatId} onJump={onJump} />
       </Section>

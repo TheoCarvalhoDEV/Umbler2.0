@@ -217,8 +217,9 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
           lastMessageAt: sql`greatest(${chats.lastMessageAt}, ${sentAt}::timestamptz)`,
           lastMessagePreview: sql`case when ${isNewest} then ${preview} else ${chats.lastMessagePreview} end`,
           ...(inbound
-            ? { unread: sql`${chats.unread} + 1`, waiting: true }
-            : { waiting: false, triagePending: false, unread: 0 }), // answering from the phone means it was read
+            ? // spec 2026-10-20 §3: the oldest contact message still unanswered (least() skips a null)
+              { unread: sql`${chats.unread} + 1`, waiting: true, waitingSince: sql`least(${chats.waitingSince}, ${sentAt}::timestamptz)` }
+            : { waiting: false, waitingSince: null, triagePending: false, unread: 0 }), // answering from the phone means it was read
         })
         .where(eq(chats.id, chat.id))
         .returning();

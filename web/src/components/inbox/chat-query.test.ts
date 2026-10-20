@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { buildChatQuery, EMPTY_FILTERS, NO_OWNER, type InboxFilters } from './chat-query';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  buildChatQuery, EMPTY_FILTERS, NO_OWNER, readChatSort, saveChatSort, withSort, type InboxFilters,
+} from './chat-query';
 
 const now = new Date(2026, 9, 14, 15, 30); // 14/10/2026 15:30 local time
 
@@ -41,5 +43,42 @@ describe('buildChatQuery', () => {
     expect(
       buildChatQuery('inbox', '', { ...EMPTY_FILTERS, rangeFrom: '2026-10-01', rangeTo: '2026-10-10' }, now),
     ).toEqual({ tab: 'inbox', limit: 50 });
+  });
+
+  it('maps the conversation tag (spec 2026-10-20 §5)', () => {
+    expect(buildChatQuery('inbox', '', { ...EMPTY_FILTERS, chatTagId: 't9' }, now)).toEqual({ tab: 'inbox', limit: 50, chatTagId: 't9' });
+  });
+});
+
+describe('chat order (spec 2026-10-20 §3)', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('remembers the order per user; the default is not stored', () => {
+    expect(readChatSort('u1')).toBe('last_desc');
+    saveChatSort('u1', 'waiting');
+    expect(readChatSort('u1')).toBe('waiting');
+    expect(readChatSort('u2')).toBe('last_desc');
+    saveChatSort('u1', 'last_desc');
+    expect(localStorage.getItem('talk.chatSort.u1')).toBeNull();
+  });
+
+  it('falls back to the default on a stale value or blocked storage', () => {
+    localStorage.setItem('talk.chatSort.u1', 'alfabetica');
+    expect(readChatSort('u1')).toBe('last_desc');
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    expect(readChatSort('u1')).toBe('last_desc');
+    expect(() => saveChatSort('u1', 'waiting')).not.toThrow();
+  });
+
+  it('adds sort to the query only when it is not the default', () => {
+    const base = buildChatQuery('inbox', '', EMPTY_FILTERS, now);
+    expect(withSort(base, 'last_desc')).toBe(base);
+    expect(withSort(base, 'created_asc')).toEqual({ tab: 'inbox', limit: 50, sort: 'created_asc' });
   });
 });

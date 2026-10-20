@@ -133,6 +133,7 @@ async function touchChat(tx: Tx, user: AuthUser, chat: ChatRow, last?: { at: Dat
     .update(chats)
     .set({
       waiting: false,
+      waitingSince: null,
       unread: 0,
       triagePending: false,
       ...(last
@@ -291,7 +292,10 @@ export async function sendSystemMessage(
     ({ echoDropped } = await markSent(ctx.db, row.id, chat.channelId, result.externalId));
     // The dropped echo's ingest (fromMe → out) cleared waiting; system messages never touch it.
     if (echoDropped) {
-      await ctx.db.update(chats).set({ waiting: chat.waiting }).where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
+      await ctx.db
+        .update(chats)
+        .set({ waiting: chat.waiting, waitingSince: chat.waitingSince })
+        .where(and(eq(chats.id, chat.id), eq(chats.state, 'open')));
     }
   } else {
     await ctx.db.update(messages).set({ status: 'failed', error }).where(eq(messages.id, row.id));

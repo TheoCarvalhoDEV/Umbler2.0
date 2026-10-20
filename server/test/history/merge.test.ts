@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, tags,
+  chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, tags,
 } from '../../src/db/schema.js';
 import { mergeLidPairs } from '../../src/history/merge.js';
 import { placeRecords } from '../../src/history/place.js';
@@ -89,6 +89,27 @@ describe('mergeLidPairs (§5.4)', () => {
     });
     expect((await eventsOf(ctx, phoneChat)).map((e) => e.kind)).toEqual(['contact_merged']);
     expect(ctx.hub.events).toContainEqual({ type: 'chat', chatId: phoneChat });
+  });
+
+  it("an absorbed chat's conversation tags move to the twin (Review Focus 6)", async () => {
+    const lidId = await lidOnly();
+    const phoneId = await newContact(ctx, { phone: PHONE });
+    const lidChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId: lidId });
+    const phoneChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, contactId: phoneId });
+    const [t1, t2] = await ctx.db
+      .insert(tags)
+      .values([{ name: 'Prazo', color: '#ef4444' }, { name: 'Audiência', color: '#2563eb' }])
+      .returning({ id: tags.id });
+    await ctx.db.insert(chatTags).values([
+      { chatId: lidChat, tagId: t1!.id },
+      { chatId: lidChat, tagId: t2!.id },
+      { chatId: phoneChat, tagId: t1!.id },
+    ]);
+
+    await mergeLidPairs(ctx, pair);
+
+    const rows = await ctx.db.select().from(chatTags).where(eq(chatTags.chatId, phoneChat));
+    expect(rows.map((r) => r.tagId).sort()).toEqual([t1!.id, t2!.id].sort());
   });
 
   it('two history chats become one spanning both', async () => {

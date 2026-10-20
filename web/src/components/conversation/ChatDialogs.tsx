@@ -57,7 +57,10 @@ export function Actions(props: {
 }
 
 export function TransferDialog(props: {
-  chat: ChatDetail;
+  /** Only the starting sector is read; the bulk bar passes the default sector. */
+  chat: Pick<ChatDetail, 'sectorId'>;
+  /** Spec 2026-10-20 §4: "Transferir N conversas". */
+  title?: string;
   sectors: SectorDto[];
   users: UserDto[];
   busy: boolean;
@@ -69,7 +72,7 @@ export function TransferDialog(props: {
   const [ownerId, setOwnerId] = useState('');
   const agents = props.users.filter((u) => u.active && u.sectorIds.includes(sectorId));
   return (
-    <Modal title="Transferir conversa" onCancel={props.onCancel}>
+    <Modal title={props.title ?? 'Transferir conversa'} onCancel={props.onCancel}>
       <label className="block">
         <span className={fieldLabel}>Setor</span>
         <select
@@ -111,6 +114,7 @@ export function TransferDialog(props: {
 }
 
 export function CloseDialog(props: {
+  title?: string;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -121,7 +125,7 @@ export function CloseDialog(props: {
   const [choice, setChoice] = useState<boolean | null>(null); // null = untouched → default on when configured
   const send = closing !== '' && (choice ?? true);
   return (
-    <Modal title="Finalizar conversa" onCancel={props.onCancel}>
+    <Modal title={props.title ?? 'Finalizar conversa'} onCancel={props.onCancel}>
       <label className="flex items-start gap-2 text-[13px] leading-[18px] font-semibold">
         <input
           type="checkbox"

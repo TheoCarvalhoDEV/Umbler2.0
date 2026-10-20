@@ -237,3 +237,22 @@ describe('api routes of the 2026-10-19 delivery', () => {
     expect(fetchMock.mock.calls.at(-1)![1]!.body).toBe('{"sounds":false}');
   });
 });
+
+describe('api routes of the 2026-10-20 delivery', () => {
+  it('calls the conversation-tag and bulk routes, and sends sort and chatTagId', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, { done: [], failed: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.chats.setTags('c1', ['t1']);
+    await api.chats.bulkTransfer({ chatIds: ['c1', 'c2'], sectorId: 's1', ownerId: null });
+    await api.chats.bulkClose({ chatIds: ['c1'], sendClosingMessage: true });
+    await api.chats.bulkRead(['c1']);
+    await api.chats.list({ tab: 'inbox', sort: 'waiting', chatTagId: 't1' });
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)} ${String(i?.body ?? '')}`)).toEqual([
+      'PUT /api/chats/c1/tags {"tagIds":["t1"]}',
+      'POST /api/chats/bulk/transfer {"chatIds":["c1","c2"],"sectorId":"s1","ownerId":null}',
+      'POST /api/chats/bulk/close {"chatIds":["c1"],"sendClosingMessage":true}',
+      'POST /api/chats/bulk/read {"chatIds":["c1"]}',
+      'GET /api/chats?tab=inbox&sort=waiting&chatTagId=t1 ',
+    ]);
+  });
+});

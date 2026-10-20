@@ -4,6 +4,7 @@
 import type { BotRunningBehavior, NotificationDto } from './bots.js';
 import type { MessageChangeSource } from './message-actions.js';
 import type { UserPreferences } from './preferences.js';
+import type { ChatSort } from './chat-list.js';
 export { TAG_COLORS, tagColorHex } from './palette.js';
 export {
   BLOCK_TYPES, WEEKDAYS, WEEKDAY_LABELS, DEFAULT_TIMEZONE, RULE_OPERATOR_LABELS, NATIVE_CONTACT_FIELDS, BLOCK_CATALOG,
@@ -19,6 +20,8 @@ export type * from './message-actions.js';
 export { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES } from './preferences.js';
 export type * from './preferences.js';
 export { SEARCH_MIN_CHARS, SEARCH_MAX_CHARS, SEARCH_LIMIT, FOLD_FROM, FOLD_TO, foldText } from './search.js';
+export { CHAT_SORTS, DEFAULT_CHAT_SORT, BULK_MAX } from './chat-list.js';
+export type * from './chat-list.js';
 
 export type Role = 'admin' | 'agent';
 export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[]; seeAllSectors: boolean; avatarUrl: string | null;
@@ -37,12 +40,16 @@ export interface ChannelDto { id: string; name: string; status: 'disconnected' |
   historyPeriod?: HistoryPeriod; disconnectedAt?: string | null; historyImport?: HistoryImportDto | null }
 export interface ContactRef { id: string; name: string | null; phone: string | null; avatarUrl: string | null }
 export type ChatTab = 'inbox' | 'waiting' | 'closed';
-export interface ChatListFilters { tab: ChatTab; q?: string; sectorId?: string; ownerId?: string; tagId?: string; from?: string; to?: string; cursor?: string; limit?: number }
+export interface ChatListFilters { tab: ChatTab; q?: string; sectorId?: string; ownerId?: string; tagId?: string; from?: string; to?: string; cursor?: string; limit?: number;
+  // spec 2026-10-20: list order (absent = DEFAULT_CHAT_SORT) and the conversation-tag filter
+  sort?: ChatSort; chatTagId?: string }
 export interface ChatListItem { id: string; contact: ContactRef; channelId: string; sectorId: string; ownerId: string | null; state: 'open' | 'closed'; waiting: boolean; private: boolean; unread: number; lastMessageAt: string | null; lastMessagePreview: string | null; pinned: boolean; tagIds: string[];
   // imported from the phone (closed, read-only, visible to everyone); optional so existing literals compile (Task 10 fills it)
   history?: boolean;
   // status of the last (non-note) message when the office sent it; null when the contact sent it or there is none
-  lastOutStatus?: MessageDto['status'] | null }
+  lastOutStatus?: MessageDto['status'] | null;
+  // the conversation's own tags (spec 2026-10-20 §5), apart from tagIds (the contact's); toChatListItem always fills it
+  chatTagIds?: string[] }
 export interface ChatDetail extends ChatListItem { triagePending: boolean; createdAt: string; closedAt: string | null }
 export interface MediaDto { url: string; mime: string; name: string | null; size: number | null }
 export interface MessageDto { id: string; chatId: string; direction: 'in' | 'out'; kind: 'text' | 'image' | 'audio' | 'video' | 'document' | 'sticker' | 'note' | 'unsupported'; body: string | null; media: MediaDto | null; mediaUnavailable: boolean; authorId: string | null; authorName: string | null; authorAvatarUrl: string | null; replyTo: { id: string; body: string | null; kind: string } | null; reaction: string | null; status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'; error: string | null; sentAt: string;

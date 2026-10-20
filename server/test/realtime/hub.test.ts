@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { WsEvent } from '@talk/shared';
 import type { NotificationDto } from '@talk/shared';
 import type { AppCtx } from '../../src/ctx.js';
-import { channels, chatPins, chats, contactTags, contacts, messages, tags, userSectors, users } from '../../src/db/schema.js';
+import { channels, chatPins, chatTags, chats, contactTags, contacts, messages, tags, userSectors, users } from '../../src/db/schema.js';
 import { transferChat } from '../../src/inbox/chats.js';
 import { createHub, createRecordingHub, type Hub } from '../../src/realtime/hub.js';
 import { enableSeeAll, makeTestCtx, seedBasics } from '../helpers.js';
@@ -67,7 +67,7 @@ describe('createHub.publishChat', () => {
     expect(adm.events[1]).toEqual({ type: 'chat.updated', chat: expect.objectContaining({ id: chat.id, sectorId: s.sectorB }) });
   });
 
-  it('sends the full ChatListItem with per-user pinned flag and contact tags', async () => {
+  it('sends the full ChatListItem with per-user pinned flag, contact tags and conversation tags', async () => {
     const a = fakeSocket(); const adm = fakeSocket();
     hub.register(s.agentA, a); hub.register(s.admin, adm);
     await enableSeeAll(ctx, s.admin);
@@ -75,6 +75,7 @@ describe('createHub.publishChat', () => {
     const tagId = randomUUID();
     await ctx.db.insert(tags).values({ id: tagId, name: 'Cliente', emoji: null, color: '#22c55e', position: 0 });
     await ctx.db.insert(contactTags).values({ contactId, tagId });
+    await ctx.db.insert(chatTags).values({ chatId: chat.id, tagId });
     await ctx.db.insert(chatPins).values({ userId: s.agentA.id, chatId: chat.id });
 
     await hub.publishChat(chat.id);
@@ -95,6 +96,7 @@ describe('createHub.publishChat', () => {
       tagIds: [tagId],
       history: false,
       lastOutStatus: null,
+      chatTagIds: [tagId],
     };
     expect(a.events).toEqual([{ type: 'chat.updated', chat: expected }]);
     expect(adm.events).toEqual([{ type: 'chat.updated', chat: { ...expected, pinned: false } }]);

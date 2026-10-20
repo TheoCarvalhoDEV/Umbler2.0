@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import * as schema from '../../src/db/schema.js';
 import {
-  botRuns, botVersions, bots, chats, contacts, historyImports, messageEdits, messageFavorites, messages, sectors,
+  botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits, messageFavorites, messages, sectors, tags,
 } from '../../src/db/schema.js';
 import { makeTestDb, seedBasics, type Seeded } from '../helpers.js';
 
@@ -32,7 +32,7 @@ describe('database schema', () => {
 
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(24);
+    expect(tables).toHaveLength(25);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
   });
@@ -108,6 +108,26 @@ describe('database schema', () => {
     expect(await pgCode(db.insert(messages).values({ ...msg, externalId: 'ABC' }))).toBe(UNIQUE_VIOLATION);
     expect(await pgCode(db.insert(messages).values({ ...msg, kind: 'note', externalId: null }))).toBeNull();
     expect(await pgCode(db.insert(messages).values({ ...msg, kind: 'note', externalId: null }))).toBeNull();
+  });
+
+  it('chat_tags: one row per (chat, tag), gone with the chat or the tag; waiting_since starts empty (spec 2026-10-20)', async () => {
+    const [c] = await db.insert(contacts).values({ phone: '5565999990002' }).returning({ id: contacts.id });
+    const [chat] = await db
+      .insert(chats)
+      .values({ contactId: c!.id, channelId: s.channelId, sectorId: s.defaultSector })
+      .returning();
+    expect(chat!.waitingSince).toBeNull();
+    const [t1, t2] = await db
+      .insert(tags)
+      .values([{ name: 'Prazo', color: '#ef4444' }, { name: 'Audiência', color: '#2563eb' }])
+      .returning({ id: tags.id });
+    await db.insert(chatTags).values([{ chatId: chat!.id, tagId: t1!.id }, { chatId: chat!.id, tagId: t2!.id }]);
+    expect(await pgCode(db.insert(chatTags).values({ chatId: chat!.id, tagId: t1!.id }))).toBe(UNIQUE_VIOLATION);
+
+    await db.delete(tags).where(eq(tags.id, t1!.id));
+    expect((await db.select().from(chatTags)).map((r) => r.tagId)).toEqual([t2!.id]);
+    await db.delete(chats).where(eq(chats.id, chat!.id));
+    expect(await db.select().from(chatTags)).toEqual([]);
   });
 });
 

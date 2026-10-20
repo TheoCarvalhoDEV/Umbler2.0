@@ -20,7 +20,7 @@ interface Props {
 }
 
 export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
-  const ids = { sector: useId(), owner: useId(), tag: useId(), from: useId(), to: useId() };
+  const ids = { sector: useId(), owner: useId(), tag: useId(), chatTag: useId(), from: useId(), to: useId() };
   const set = (patch: Partial<InboxFilters>) => onChange({ ...value, ...patch });
 
   return (
@@ -45,8 +45,17 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
         </select>
       </div>
       <div>
-        <label htmlFor={ids.tag} className={fieldLabel}>Etiqueta</label>
+        <label htmlFor={ids.tag} className={fieldLabel}>Etiqueta do contato</label>
         <select id={ids.tag} value={value.tagId} onChange={(e) => set({ tagId: e.target.value })} className={fieldSelect}>
+          <option value="">Todas</option>
+          {tags.map((t) => (
+            <option key={t.id} value={t.id}>{`${t.emoji ? `${t.emoji} ` : ''}${t.name}`}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label htmlFor={ids.chatTag} className={fieldLabel}>Etiqueta da conversa</label>
+        <select id={ids.chatTag} value={value.chatTagId} onChange={(e) => set({ chatTagId: e.target.value })} className={fieldSelect}>
           <option value="">Todas</option>
           {tags.map((t) => (
             <option key={t.id} value={t.id}>{`${t.emoji ? `${t.emoji} ` : ''}${t.name}`}</option>

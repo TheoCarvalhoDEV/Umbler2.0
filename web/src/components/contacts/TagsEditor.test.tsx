@@ -2,12 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ContactDto, TagDto } from '@talk/shared';
+import type { ChatDetail, ContactDto, TagDto } from '@talk/shared';
 import { qk } from '../../lib/api';
-import { TagsEditor } from './TagsEditor';
+import { ChatTagsEditor, TagsEditor } from './TagsEditor';
 
 const m = vi.hoisted(() => ({
   contacts: { setTags: vi.fn() },
+  chats: { setTags: vi.fn() },
   tags: { list: vi.fn() },
 }));
 vi.mock('../../lib/api', async (importOriginal) => ({
@@ -59,5 +60,29 @@ describe('TagsEditor', () => {
     renderEditor();
     fireEvent.click(await screen.findByRole('button', { name: /Cliente/ }));
     await waitFor(() => expect(m.contacts.setTags).toHaveBeenCalledWith('c1', []));
+  });
+});
+
+describe('ChatTagsEditor (spec 2026-10-20 §5)', () => {
+  const chat: ChatDetail = {
+    id: 'ch1', contact: { id: 'c1', name: 'Maria', phone: null, avatarUrl: null }, channelId: 'w1', sectorId: 's1',
+    ownerId: null, state: 'closed', waiting: false, private: false, unread: 0, lastMessageAt: null,
+    lastMessagePreview: null, pinned: false, tagIds: ['t1'], chatTagIds: [], triagePending: false,
+    createdAt: '2026-10-20T12:00:00.000Z', closedAt: '2026-10-20T13:00:00.000Z',
+  };
+
+  it('toggles the conversation tags (not the contact ones) and caches the returned detail', async () => {
+    m.chats.setTags.mockImplementation(async (_id: string, chatTagIds: string[]) => ({ ...chat, chatTagIds }));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ChatTagsEditor chat={chat} />
+      </QueryClientProvider>,
+    );
+    // t1 is the contact's tag: not pressed here
+    expect((await screen.findByRole('button', { name: /Cliente/ })).getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(screen.getByRole('button', { name: /Urgente/ }));
+    await waitFor(() => expect(m.chats.setTags).toHaveBeenCalledWith('ch1', ['t2']));
+    await waitFor(() => expect(qc.getQueryData<ChatDetail>(qk.chat('ch1'))?.chatTagIds).toEqual(['t2']));
   });
 });
