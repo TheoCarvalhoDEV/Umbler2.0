@@ -82,7 +82,12 @@ export function SectorsSettings() {
             >
               <ArrowDownIcon size={14} />
             </button>
-            {!s.isDefault && (
+            {s.isDefault ? (
+              // keeps the slot so Renomear/Excluir line up with the other rows
+              <span aria-hidden="true" className={`${btn} invisible`}>
+                Definir como padrão
+              </span>
+            ) : (
               <button
                 type="button"
                 onClick={() => save.mutate(() => send(`/api/sectors/${s.id}`, 'PATCH', { isDefault: true }))}

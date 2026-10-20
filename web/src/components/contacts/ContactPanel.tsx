@@ -101,7 +101,7 @@ export function ContactPanel({ contactId, chatId, onClose, docked = false, onJum
             }}
           />
         ) : contact.data ? (
-          <ContactTab contact={contact.data} onClose={onClose} />
+          <ContactTab contact={contact.data} onClose={onClose} besideChat={!!chatId} />
         ) : (
           <p className="text-sm text-muted">{contact.isError ? 'Contato não encontrado.' : 'Carregando…'}</p>
         )}
@@ -126,7 +126,8 @@ export function ContactPanel({ contactId, chatId, onClose, docked = false, onJum
   );
 }
 
-function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => void }) {
+/** besideChat: the conversation header already has the primary action (Finalizar), so Nova conversa steps down to secondary. */
+function ContactTab({ contact, onClose, besideChat }: { contact: ContactDto; onClose: () => void; besideChat: boolean }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
@@ -189,7 +190,9 @@ function ContactTab({ contact, onClose }: { contact: ContactDto; onClose: () => 
         type="button"
         disabled={contact.blocked || start.isPending}
         onClick={() => start.mutate()}
-        className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+        className={`flex w-full items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium disabled:opacity-50 ${
+          besideChat ? 'border border-border bg-surface text-fg hover:bg-sidebar-hover' : 'bg-primary text-white hover:bg-primary-hover'
+        }`}
       >
         <ChatCircle size={16} /> Nova conversa
       </button>

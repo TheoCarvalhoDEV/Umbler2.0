@@ -37,5 +37,9 @@ describe('initials', () => {
   it('falls back to ?', () => {
     expect(initials('   ')).toBe('?');
     expect(initials(null)).toBe('?');
+    expect(initials('🔑🗝')).toBe('?');
+    expect(initials('…')).toBe('?');
+    expect(initials('🥰 Ana')).toBe('A');
+    expect(initials('~João')).toBe('J');
   });
 });
