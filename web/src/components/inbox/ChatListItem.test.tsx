@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ChatListItem as ChatItem } from '@talk/shared';
+import type { ChatListItem as ChatItem, TagDto } from '@talk/shared';
 import { ChatListItem } from './ChatListItem';
 
 const CHAT: ChatItem = {
@@ -79,5 +79,69 @@ describe('ChatListItem menu', () => {
     expect(h.onMarkUnread).toHaveBeenCalledOnce();
     expect(h.onOpenWith.mock.calls).toEqual([['transferir'], ['finalizar']]);
     expect(h.onDelete).toHaveBeenCalledOnce();
+  });
+});
+
+const TAGS = new Map<string, TagDto>(
+  ['Cliente', 'Prazo', 'E3', 'E4', 'E5', 'E6'].map((name, i): [string, TagDto] => [
+    `t${i + 1}`,
+    { id: `t${i + 1}`, name, emoji: null, color: '#2563eb', position: i },
+  ]),
+);
+
+function renderWith(chat: Partial<ChatItem>, selection?: { selected: boolean; disabled: boolean; onToggle: () => void }) {
+  const onOpen = vi.fn();
+  render(
+    <ul>
+      <ChatListItem
+        chat={{ ...CHAT, ...chat }}
+        sectorName={null}
+        owner={null}
+        active={false}
+        onOpen={onOpen}
+        onTogglePin={() => {}}
+        onMarkUnread={() => {}}
+        onOpenWith={() => {}}
+        tagById={TAGS}
+        selection={selection}
+      />
+    </ul>,
+  );
+  return onOpen;
+}
+const chipTitles = () => [...document.querySelectorAll('[title^="Etiqueta"]')].map((e) => e.getAttribute('title'));
+
+describe('ChatListItem tags and selection (spec 2026-10-20 §4, §5)', () => {
+  it('shows conversation tags first and filled, contact tags outlined, and skips unknown ids', () => {
+    renderWith({ tagIds: ['t1', 'gone'], chatTagIds: ['t2'] });
+    expect(chipTitles()).toEqual(['Etiqueta da conversa: Prazo', 'Etiqueta do contato: Cliente']);
+    expect(screen.getByTitle('Etiqueta da conversa: Prazo').className).toContain('text-white');
+    expect(screen.getByTitle('Etiqueta do contato: Cliente').className).not.toContain('text-white');
+  });
+
+  it('shows at most 4 chips and +N for the rest', () => {
+    renderWith({ tagIds: ['t1', 't3', 't4'], chatTagIds: ['t2', 't5', 't6'] });
+    expect(chipTitles()).toHaveLength(4);
+    expect(screen.getByText('+2')).toBeTruthy();
+  });
+
+  it('in selection mode the row toggles the checkbox instead of opening, and the menu is gone', () => {
+    const onToggle = vi.fn();
+    const onOpen = renderWith({}, { selected: false, disabled: false, onToggle });
+    expect(document.querySelector('details')).toBeNull();
+    fireEvent.click(screen.getByText('Maria'));
+    fireEvent.click(screen.getByLabelText('Selecionar Maria'));
+    expect(onToggle).toHaveBeenCalledTimes(2);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('a disabled checkbox (50 already selected) does nothing and says why', () => {
+    const onToggle = vi.fn();
+    renderWith({}, { selected: false, disabled: true, onToggle });
+    const box = screen.getByLabelText('Selecionar Maria') as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    expect(box.closest('label')?.getAttribute('title')).toBe('Até 50 conversas por vez');
+    fireEvent.click(screen.getByText('Maria'));
+    expect(onToggle).not.toHaveBeenCalled();
   });
 });

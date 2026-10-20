@@ -6,7 +6,7 @@ import { stopRunsForChat } from '../bots/engine.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import {
-  channels, chatPins, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, users,
+  channels, chatPins, chatTags, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, tags, users,
 } from '../db/schema.js';
 import { HttpError, badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
 import { BlockError } from '../bots/block-error.js';
@@ -134,6 +134,13 @@ async function activeUserExists(db: Db | Tx, id: string): Promise<boolean> {
   return !!row;
 }
 
+/** 400 for a missing or nonexistent destination. The bulk transfer checks it once, before any chatbot is stopped. */
+export async function validateTransferTarget(db: Db | Tx, to: { sectorId?: string; ownerId?: string | null }): Promise<void> {
+  if (to.sectorId === undefined && to.ownerId === undefined) throw badRequest('Informe o setor ou o atendente.');
+  if (to.sectorId !== undefined && !(await sectorExists(db, to.sectorId))) throw badRequest('Setor inválido.');
+  if (to.ownerId && !(await activeUserExists(db, to.ownerId))) throw badRequest('Atendente inválido.');
+}
+
 export async function getClosingMessage(db: Db | Tx): Promise<string> {
   const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'closing_message'));
   return typeof row?.value === 'string' ? row.value.trim() : '';
@@ -158,11 +165,9 @@ export async function transferChat(
   chatId: string,
   to: { sectorId?: string; ownerId?: string | null },
 ): Promise<ChatRow> {
-  if (to.sectorId === undefined && to.ownerId === undefined) throw badRequest('Informe o setor ou o atendente.');
   const chat = await getChatForUser(ctx, user, chatId);
   if (chat.state !== 'open') throw conflict('Conversa finalizada.');
-  if (to.sectorId !== undefined && !(await sectorExists(ctx.db, to.sectorId))) throw badRequest('Setor inválido.');
-  if (to.ownerId && !(await activeUserExists(ctx.db, to.ownerId))) throw badRequest('Atendente inválido.');
+  await validateTransferTarget(ctx.db, to);
 
   const sectorId = to.sectorId ?? chat.sectorId;
   const ownerId = to.ownerId === undefined ? chat.ownerId : to.ownerId;
@@ -224,7 +229,7 @@ export async function closeChat(
     ctx,
     chatId,
     eq(chats.state, 'open'),
-    { state: 'closed', closedAt: new Date(), waiting: false, triagePending: false },
+    { state: 'closed', closedAt: new Date(), waiting: false, waitingSince: null, triagePending: false },
     { kind: 'closed', data: { closingMessageSent }, authorId: user.id },
   );
 }
@@ -350,6 +355,22 @@ export async function pinChat(ctx: AppCtx, user: AuthUser, chatId: string, pinne
     await ctx.db.insert(chatPins).values({ userId: user.id, chatId, createdAt: new Date() }).onConflictDoNothing();
   }
   await ctx.hub.publishChat(chatId);
+}
+
+/** Spec 2026-10-20 §5: replaces the conversation's tags (same catalog as the contact's). Anyone who sees the chat, open or not. */
+export async function setChatTags(ctx: AppCtx, user: AuthUser, chatId: string, tagIds: string[]): Promise<ChatRow> {
+  const chat = await getChatForUser(ctx, user, chatId);
+  const unique = [...new Set(tagIds)];
+  // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
+  await ctx.db.transaction(async (tx) => {
+    if (unique.length && (await tx.$count(tags, inArray(tags.id, unique))) !== unique.length) {
+      throw badRequest('Etiqueta inexistente');
+    }
+    await tx.delete(chatTags).where(eq(chatTags.chatId, chatId));
+    if (unique.length) await tx.insert(chatTags).values(unique.map((tagId) => ({ chatId, tagId }))).onConflictDoNothing();
+  });
+  await ctx.hub.publishChat(chatId);
+  return chat;
 }
 
 async function resolveContactId(tx: Tx, input: { contactId?: string; phone?: string; name?: string }): Promise<string> {
@@ -486,7 +507,7 @@ export async function closeChatAsBot(
     ctx,
     chatId,
     eq(chats.state, 'open'),
-    { state: 'closed', closedAt: new Date(), waiting: false, triagePending: false },
+    { state: 'closed', closedAt: new Date(), waiting: false, waitingSince: null, triagePending: false },
     { kind: 'closed', data: { closingMessageSent, ...actorData(actor) } },
   );
 }

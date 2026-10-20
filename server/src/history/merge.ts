@@ -2,7 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
 import {
-  botRuns, chatEvents, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
+  botRuns, chatEvents, chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
 } from '../db/schema.js';
 import { type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
@@ -28,6 +28,11 @@ async function twinOf(tx: Tx, from: ChatRow, intoId: string): Promise<ChatRow | 
 async function absorb(tx: Tx, from: ChatRow, twin: ChatRow): Promise<void> {
   await tx.update(messages).set({ chatId: twin.id }).where(eq(messages.chatId, from.id));
   await tx.update(chatEvents).set({ chatId: twin.id }).where(eq(chatEvents.chatId, from.id));
+  // spec 2026-10-20 §5: the conversation's tags follow its messages (the delete below would cascade them away)
+  const tagRows = await tx.select({ tagId: chatTags.tagId }).from(chatTags).where(eq(chatTags.chatId, from.id));
+  if (tagRows.length) {
+    await tx.insert(chatTags).values(tagRows.map((t) => ({ chatId: twin.id, tagId: t.tagId }))).onConflictDoNothing();
+  }
   await tx.delete(chats).where(eq(chats.id, from.id));
   const newer = from.lastMessageAt !== null && (twin.lastMessageAt === null || from.lastMessageAt > twin.lastMessageAt);
   await tx

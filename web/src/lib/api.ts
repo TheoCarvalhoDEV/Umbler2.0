@@ -9,6 +9,7 @@ import type {
   BotRunningErrorBody,
   BotVersionDto,
   BotVersionSummaryDto,
+  BulkResultDto,
   ChannelDto,
   ChatDetail,
   ChatListFilters,
@@ -77,6 +78,8 @@ export type TimelineCursor = { before: string } | { after: string } | { around: 
 export type AnchoredTimelineData = InfiniteData<TimelineItem[], TimelineCursor>;
 
 export interface StartChatInput { contactId?: string; phone?: string; name?: string; sectorId?: string }
+/** Spec 2026-10-20 §4: the same destination for every chat (one of the two). */
+export interface BulkTransferInput { chatIds: string[]; sectorId?: string; ownerId?: string | null }
 export interface SendTextInput { text: string; signature: boolean; replyToId?: string; botAction?: BotAction }
 export interface SendFileInput {
   file: Blob; fileName?: string; text?: string; signature: boolean; replyToId?: string; asVoice?: boolean; botAction?: BotAction;
@@ -207,6 +210,12 @@ export const api = Object.assign(call, {
     },
     addNote: (id: string, text: string) => request<MessageDto>('POST', `/api/chats/${enc(id)}/notes`, { text }),
     sendSticker: (id: string, input: SendStickerInput) => request<MessageDto>('POST', `/api/chats/${enc(id)}/messages`, input),
+    /** Spec 2026-10-20 §5: the conversation's own tags (the contact's go through api.contacts.setTags). */
+    setTags: (id: string, tagIds: string[]) => request<ChatDetail>('PUT', `/api/chats/${enc(id)}/tags`, { tagIds }),
+    bulkTransfer: (input: BulkTransferInput) => request<BulkResultDto>('POST', '/api/chats/bulk/transfer', input),
+    bulkClose: (input: { chatIds: string[]; sendClosingMessage: boolean }) =>
+      request<BulkResultDto>('POST', '/api/chats/bulk/close', input),
+    bulkRead: (chatIds: string[]) => request<BulkResultDto>('POST', '/api/chats/bulk/read', { chatIds }),
   },
   messages: {
     resend: (messageId: string) => request<MessageDto>('POST', `/api/messages/${enc(messageId)}/resend`),

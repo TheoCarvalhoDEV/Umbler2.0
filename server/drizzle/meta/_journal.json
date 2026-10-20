@@ -50,6 +50,13 @@
       "when": 1792447934355,
       "tag": "0006_conversa_dia_a_dia",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792523893595,
+      "tag": "0007_lista_dia_a_dia",
+      "breakpoints": true
     }
   ]
 }

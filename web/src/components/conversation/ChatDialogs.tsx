@@ -53,7 +53,10 @@ export function Actions(props: { busy: boolean; error: string | null; confirmLab
 const field = 'mt-1 block w-full rounded border border-field bg-surface px-2 py-1.5 text-sm text-fg';
 
 export function TransferDialog(props: {
-  chat: ChatDetail;
+  /** Only the starting sector is read; the bulk bar passes the default sector. */
+  chat: Pick<ChatDetail, 'sectorId'>;
+  /** Spec 2026-10-20 §4: "Transferir N conversas". */
+  title?: string;
   sectors: SectorDto[];
   users: UserDto[];
   busy: boolean;
@@ -65,7 +68,7 @@ export function TransferDialog(props: {
   const [ownerId, setOwnerId] = useState('');
   const agents = props.users.filter((u) => u.active && u.sectorIds.includes(sectorId));
   return (
-    <Modal title="Transferir conversa" onCancel={props.onCancel}>
+    <Modal title={props.title ?? 'Transferir conversa'} onCancel={props.onCancel}>
       <label className="mb-3 block text-sm">
         Setor
         <select
@@ -106,6 +109,7 @@ export function TransferDialog(props: {
 }
 
 export function CloseDialog(props: {
+  title?: string;
   busy: boolean;
   error: string | null;
   onCancel: () => void;
@@ -116,7 +120,7 @@ export function CloseDialog(props: {
   const [choice, setChoice] = useState<boolean | null>(null); // null = untouched → default on when configured
   const send = closing !== '' && (choice ?? true);
   return (
-    <Modal title="Finalizar conversa" onCancel={props.onCancel}>
+    <Modal title={props.title ?? 'Finalizar conversa'} onCancel={props.onCancel}>
       <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"
