@@ -10,14 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-20-lista-dia-a-dia-design.md`.
 
-**Runs after delivery 1.** This plan is executed on top of `feat/conversa-dia-a-dia` once it is merged (spec `2026-10-19-conversa-dia-a-dia-design.md`, plan `2026-10-19-conversa-dia-a-dia.md`). Delivery 1 adds migration `0006`, notes edit/delete, search, favorites and preferences. It also rewrites `MessageBubble`, `MessageMenu`, `ConversationHeader`, `Composer`, `Timeline` and `ws.ts`, and **this plan edits none of those.** Delivery 1 and this plan **both touch** the files listed below, so the snippets in them were written against the pre-delivery-1 code. **Match every edit in these files by meaning against the code you find at execution time, and keep everything delivery 1 added:**
-- `shared/src/index.ts`: both add exports and optional DTO fields (delivery 1: `Me.preferences`, `MessageDto.favorite`, `MessageSearchHit`, `note_deleted`).
-- `server/src/db/schema.ts`, `server/drizzle/meta/*`, `server/test/db/schema.test.ts`: delivery 1 adds `users.preferences` and `message_favorites`, so the table count is already 24 there. This plan adds one more, so it becomes 25.
-- `server/src/inbox/queries.ts`: delivery 1 changes `getTimeline` and adds `searchChat`/`snippetOf`. It also extends the `@talk/shared` import line. This plan changes the top constants, `toChatListItem` and `listChats` only.
-- `server/src/chats/routes.ts`: both add routes and imports. Delivery 1 also changes `timelineQuery` and the timeline route. This plan changes `listQuery`, the `close` action and the imports.
-- `server/test/realtime/hub.test.ts`: delivery 1 edits a message test. This plan edits the `ChatListItem` test.
-- `web/src/lib/api.ts` (+ `api.test.ts`): both add calls to `api.chats` (delivery 1: `timeline` cursors, `search`, `favorites`).
-- `web/src/components/contacts/ContactPanel.tsx`: delivery 1 makes `ChatDetailsTab` return `<div className="space-y-6"><Rows …/><Section title="Favoritas">…</Section></div>`. This plan inserts its section between the two.
+**Base code.** This plan runs on `feat/lista-dia-a-dia`, on top of delivery 1 (merged in `main` 967b647: migration `0006`, notes edit/delete, search with `around`/`after` timeline cursors, favorites, preferences) and of commit 6cb812b (`ChatListItem.lastOutStatus` filled in `toChatListItem` by one more query; a reply from the office phone sets `unread: 0` in the ingest; a status update calls `publishChat`; `ChatListItem.tsx` shows `OutTick` before the preview). Every "replace X with Y" snippet below quotes that code verbatim. Delivery 1 rewrote `MessageBubble`, `MessageMenu`, `ConversationHeader`, `Composer`, `Timeline` and `ws.ts`; **this plan edits none of those.** Every Y keeps what delivery 1 and 6cb812b added. The files both touch, and what must survive:
+- `shared/src/index.ts`: the `preferences.js`/`search.js` exports, `Me.preferences`, `MessageDto.favorite`, `MessageSearchHit`, `note_deleted`, `ChatListItem.lastOutStatus`.
+- `server/src/db/schema.ts`, `server/drizzle/meta/*`, `server/test/db/schema.test.ts`: `users.preferences` and `message_favorites` (24 tables today; this plan makes 25).
+- `server/src/inbox/queries.ts`: `searchChat`, the timeline cursors, the `FOLD_*`/`SEARCH_LIMIT` imports, and the `lastOutStatus` query in `toChatListItem`. This plan changes the imports, the top constants, `toChatListItem` and `listChats` only.
+- `server/src/messages/ingest.ts`: the outbound branch's `unread: 0` and the `publishChat` after a status update.
+- `server/src/chats/routes.ts`: the `SEARCH_*` import, `timelineQuery`, the search, note and favorite routes. This plan changes the imports, `listQuery`, the `close` action, and adds routes.
+- `server/test/realtime/hub.test.ts`: `lastOutStatus: null` and `favorite: null` in the expected objects.
+- `web/src/lib/api.ts` (+ `api.test.ts`): `setPreferences`, `timeline` cursors, `search`, `favorites`, `api.messages.favorite`, `api.notes`, and the `describe('api routes of the 2026-10-19 delivery', …)` block.
+- `web/src/components/inbox/ChatListItem.tsx` (+ test): `OutTick` and its icons, and the ticks test.
+- `web/src/components/contacts/ContactPanel.tsx`: `ChatDetailsTab`'s `onJump` and its `<Section title="Favoritas">`.
 
 ## Global Constraints
 
@@ -25,7 +27,7 @@
 - Every read and mutation of a chat goes through `getChatForUser`, which answers 404 when the user cannot see the chat. `canSee` already limits a private chat to its owner and to an admin with "ver todos", so there is no separate privacy check. A bulk step that gets 404 becomes `{ chatId, error: 'Conversa não encontrada' }` and touches nothing.
 - Every new mutation is a non-GET `/api/*` route, so the global Origin check (`authPlugin`) covers it. Its tests send `loginAs(...).headers`, and one test per route family sends no Origin and expects 403.
 - Logs never carry message text, phones or names. Only ids, counts and `err.name` go into a log. Bulk actions log only unexpected (non-`HttpError`) failures: `console.error('bulk chat action failed', { chatId, err: err.name })`.
-- The migration is generated, never hand-edited: `npm run db:generate -w server -- --name lista_dia_a_dia` creates `0007_lista_dia_a_dia`. It must come after delivery 1's `0006`. The running dev server (`tsx watch`) applies it to its own database when it restarts. Never run SQL against that database by hand, and never start or stop the dev server.
+- The migration is generated, never hand-edited: `npm run db:generate -w server -- --name lista_dia_a_dia` creates `0007_lista_dia_a_dia`, right after delivery 1's `0006_conversa_dia_a_dia`. The running dev server (`tsx watch`) applies it to its own database when it restarts. Never run SQL against that database by hand, and never start or stop the dev server.
 - Extend, never rename. The new fields are optional (`ChatListFilters.sort`, `ChatListFilters.chatTagId` and `ChatListItem.chatTagIds`), and the server always fills `chatTagIds`. Only the exact `ChatListItem` literal in `hub.test.ts` gains the field.
 - Inside `ctx.db.transaction(tx => …)` use only `tx`, because PGlite deadlocks otherwise. Publish to the hub after commit. Nothing new calls Evolution, except the bulk close's closing message, which goes through the existing `sendAgentMessage`.
 - Limits: `BULK_MAX = 50` chats per bulk request (zod `.min(1).max(BULK_MAX)`) and at most 50 tag ids per `PUT /api/chats/:id/tags`, like the contact's `TagsBody`. A list shows at most 4 tag chips per card (`MAX_CHIPS`).
@@ -57,7 +59,7 @@ These are inputs and conditions the spec implies but never tests, most likely fi
 
 1. **Paging an order that is not a single key.** "Esperando há mais tempo" is waiting chats ascending followed by the rest descending. Equal keys are common, because history imports and seeds share timestamps. A page that ends at the end of the waiting run, or on a tie, must not repeat or skip a chat. **Owner: Task 3**, test `every order pages through every chat exactly once, across the waiting/rest boundary and on equal keys (Review Focus 1)`.
 2. **A cursor from another order.** The web keeps the old pages while the order changes, and a stale tab can still hold an old-format cursor after the deploy. Either must give 400, never a wrong page. **Owner: Task 3**, test `a cursor of another order, or of the old format, is 400 (Review Focus 2)`.
-3. **The chatbot or the triage clearing the wait.** `sendSystemMessage` must leave `waiting_since` alone, so a bot greeting does not make a waiting contact look fresh. Its dropped-echo restore puts it back. **Owner: Task 2**, test `a chatbot or triage message leaves it alone (Review Focus 3)`.
+3. **The chatbot or the triage clearing the wait.** `sendSystemMessage` must leave `waiting_since` alone, so a bot greeting does not make a waiting contact look fresh. When the bot message's webhook echo beats the gateway answer, the echo's ingest clears it, and the dropped-echo restore must put it back. **Owner: Task 2**, test `a chatbot or triage message leaves it alone, even when its echo beats the gateway (Review Focus 3)`.
 4. **A bulk step on a chat the user may not act on.** Hidden, private, closed and duplicate ids must each give a per-chat result: no 404 or 409 for the whole request, no Evolution call, no change to the hidden chat. Under the default "Perguntar" a running chatbot must be stopped, not answered with 409 `BOT_RUNNING`. **Owner: Task 5**, tests `transfers each chat it can and tells why the others could not (Review Focus 4)` and `stops a running chatbot under "Perguntar" instead of asking, and keeps it under "Manter" (Review Focus 4)`.
 5. **A failing closing message in the middle of a bulk close.** That chat stays open with the failed bubble, and the others still close. **Owner: Task 5**, test `closes in bulk with one closing-message choice; a failed send keeps that chat open (Review Focus 5)`.
 6. **Conversation tags outliving their tag, or lost in a LID merge.** Deleting a catalog tag must drop it from every chat (FK cascade, not code). When `absorb` deletes a chat, its tags must move to the twin first. **Owner: Task 4**, tests `a tag deleted from the catalog leaves every conversation (Review Focus 6)` and `an absorbed chat's conversation tags move to the twin (Review Focus 6)`.
@@ -191,7 +193,23 @@ Nothing reads the new pieces yet, so this task only has to compile and migrate. 
 
 - [ ] **Step 1: Write the failing schema test**
 
-In `server/test/db/schema.test.ts`, add `chatTags` and `tags` to the `../../src/db/schema.js` import (keep whatever delivery 1 added to that line). Raise the table count by one: from `24` to `25` after delivery 1, or from `23` to `24` if you run this before it. Then add at the end of the `describe`:
+In `server/test/db/schema.test.ts`, replace
+
+```ts
+import {
+  botRuns, botVersions, bots, chats, contacts, historyImports, messageEdits, messageFavorites, messages, sectors,
+} from '../../src/db/schema.js';
+```
+
+with
+
+```ts
+import {
+  botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits, messageFavorites, messages, sectors, tags,
+} from '../../src/db/schema.js';
+```
+
+replace `expect(tables).toHaveLength(24);` with `expect(tables).toHaveLength(25);`, and add at the end of the first `describe('database schema', …)`, after the test `rejects a duplicate (channel_id, external_id) but accepts many NULL external ids`:
 
 ```ts
   it('chat_tags: one row per (chat, tag), gone with the chat or the tag; waiting_since starts empty (spec 2026-10-20)', async () => {
@@ -243,13 +261,13 @@ export interface BulkResultDto { done: string[]; failed: Array<{ chatId: string;
 
 - [ ] **Step 4: Export it and add the DTO fields**
 
-In `shared/src/index.ts`, next to the other `import type` lines at the top, add:
+In `shared/src/index.ts`, after `import type { UserPreferences } from './preferences.js';`, add:
 
 ```ts
 import type { ChatSort } from './chat-list.js';
 ```
 
-After the `message-actions.js` re-exports (and after delivery 1's own re-exports), add:
+After `export { SEARCH_MIN_CHARS, SEARCH_MAX_CHARS, SEARCH_LIMIT, FOLD_FROM, FOLD_TO, foldText } from './search.js';`, add:
 
 ```ts
 export { CHAT_SORTS, DEFAULT_CHAT_SORT, BULK_MAX } from './chat-list.js';
@@ -273,29 +291,29 @@ export interface ChatListFilters { tab: ChatTab; q?: string; sectorId?: string; 
 and in `ChatListItem` replace
 
 ```ts
-  // imported from the phone (closed, read-only, visible to everyone); optional so existing literals compile (Task 10 fills it)
-  history?: boolean }
+  // status of the last (non-note) message when the office sent it; null when the contact sent it or there is none
+  lastOutStatus?: MessageDto['status'] | null }
 ```
 
 with
 
 ```ts
-  // imported from the phone (closed, read-only, visible to everyone); optional so existing literals compile (Task 10 fills it)
-  history?: boolean;
+  // status of the last (non-note) message when the office sent it; null when the contact sent it or there is none
+  lastOutStatus?: MessageDto['status'] | null;
   // the conversation's own tags (spec 2026-10-20 §5), apart from tagIds (the contact's); toChatListItem always fills it
   chatTagIds?: string[] }
 ```
 
 - [ ] **Step 5: Add the column and the table**
 
-In `server/src/db/schema.ts`, in `chats`, after the `history` column, add:
+In `server/src/db/schema.ts`, in `chats`, after `history: boolean('history').notNull().default(false), // §5.3: imported from the phone; closed, read-only, visible to all`, add:
 
 ```ts
     // spec 2026-10-20 §3: the oldest contact message still unanswered; null whenever `waiting` is false
     waitingSince: timestamp('waiting_since', { withTimezone: true }),
 ```
 
-After the `chatPins` table, add:
+After the `chatPins` table (before `export const messages = pgTable(`), add:
 
 ```ts
 /** Spec 2026-10-20 §5: the conversation's own tags, from the same catalog as the contact's. */
@@ -312,7 +330,10 @@ export const chatTags = pgTable(
 - [ ] **Step 6: Generate the migration**
 
 Run: `npm run db:generate -w server -- --name lista_dia_a_dia`
-Expected: it creates `server/drizzle/0007_lista_dia_a_dia.sql` and `server/drizzle/meta/0007_snapshot.json`, and updates `_journal.json`. The SQL holds only these statements: `CREATE TABLE "chat_tags"` with the composite primary key, `ALTER TABLE "chats" ADD COLUMN "waiting_since" timestamp with time zone`, and the two `FOREIGN KEY … ON DELETE cascade` constraints. If it holds anything else (for example delivery 1's `message_favorites`), the 0006 snapshot is not merged yet. In that case stop: do not edit the SQL; merge delivery 1 first.
+Expected: it creates `server/drizzle/0007_lista_dia_a_dia.sql` and `server/drizzle/meta/0007_snapshot.json`, and adds the `0007_lista_dia_a_dia` entry (idx 7) to `_journal.json` after `0006_conversa_dia_a_dia`.
+
+Run: `grep -E '^(CREATE|ALTER|DROP)' server/drizzle/0007_lista_dia_a_dia.sql`
+Expected: exactly 4 lines: `CREATE TABLE "chat_tags" (` (its body holds the composite primary key), `ALTER TABLE "chats" ADD COLUMN "waiting_since" timestamp with time zone;…`, and two `ALTER TABLE "chat_tags" ADD CONSTRAINT … FOREIGN KEY … ON DELETE cascade …`. Anything else (for example a `message_favorites` or `preferences` statement) means the schema and the 0006 snapshot disagree. In that case stop: do not edit the SQL or the snapshot, and report it.
 
 - [ ] **Step 7: Run the tests and the type check**
 
@@ -375,7 +396,7 @@ Create `server/test/chats/waiting-since.test.ts`:
 
 ```ts
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { chats } from '../../src/db/schema.js';
 import { closeChat } from '../../src/inbox/chats.js';
 import { handleInbound, type IngestHooks } from '../../src/messages/ingest.js';
@@ -440,14 +461,22 @@ describe('chats.waiting_since (spec 2026-10-20 §3)', () => {
     expect(await onlyChat()).toMatchObject({ state: 'closed', waiting: false, waitingSince: null });
   });
 
-  it('a chatbot or triage message leaves it alone (Review Focus 3)', async () => {
+  it('a chatbot or triage message leaves it alone, even when its echo beats the gateway (Review Focus 3)', async () => {
     const { chatId } = await seedChat(ctx, {
       channelId: s.channelId, sectorId: s.sectorA, phone: PHONE, waiting: true, waitingSince: t(1),
     });
     const row = async () => (await ctx.db.select().from(chats).where(eq(chats.id, chatId)))[0]!;
+    const realSendText = ctx.wa.sendText.bind(ctx.wa);
+    vi.spyOn(ctx.wa, 'sendText').mockImplementation(async (instance, phone, text, quoted) => {
+      const res = await realSendText(instance, phone, text, quoted);
+      // Evolution's fromMe echo is ingested while our call is still pending: it clears waiting and waiting_since
+      await handleInbound(ctx, [{ ...msg(2, 'out'), externalId: res.externalId, phone, body: text }], hooks);
+      return res;
+    });
 
-    expect((await sendSystemMessage(ctx, await row(), { text: 'Escolha uma opção' })).ok).toBe(true);
+    const sent = await sendSystemMessage(ctx, await row(), { text: 'Escolha uma opção' });
 
+    expect(sent).toMatchObject({ ok: true, echoDropped: true });
     expect(await row()).toMatchObject({ waiting: true, waitingSince: t(1) });
   });
 });
@@ -456,7 +485,7 @@ describe('chats.waiting_since (spec 2026-10-20 §3)', () => {
 - [ ] **Step 3: Run it to verify it fails**
 
 Run: `npm test -w server -- test/chats/waiting-since.test.ts`
-Expected: the first two tests FAIL, because `waitingSince` is `null` where `t(1)` is expected. The third test already passes (nothing writes the column yet), and it keeps the next steps honest.
+Expected: the first two tests FAIL, because `waitingSince` is `null` where `t(1)` is expected. The third test passes now (nothing writes the column yet). It keeps the next steps honest: after Step 4 alone it FAILS (the echo's ingest clears `waitingSince`), and Step 5's restore makes it pass again.
 
 - [ ] **Step 4: Set and clear it on ingest**
 
@@ -465,7 +494,7 @@ In `server/src/messages/ingest.ts`, inside `ingestMessage`, replace
 ```ts
           ...(inbound
             ? { unread: sql`${chats.unread} + 1`, waiting: true }
-            : { waiting: false, triagePending: false }),
+            : { waiting: false, triagePending: false, unread: 0 }), // answering from the phone means it was read
 ```
 
 with
@@ -474,7 +503,7 @@ with
           ...(inbound
             ? // spec 2026-10-20 §3: the oldest contact message still unanswered (least() skips a null)
               { unread: sql`${chats.unread} + 1`, waiting: true, waitingSince: sql`least(${chats.waitingSince}, ${sentAt}::timestamptz)` }
-            : { waiting: false, waitingSince: null, triagePending: false }),
+            : { waiting: false, waitingSince: null, triagePending: false, unread: 0 }), // answering from the phone means it was read
 ```
 
 - [ ] **Step 5: Clear it on an agent send, keep it on a system send**
@@ -525,7 +554,7 @@ with
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
-Run: `npm test -w server -- test/chats/waiting-since.test.ts test/messages/ingest.test.ts test/chats/actions.test.ts test/triage`
+Run: `npm test -w server -- test/chats/waiting-since.test.ts test/messages/ingest.test.ts test/messages/send.test.ts test/chats/actions.test.ts test/inbox/chats-actions.test.ts test/triage`
 Expected: PASS.
 
 Run: `npm run typecheck -w server`
@@ -690,15 +719,33 @@ Expected: FAIL. `listQuery` is a plain `z.object`, so zod strips the unknown `so
 
 - [ ] **Step 3: Replace the sort key and the cursor helpers**
 
-In `server/src/inbox/queries.ts`, change the shared import to a value import, keeping whatever delivery 1 added (for example `MessageSearchHit`):
+In `server/src/inbox/queries.ts`, replace
 
 ```ts
-import {
-  CHAT_SORTS, DEFAULT_CHAT_SORT, type ChatDetail, type ChatListFilters, type ChatListItem, type ChatSort, type TimelineItem,
-} from '@talk/shared';
+import { FOLD_FROM, FOLD_TO, SEARCH_LIMIT, foldText } from '@talk/shared';
+import type { ChatDetail, ChatListFilters, ChatListItem, MessageSearchHit, TimelineItem } from '@talk/shared';
 ```
 
-Add `chatTags` to the `../db/schema.js` import. Then replace the block from `// A chat with no message yet (started by an agent) sorts by its creation time.` down to the end of `decodeCursor` with:
+with
+
+```ts
+import { CHAT_SORTS, DEFAULT_CHAT_SORT, FOLD_FROM, FOLD_TO, SEARCH_LIMIT, foldText } from '@talk/shared';
+import type { ChatDetail, ChatListFilters, ChatListItem, ChatSort, MessageSearchHit, TimelineItem } from '@talk/shared';
+```
+
+and
+
+```ts
+import { chatEvents, chatPins, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
+```
+
+with
+
+```ts
+import { chatEvents, chatPins, chatTags, chats, contacts, contactTags, messages, tags, users } from '../db/schema.js';
+```
+
+The `drizzle-orm` import already has `asc`, `desc`, `notInArray` and `type SQL`. Then replace the block from `// A chat with no message yet (started by an agent) sorts by its creation time.` down to the end of `decodeCursor` with:
 
 ```ts
 // A chat with no message yet (started by an agent) sorts by its creation time.
@@ -745,7 +792,7 @@ function decodeCursor(cursor: string, sort: ChatSort): Cursor {
 
 - [ ] **Step 4: Rewrite `listChats`**
 
-Replace the whole `listChats` function with:
+Replace the whole `listChats` function (from `export async function listChats(` to the `return { items, nextCursor };` and its closing brace, just before `export async function getChatDetail`) with:
 
 ```ts
 export async function listChats(
@@ -826,7 +873,7 @@ export async function listChats(
   const last = page.at(-1);
   const nextCursor = rows.length > limit && last ? encodeCursor([sort, last.run, last.key, last.chat.id]) : null;
 
-  // ponytail: 4 small queries per chat (contact, pin, contact tags, chat tags); batch them if listing 100 chats gets slow.
+  // ponytail: toChatListItem runs a few small queries per chat; batch them if listing 100 chats gets slow.
   const items: ChatListItem[] = [];
   for (const r of [...pinned, ...page]) items.push(await toChatListItem(db, r.chat, user.id));
   return { items, nextCursor };
@@ -835,10 +882,16 @@ export async function listChats(
 
 - [ ] **Step 5: Accept the query fields**
 
-In `server/src/chats/routes.ts`, add the import:
+In `server/src/chats/routes.ts`, replace
 
 ```ts
-import { CHAT_SORTS } from '@talk/shared';
+import { SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
+```
+
+with
+
+```ts
+import { CHAT_SORTS, SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
 ```
 
 In `listQuery`, after `tagId: z.uuid().optional(),`, add:
@@ -972,7 +1025,23 @@ describe('PUT /api/chats/:id/tags (spec 2026-10-20 §5)', () => {
 });
 ```
 
-In `server/test/history/merge.test.ts`, add `chatTags` to the `../../src/db/schema.js` import and add inside `describe('mergeLidPairs (§5.4)', …)`:
+In `server/test/history/merge.test.ts`, replace
+
+```ts
+import {
+  chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, tags,
+} from '../../src/db/schema.js';
+```
+
+with
+
+```ts
+import {
+  chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, tags,
+} from '../../src/db/schema.js';
+```
+
+and add inside `describe('mergeLidPairs (§5.4)', …)`, after the test `with an open chat on both sides, the LID chat's messages go into the phone contact's open chat`:
 
 ```ts
   it("an absorbed chat's conversation tags move to the twin (Review Focus 6)", async () => {
@@ -997,13 +1066,40 @@ In `server/test/history/merge.test.ts`, add `chatTags` to the `../../src/db/sche
   });
 ```
 
-In `server/test/realtime/hub.test.ts`, in `sends the full ChatListItem with per-user pinned flag and contact tags`, add `chatTags` to the schema import. After the `contactTags` insert, add:
+In `server/test/realtime/hub.test.ts`, replace
+
+```ts
+import { channels, chatPins, chats, contactTags, contacts, messages, tags, userSectors, users } from '../../src/db/schema.js';
+```
+
+with
+
+```ts
+import { channels, chatPins, chatTags, chats, contactTags, contacts, messages, tags, userSectors, users } from '../../src/db/schema.js';
+```
+
+In `it('sends the full ChatListItem with per-user pinned flag and contact tags', …)`, rename it to `sends the full ChatListItem with per-user pinned flag, contact tags and conversation tags`. After `await ctx.db.insert(contactTags).values({ contactId, tagId });`, add:
 
 ```ts
     await ctx.db.insert(chatTags).values({ chatId: chat.id, tagId });
 ```
 
-and add `chatTagIds: [tagId],` to `expected`, after `history: false,`. Rename the test to `sends the full ChatListItem with per-user pinned flag, contact tags and conversation tags`.
+and in `expected` replace
+
+```ts
+      history: false,
+      lastOutStatus: null,
+    };
+```
+
+with
+
+```ts
+      history: false,
+      lastOutStatus: null,
+      chatTagIds: [tagId],
+    };
+```
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -1012,7 +1108,7 @@ Expected: FAIL. The PUT route is 404 (no route), `chatTagIds` is missing from th
 
 - [ ] **Step 3: Fill `chatTagIds` in the DTO**
 
-In `server/src/inbox/queries.ts`, in `toChatListItem`, after the `tagRows` query add:
+In `server/src/inbox/queries.ts`, in `toChatListItem`, after the `tagRows` query (it ends with `.orderBy(asc(tags.position));`, just before the comment `// the message the preview shows (notes never set it): who sent it and, if the office did, its ticks`) add:
 
 ```ts
   const chatTagRows = await db
@@ -1023,15 +1119,44 @@ In `server/src/inbox/queries.ts`, in `toChatListItem`, after the `tagRows` query
     .orderBy(asc(tags.position), asc(tags.name));
 ```
 
-and in the returned object, after `tagIds: tagRows.map((r) => r.id),` add:
+and in the returned object replace
 
 ```ts
+    tagIds: tagRows.map((r) => r.id),
+    history: chat.history,
+    lastOutStatus: last?.direction === 'out' ? last.status : null,
+  };
+```
+
+with
+
+```ts
+    tagIds: tagRows.map((r) => r.id),
+    history: chat.history,
+    lastOutStatus: last?.direction === 'out' ? last.status : null,
     chatTagIds: chatTagRows.map((r) => r.id),
+  };
 ```
 
 - [ ] **Step 4: Add the service**
 
-In `server/src/inbox/chats.ts`, add `chatTags` and `tags` to the `../db/schema.js` import. Add after `pinChat`:
+In `server/src/inbox/chats.ts`, replace
+
+```ts
+import {
+  channels, chatPins, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, users,
+} from '../db/schema.js';
+```
+
+with
+
+```ts
+import {
+  channels, chatPins, chatTags, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, tags, users,
+} from '../db/schema.js';
+```
+
+(`inArray` and `badRequest` are already imported.) Add after `pinChat` (before `async function resolveContactId`):
 
 ```ts
 /** Spec 2026-10-20 §5: replaces the conversation's tags (same catalog as the contact's). Anyone who sees the chat, open or not. */
@@ -1053,14 +1178,32 @@ export async function setChatTags(ctx: AppCtx, user: AuthUser, chatId: string, t
 
 - [ ] **Step 5: Add the route**
 
-In `server/src/chats/routes.ts`, add `setChatTags` to the `../inbox/chats.js` import. After `forwardBody` (or next to the other body schemas), add:
+In `server/src/chats/routes.ts`, replace
+
+```ts
+import {
+  assumeChat, closeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
+  startChat, transferChat, type ChatRow,
+} from '../inbox/chats.js';
+```
+
+with
+
+```ts
+import {
+  assumeChat, closeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
+  setChatTags, startChat, transferChat, type ChatRow,
+} from '../inbox/chats.js';
+```
+
+After the `forwardBody` union (it ends with `]);`, before `async function readMultipart`), add:
 
 ```ts
 /** Spec 2026-10-20 §5: same limit as the contact's tags. */
 const tagsBody = z.object({ tagIds: z.array(z.uuid()).max(50) });
 ```
 
-and after the two `/api/chats/:id/pin` routes:
+and after the two `/api/chats/:id/pin` routes (before `r.post('/api/chats/:id/messages', …)`):
 
 ```ts
     // The detail is read after the change, so it carries the new chatTagIds.
@@ -1072,7 +1215,23 @@ and after the two `/api/chats/:id/pin` routes:
 
 - [ ] **Step 6: Carry the tags through a merge**
 
-In `server/src/history/merge.ts`, add `chatTags` to the schema import. In `absorb`, before `await tx.delete(chats).where(eq(chats.id, from.id));`, add:
+In `server/src/history/merge.ts`, replace
+
+```ts
+import {
+  botRuns, chatEvents, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
+} from '../db/schema.js';
+```
+
+with
+
+```ts
+import {
+  botRuns, chatEvents, chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
+} from '../db/schema.js';
+```
+
+In `absorb`, before `await tx.delete(chats).where(eq(chats.id, from.id));`, add:
 
 ```ts
   // spec 2026-10-20 §5: the conversation's tags follow its messages (the delete below would cascade them away)
@@ -1247,10 +1406,10 @@ Expected: FAIL. `/api/chats/bulk/transfer` falls into `/api/chats/:id/transfer`,
 
 - [ ] **Step 3: Validate the destination once**
 
-In `server/src/inbox/chats.ts`, after `activeUserExists`, add:
+In `server/src/inbox/chats.ts`, after `activeUserExists` (before `export async function getClosingMessage`), add:
 
 ```ts
-/** 400 for a destination that does not exist. The bulk transfer checks it once, before any chatbot is stopped. */
+/** 400 for a missing or nonexistent destination. The bulk transfer checks it once, before any chatbot is stopped. */
 export async function validateTransferTarget(db: Db | Tx, to: { sectorId?: string; ownerId?: string | null }): Promise<void> {
   if (to.sectorId === undefined && to.ownerId === undefined) throw badRequest('Informe o setor ou o atendente.');
   if (to.sectorId !== undefined && !(await sectorExists(db, to.sectorId))) throw badRequest('Setor inválido.');
@@ -1261,6 +1420,9 @@ export async function validateTransferTarget(db: Db | Tx, to: { sectorId?: strin
 and in `transferChat` replace
 
 ```ts
+  if (to.sectorId === undefined && to.ownerId === undefined) throw badRequest('Informe o setor ou o atendente.');
+  const chat = await getChatForUser(ctx, user, chatId);
+  if (chat.state !== 'open') throw conflict('Conversa finalizada.');
   if (to.sectorId !== undefined && !(await sectorExists(ctx.db, to.sectorId))) throw badRequest('Setor inválido.');
   if (to.ownerId && !(await activeUserExists(ctx.db, to.ownerId))) throw badRequest('Atendente inválido.');
 ```
@@ -1268,8 +1430,12 @@ and in `transferChat` replace
 with
 
 ```ts
+  const chat = await getChatForUser(ctx, user, chatId);
+  if (chat.state !== 'open') throw conflict('Conversa finalizada.');
   await validateTransferTarget(ctx.db, to);
 ```
+
+The three checks now live in one place. The only order change: an empty destination on a chat the user cannot see is 404 instead of 400 (the route's `transferBody` refuses an empty destination before that anyway). `test/inbox/chats-actions.test.ts` `400 for empty target, unknown sector or unknown agent; 409 for a closed chat` still passes.
 
 - [ ] **Step 4: Create the bulk module**
 
@@ -1352,13 +1518,43 @@ export async function bulkRead(ctx: AppCtx, user: AuthUser, chatIds: string[]): 
 
 - [ ] **Step 5: Add the routes and share the close**
 
-In `server/src/chats/routes.ts`:
-- add `import { bulkClose, bulkRead, bulkTransfer, closeChatAndStopBots } from '../inbox/bulk.js';`;
-- add `BULK_MAX` to the `@talk/shared` import from Task 3 (`import { BULK_MAX, CHAT_SORTS } from '@talk/shared';`);
-- remove `closeChat` from the `../inbox/chats.js` import and the `stopRunsForChat` import from `../bots/engine.js`, because both become unused;
-- keep `sendAgentMessage`, which the messages route still uses.
+In `server/src/chats/routes.ts`, replace
 
-After `closeBody`, add:
+```ts
+import { CHAT_SORTS, SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
+import { stopRunsForChat } from '../bots/engine.js';
+import { applyBotRunningBehavior } from '../bots/hooks.js';
+```
+
+with
+
+```ts
+import { BULK_MAX, CHAT_SORTS, SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
+import { applyBotRunningBehavior } from '../bots/hooks.js';
+```
+
+(`stopRunsForChat` becomes unused; `applyBotRunningBehavior` stays for the single transfer), replace
+
+```ts
+import {
+  assumeChat, closeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy,
+  setChatTags, startChat, transferChat, type ChatRow,
+} from '../inbox/chats.js';
+```
+
+with
+
+```ts
+import { bulkClose, bulkRead, bulkTransfer, closeChatAndStopBots } from '../inbox/bulk.js';
+import {
+  assumeChat, deleteChat, getChatForUser, markChatRead, markChatUnread, pinChat, reopenChat, setChatPrivacy, setChatTags,
+  startChat, transferChat, type ChatRow,
+} from '../inbox/chats.js';
+```
+
+and keep the `sendAgentMessage` import, which the messages route still uses.
+
+After `const closeBody = z.object({ sendClosingMessage: z.boolean().default(false) });`, add:
 
 ```ts
 /** Spec 2026-10-20 §4: 1 to BULK_MAX chats per request; the same destination and choice for all of them. */
@@ -1370,7 +1566,24 @@ const bulkCloseBody = z.object({ chatIds: bulkIds, sendClosingMessage: z.boolean
 const bulkReadBody = z.object({ chatIds: bulkIds });
 ```
 
-Replace the whole `action('close', …)` block with:
+Replace
+
+```ts
+    action('close', async (user, id, body) => {
+      const closed = await closeChat(ctx, user, id, {
+        sendClosingMessage: closeBody.parse(body ?? {}).sendClosingMessage,
+        // Closing text is the office's canned message, so it goes without the agent signature.
+        // botAction 'keep': closing never asks, the runs are stopped right below.
+        sendClosing: async (text: string) =>
+          (await sendAgentMessage(ctx, user, id, { text, signature: false, botAction: 'keep' })).status !== 'failed',
+      });
+      // Spec §5.5: closing the chat stops every bot run in it.
+      await stopRunsForChat(ctx, id, { userId: user.id, reason: 'chat_closed' });
+      return closed;
+    });
+```
+
+with
 
 ```ts
     action('close', (user, id, body) =>
@@ -1378,7 +1591,7 @@ Replace the whole `action('close', …)` block with:
     );
 ```
 
-and add after `r.post('/api/chats', …)`:
+and add after the `r.post('/api/chats', …)` route (before `r.get('/api/chats/:id', …)`):
 
 ```ts
     // Static paths: find-my-way matches them before /api/chats/:id/…; the answer is 200 with one result per chat.
@@ -1418,7 +1631,7 @@ These are pure modules and the API client, so the components in Tasks 7 and 8 on
 - Modify: `web/src/lib/api.ts` (`@talk/shared` type import; `BulkTransferInput`; four calls in `api.chats`)
 - Modify: `web/src/components/inbox/chat-query.ts` (whole file below)
 - Create: `web/src/components/inbox/bulk.ts`
-- Test: `web/src/lib/api.test.ts` (new `it` in `describe('request', …)`), `web/src/components/inbox/chat-query.test.ts` (imports, new `it`, new `describe`), `web/src/components/inbox/bulk.test.ts` (create)
+- Test: `web/src/lib/api.test.ts` (new `describe` at the end), `web/src/components/inbox/chat-query.test.ts` (imports, new `it`, new `describe`), `web/src/components/inbox/bulk.test.ts` (create)
 
 **Interfaces:**
 - Consumes: Task 1 `CHAT_SORTS`, `DEFAULT_CHAT_SORT`, `ChatSort`, `BulkResultDto`, `ChatListFilters.sort/chatTagId`; Tasks 4–5 routes.
@@ -1426,10 +1639,11 @@ These are pure modules and the API client, so the components in Tasks 7 and 8 on
 
 - [ ] **Step 1: Write the failing tests**
 
-In `web/src/lib/api.test.ts`, add inside `describe('request', …)`:
+In `web/src/lib/api.test.ts`, add at the end of the file, after `describe('api routes of the 2026-10-19 delivery', …)`:
 
 ```ts
-  it('calls the conversation-tag and bulk routes, and sends sort and chatTagId (spec 2026-10-20)', async () => {
+describe('api routes of the 2026-10-20 delivery', () => {
+  it('calls the conversation-tag and bulk routes, and sends sort and chatTagId', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () => json(200, { done: [], failed: [] }));
     vi.stubGlobal('fetch', fetchMock);
     await api.chats.setTags('c1', ['t1']);
@@ -1445,9 +1659,17 @@ In `web/src/lib/api.test.ts`, add inside `describe('request', …)`:
       'GET /api/chats?tab=inbox&sort=waiting&chatTagId=t1 ',
     ]);
   });
+});
 ```
 
-In `web/src/components/inbox/chat-query.test.ts`, change the imports to:
+In `web/src/components/inbox/chat-query.test.ts`, replace
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { buildChatQuery, EMPTY_FILTERS, NO_OWNER, type InboxFilters } from './chat-query';
+```
+
+with
 
 ```ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1456,7 +1678,7 @@ import {
 } from './chat-query';
 ```
 
-add inside `describe('buildChatQuery', …)`:
+add at the end of `describe('buildChatQuery', …)`:
 
 ```ts
   it('maps the conversation tag (spec 2026-10-20 §5)', () => {
@@ -1538,14 +1760,14 @@ Expected: FAIL. `api.chats.setTags is not a function`, `readChatSort` and `withS
 
 - [ ] **Step 3: Add the API calls**
 
-In `web/src/lib/api.ts`, add `BulkResultDto` to the `@talk/shared` type import. After `StartChatInput`, add:
+In `web/src/lib/api.ts`, in the `import type { … } from '@talk/shared';` list, add `BulkResultDto,` between `BotVersionSummaryDto,` and `ChannelDto,`. After `export interface StartChatInput { contactId?: string; phone?: string; name?: string; sectorId?: string }`, add:
 
 ```ts
 /** Spec 2026-10-20 §4: the same destination for every chat (one of the two). */
 export interface BulkTransferInput { chatIds: string[]; sectorId?: string; ownerId?: string | null }
 ```
 
-and inside `api.chats`, after `sendSticker` (and next to whatever delivery 1 added):
+and inside `api.chats`, after the `sendSticker: (id: string, input: SendStickerInput) => …` line (the last entry, just before the `},` that closes `chats` and the `messages: {` block):
 
 ```ts
     /** Spec 2026-10-20 §5: the conversation's own tags (the contact's go through api.contacts.setTags). */
@@ -1812,7 +2034,7 @@ Expected: FAIL. There are no chips (`chipTitles()` is `[]`), no "Selecionar Mari
 Replace `web/src/components/inbox/ChatListItem.tsx` with:
 
 ```tsx
-import { ChatCircleText, DotsThreeVertical, LockSimple, PushPin } from '@phosphor-icons/react';
+import { ChatCircleText, Check, Checks, Clock, DotsThreeVertical, LockSimple, PushPin, WarningCircle } from '@phosphor-icons/react';
 import { BULK_MAX, tagColorHex, type ChatListItem as ChatItem, type TagDto } from '@talk/shared';
 import { contactLabel, listTime } from '../../lib/format';
 import { Avatar } from '../Avatar';
@@ -1835,6 +2057,23 @@ interface Props {
   tagById?: ReadonlyMap<string, TagDto>;
   /** Spec 2026-10-20 §4 "Selecionar": a checkbox; the row toggles it instead of opening the chat; no menu. */
   selection?: { selected: boolean; disabled: boolean; onToggle(): void };
+}
+
+/** Like WhatsApp: the last message was the office's, with its ticks. */
+function OutTick({ status }: { status: NonNullable<ChatItem['lastOutStatus']> }) {
+  const cls = 'shrink-0';
+  switch (status) {
+    case 'pending':
+      return <Clock size={14} aria-label="Você · enviando" className={cls} />;
+    case 'sent':
+      return <Check size={14} aria-label="Você · enviada" className={cls} />;
+    case 'delivered':
+      return <Checks size={14} aria-label="Você · entregue" className={cls} />;
+    case 'read':
+      return <Checks size={14} weight="bold" aria-label="Você · lida" className={`${cls} text-read`} />;
+    case 'failed':
+      return <WarningCircle size={14} weight="fill" aria-label="Você · falhou" className={`${cls} text-danger`} />;
+  }
 }
 
 const NO_TAGS: ReadonlyMap<string, TagDto> = new Map();
@@ -1922,7 +2161,10 @@ export function ChatListItem({
             </span>
           </span>
           <span className="flex items-center gap-2">
-            <span className={`truncate text-sm ${unread ? 'text-fg' : 'text-muted'}`}>{chat.lastMessagePreview ?? ''}</span>
+            <span className={`flex min-w-0 items-center gap-1 text-sm ${unread ? 'text-fg' : 'text-muted'}`}>
+              {chat.lastOutStatus && <OutTick status={chat.lastOutStatus} />}
+              <span className="truncate">{chat.lastMessagePreview ?? ''}</span>
+            </span>
             {unread && (
               <span
                 aria-label={`Não lidas: ${chat.unread}`}
@@ -2061,21 +2303,26 @@ export function ChatTagsEditor({ chat }: { chat: ChatDetail }) {
 
 - [ ] **Step 5: Add the section in "Detalhes da conversa"**
 
-In `web/src/components/contacts/ContactPanel.tsx`, change the editor import to `import { ChatTagsEditor, TagsEditor } from './TagsEditor';`. In `ChatDetailsTab`, add the section right after `<Rows rows={rows} />`. After delivery 1 that line sits inside `<div className="space-y-6">…</div>` and is followed by `<Section title="Favoritas">`. The tab then reads:
+In `web/src/components/contacts/ContactPanel.tsx`, replace `import { TagsEditor } from './TagsEditor';` with `import { ChatTagsEditor, TagsEditor } from './TagsEditor';`. In `ChatDetailsTab`, replace
 
 ```tsx
-  return (
+    <div className="space-y-6">
+      <Rows rows={rows} />
+      <Section title="Favoritas">
+```
+
+with
+
+```tsx
     <div className="space-y-6">
       <Rows rows={rows} />
       <Section title="Etiquetas da conversa">
         <ChatTagsEditor chat={c} />
       </Section>
-      {/* delivery 1's "Favoritas" section stays here, unchanged */}
-    </div>
-  );
+      <Section title="Favoritas">
 ```
 
-If `ChatDetailsTab` still ends in `return <Rows rows={rows} />;` (delivery 1 not merged), wrap it the same way, without the Favoritas line.
+The "Favoritas" section (`<FavoritesList chatId={chatId} onJump={onJump} />`) and the `onJump` prop stay as they are.
 
 - [ ] **Step 6: Add the conversation-tag filter**
 
@@ -2161,7 +2408,7 @@ HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
 
 - change `const calls: Array<{ method: string; url: URL }> = [];` to `const calls: Array<{ method: string; url: URL; body?: string }> = [];`, and the push to `calls.push({ method, url, body: typeof init?.body === 'string' ? init.body : undefined });`;
 - next to `let channelsReply`, add `let bulkReply: BulkResultDto = { done: [], failed: [] };`. In `beforeEach`, add `bulkReply = { done: ['a', 'b'], failed: [] };` and `localStorage.clear();`;
-- in the fetch stub, before the `/api/chats` line, add:
+- in the fetch stub, before `if (url.pathname === '/api/chats') {`, add:
 
 ```tsx
     if (url.pathname.startsWith('/api/chats/bulk/') && method === 'POST') return json(bulkReply);
@@ -2749,6 +2996,8 @@ git commit -m "feat(web): list order control, selection mode and the bulk bar (t
 
 - [ ] Spec §3: five orders; pins on top; the cursor carries the order; `waiting_since` lifecycle (Tasks 2–3); `localStorage` per user with try/catch (Task 6); control next to the filter (Task 8).
 - [ ] Spec §4: cap 50 on both sides (Tasks 5 and 8); per-chat results; bot rule "keep"/"stop"; one 400 for a bad destination; closing-message failure per chat; result line and "keep the failed ones selected" (Task 8); Transferir/Finalizar disabled on Finalizados.
-- [ ] Spec §5: `chat_tags` with cascades (Task 1); PUT route on open, closed and history chats (Task 4); WS DTO (`hub.test.ts`); LID merge; chips that look different on the card; editor in "Detalhes da conversa"; both filters (Task 7).
-- [ ] `git diff` of this branch shows no edit to `MessageBubble`, `MessageMenu`, `ConversationHeader`, `Composer`, `Timeline` or `ws.ts`.
+- [ ] Spec §5: `chat_tags` with cascades (Task 1); PUT route on open and closed chats, and no history check in `setChatTags` (Task 4); WS DTO (`hub.test.ts`); LID merge; chips that look different on the card; editor in "Detalhes da conversa"; both filters (Task 7).
+- [ ] Delivery 1 and 6cb812b survive: `OutTick` and `lastOutStatus` (card, DTO, `hub.test.ts`), the outbound ingest's `unread: 0`, the search/note/favorite routes, the `Favoritas` section, the `2026-10-19` block in `api.test.ts`.
+- [ ] `git diff --stat origin/main...HEAD -- web/src/components/conversation/MessageBubble.tsx web/src/components/conversation/MessageMenu.tsx web/src/components/conversation/ConversationHeader.tsx web/src/components/conversation/Composer.tsx web/src/components/conversation/Timeline.tsx web/src/lib/ws.ts` prints nothing.
+- [ ] `ls server/drizzle/*.sql | tail -2` shows `0006_conversa_dia_a_dia.sql` then `0007_lista_dia_a_dia.sql`, and `git diff origin/main...HEAD -- server/drizzle/0006_conversa_dia_a_dia.sql server/drizzle/meta/0006_snapshot.json` prints nothing.
 - [ ] `grep -rn "console\." server/src/inbox/bulk.ts` shows only ids and `err.name`.
