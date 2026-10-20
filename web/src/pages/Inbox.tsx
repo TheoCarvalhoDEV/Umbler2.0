@@ -1,15 +1,20 @@
 import { useEffect, useState, type UIEvent } from 'react';
 import { Outlet, useNavigate, useParams } from 'react-router';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Eye, EyeSlash, Funnel, MagnifyingGlass, Plus } from '@phosphor-icons/react';
-import type { ChatListFilters, ChatListItem as ChatItem, ChatTab } from '@talk/shared';
+import { ArrowsDownUp, CheckSquare, Eye, EyeSlash, Funnel, MagnifyingGlass, Plus } from '@phosphor-icons/react';
+import {
+  BULK_MAX, CHAT_SORTS, DEFAULT_CHAT_SORT, type ChatListFilters, type ChatListItem as ChatItem, type ChatSort, type ChatTab,
+} from '@talk/shared';
 import { api, ApiError, qk } from '../lib/api';
 import { useMe } from '../lib/auth';
 import { confirmDialog } from '../lib/confirm';
+import { BulkBar } from '../components/inbox/BulkBar';
 import { ChatListItem } from '../components/inbox/ChatListItem';
 import { FilterPanel } from '../components/inbox/FilterPanel';
 import { NewChatDialog } from '../components/inbox/NewChatDialog';
-import { buildChatQuery, EMPTY_FILTERS, type InboxFilters } from '../components/inbox/chat-query';
+import {
+  buildChatQuery, CHAT_SORT_LABELS, EMPTY_FILTERS, readChatSort, saveChatSort, withSort, type InboxFilters,
+} from '../components/inbox/chat-query';
 
 const TABS: Array<{ tab: ChatTab; label: string }> = [
   { tab: 'inbox', label: 'Entrada' },
@@ -55,6 +60,12 @@ export function Inbox() {
   // one banner for all row/header actions: the last error wins, any success clears it
   const [actionError, setActionError] = useState<string | null>(null);
   const me = useMe().data;
+  // spec 2026-10-20 §3: per user, kept in this browser
+  const [sort, setSort] = useState<ChatSort>(() => readChatSort(me?.id));
+  // spec 2026-10-20 §4: selection mode, the selected ids and the last bulk result line
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [notice, setNotice] = useState<string | null>(null);
 
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
   const users = useQuery({ queryKey: qk.users, queryFn: api.users.list });
@@ -65,10 +76,30 @@ export function Inbox() {
   const channelName = new Map<string, string>(channelList.length > 1 ? channelList.map((c): [string, string] => [c.id, c.name]) : []);
   const sectorName = new Map((sectors.data ?? []).map((s) => [s.id, s.name]));
   const userById = new Map((users.data ?? []).map((u) => [u.id, u]));
+  const tagById = new Map((tags.data ?? []).map((t) => [t.id, t]));
   const badges: Record<ChatTab, number> = { inbox: useUnreadChats('inbox'), waiting: useUnreadChats('waiting'), closed: 0 };
 
-  const list = useChatList(buildChatQuery(tab, q, filters));
+  const list = useChatList(withSort(buildChatQuery(tab, q, filters), sort));
   const chats = list.data?.pages.flatMap((p) => p.items) ?? [];
+
+  // a new list (tab, search, filters, order) starts an empty selection
+  useEffect(() => setSelected(new Set()), [tab, q, filters, sort]);
+  // Review Focus 7: a chat that left the list (WS, someone else's transfer) drops out of the count and of the request
+  const selectedIds = chats.filter((c) => selected.has(c.id)).map((c) => c.id);
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  function stopSelecting() {
+    setSelecting(false);
+    setSelected(new Set());
+  }
+  function changeSort(next: ChatSort) {
+    setSort(next);
+    saveChatSort(me?.id, next);
+  }
 
   const pin = useMutation({
     mutationFn: (chat: ChatItem) => api.chats.pin(chat.id, !chat.pinned),
@@ -152,6 +183,18 @@ export function Inbox() {
           )}
           <button
             type="button"
+            aria-pressed={selecting}
+            onClick={() => {
+              setNotice(null);
+              if (selecting) stopSelecting();
+              else setSelecting(true);
+            }}
+            className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium hover:bg-sidebar-hover ${selecting ? 'bg-primary-soft text-link' : 'text-muted'}`}
+          >
+            <CheckSquare size={16} aria-hidden /> Selecionar
+          </button>
+          <button
+            type="button"
             aria-label="Nova conversa"
             title="Nova conversa"
             onClick={() => setShowNew(true)}
@@ -198,6 +241,25 @@ export function Inbox() {
               className="w-full bg-transparent py-1.5 text-sm outline-none"
             />
           </label>
+          <label
+            title={`Ordenar: ${CHAT_SORT_LABELS[sort]}`}
+            className={`relative flex size-10 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-sidebar-hover focus-within:ring-2 focus-within:ring-primary ${sort === DEFAULT_CHAT_SORT ? 'text-muted' : 'text-link'}`}
+          >
+            <ArrowsDownUp size={18} aria-hidden />
+            {/* the native list, invisible over the icon: keyboard, screen readers and phones get the real <select> */}
+            <select
+              aria-label="Ordenar conversas"
+              value={sort}
+              onChange={(e) => changeSort(e.target.value as ChatSort)}
+              className="absolute inset-0 cursor-pointer opacity-0"
+            >
+              {CHAT_SORTS.map((s) => (
+                <option key={s} value={s}>
+                  {CHAT_SORT_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             aria-label="Filtrar conversas"
@@ -228,6 +290,11 @@ export function Inbox() {
             {actionError}
           </p>
         )}
+        {notice && (
+          <p role="status" className="mx-3 mb-2 rounded bg-panel px-3 py-2 text-sm text-fg">
+            {notice}
+          </p>
+        )}
 
         <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2" onScroll={onScroll}>
           {me?.role === 'admin' && !me.seeAllSectors && me.sectorIds.length === 0 && (
@@ -243,6 +310,16 @@ export function Inbox() {
               sectorName={sectorName.get(c.sectorId) ?? null}
               channelName={channelName.get(c.channelId) ?? null}
               owner={c.ownerId ? (userById.get(c.ownerId) ?? null) : null}
+              tagById={tagById}
+              selection={
+                selecting
+                  ? {
+                      selected: selected.has(c.id),
+                      disabled: !selected.has(c.id) && selectedIds.length >= BULK_MAX,
+                      onToggle: () => toggleSelected(c.id),
+                    }
+                  : undefined
+              }
               onOpen={() => navigate(`/chats/${c.id}`)}
               onTogglePin={() => pin.mutate(c)}
               onMarkUnread={() => {
@@ -259,6 +336,21 @@ export function Inbox() {
           {list.isSuccess && chats.length === 0 && <li className="p-4 text-sm text-muted">Nenhuma conversa</li>}
           {list.isFetchingNextPage && <li className="p-4 text-sm text-muted">Carregando…</li>}
         </ul>
+
+        {selecting && (
+          <BulkBar
+            chatIds={selectedIds}
+            tab={tab}
+            onCancel={stopSelecting}
+            onResult={(summary, failedIds) => {
+              setNotice(summary);
+              void qc.invalidateQueries({ queryKey: qk.chatLists });
+              // all done: leave the mode; otherwise keep only what failed, to retry or look at
+              if (failedIds.length) setSelected(new Set(failedIds));
+              else stopSelecting();
+            }}
+          />
+        )}
       </aside>
 
       <section className="min-w-0 flex-1">
