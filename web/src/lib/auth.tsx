@@ -1,7 +1,7 @@
 import { MutationCache, QueryCache, QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, type ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router';
-import type { Me } from '@talk/shared';
+import { DEFAULT_PREFERENCES, type Me, type UserPreferences } from '@talk/shared';
 import { api, ApiError, qk } from './api';
 
 /** One QueryClient for the app: any 401 logs the user out locally; client errors are not retried. */
@@ -44,6 +44,16 @@ export function useCurrentUser(): Me {
   const { data } = useMe();
   if (!data) throw new Error('useCurrentUser usado fora de RequireAuth');
   return data;
+}
+
+/** The signed-in user's preferences over the defaults (spec 2026-10-19 §6). Reactive; only valid below <RequireAuth>. */
+export function usePreferences(): UserPreferences {
+  return { ...DEFAULT_PREFERENCES, ...useCurrentUser().preferences };
+}
+
+/** The same, read from the cache at the moment of use (a key press, a WebSocket event); the defaults before login. */
+export function preferencesOf(qc: QueryClient): UserPreferences {
+  return { ...DEFAULT_PREFERENCES, ...qc.getQueryData<Me | null>(qk.me)?.preferences };
 }
 
 const SESSION_KEY = 'talk:session';

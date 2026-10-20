@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { BellRingingIcon } from '@phosphor-icons/react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { NotificationDto } from '@talk/shared';
+import { preferencesOf } from '../../lib/auth';
+import { browserNotificationAllowed, showBrowserNotification } from '../../lib/notify';
 import { useWsEvent } from '../../lib/ws';
 
 export const TOAST_MS = 8000;
@@ -11,6 +14,7 @@ const titleOf = (n: NotificationDto) => n.title.trim() || 'Notificação do chat
 /** notify_agent (spec §4): an 8 s toast plus a browser notification when allowed. Mount once in AppLayout. */
 export function NotificationToasts() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [items, setItems] = useState<NotificationDto[]>([]);
   const dismiss = (id: string) => setItems((cur) => cur.filter((n) => n.id !== id));
 
@@ -20,13 +24,10 @@ export function NotificationToasts() {
     setItems((cur) => [...cur, n]);
     // ponytail: one timer per toast, not cleared on unmount (a setState after unmount is a no-op)
     setTimeout(() => dismiss(n.id), TOAST_MS);
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    const browser = new Notification(titleOf(n), { body: n.text, tag: n.id });
-    browser.onclick = () => {
-      window.focus();
-      navigate(`/chats/${n.chatId}`);
-      browser.close();
-    };
+    // Spec 2026-10-19 §6: the browser notification follows the user's choice; the toast above always shows.
+    if (browserNotificationAllowed(preferencesOf(qc).browserNotifications, document.hidden)) {
+      showBrowserNotification(titleOf(n), n.text, n.id, () => navigate(`/chats/${n.chatId}`));
+    }
   });
 
   return (

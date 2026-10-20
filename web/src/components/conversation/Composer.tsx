@@ -3,10 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Robot, Smiley, Sticker, Trash, X } from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, MessageDto, QuickAnswerDto } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
+import { preferencesOf } from '../../lib/auth';
 import { applyWsEvent } from '../../lib/ws';
 import { BotPanel } from './BotPanel';
 import { BotRunningDialog } from './ChatDialogs';
-import { errorMessage, previewText } from './model';
+import { errorMessage, isSendKey, previewText } from './model';
 import { QuickAnswerPicker, filterQuickAnswers } from './QuickAnswerPicker';
 import { StickerPanel } from './StickerPanel';
 import { useAudioRecorder } from './useAudioRecorder';
@@ -242,7 +243,8 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
         }
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // read at the key press: the composer stays mounted while the preference changes on another page
+    if (isSendKey(e, preferencesOf(qc).enterSends)) {
       e.preventDefault();
       void send();
     }

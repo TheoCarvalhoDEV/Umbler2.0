@@ -3,7 +3,7 @@ import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
 import { ApiError } from '../../lib/api';
 import {
   buildTimelineRows, dayLabel, deletedTag, editedTag, errorMessage, eventText, isConflict, mergeTimelinePages, newerCursor,
-  olderCursor, previewText, resultsLabel,
+  isSendKey, olderCursor, previewText, resultsLabel,
 } from './model';
 
 // local wall-clock times, so the day boundaries match the browser's time zone
@@ -231,5 +231,22 @@ describe('resultsLabel (spec 2026-10-19 §4)', () => {
     expect(resultsLabel(1)).toBe('1 resultado');
     expect(resultsLabel(12)).toBe('12 resultados');
     expect(resultsLabel(50)).toBe('50+ resultados');
+  });
+});
+
+describe('isSendKey (spec 2026-10-19 §6)', () => {
+  const key = (over: Partial<{ key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; composing: boolean }> = {}) => ({
+    key: over.key ?? 'Enter', shiftKey: !!over.shiftKey, ctrlKey: !!over.ctrlKey, metaKey: !!over.metaKey,
+    nativeEvent: { isComposing: !!over.composing },
+  });
+
+  it('on: Enter sends, Shift+Enter does not; off: only Ctrl or Cmd+Enter sends; never while composing', () => {
+    expect(isSendKey(key(), true)).toBe(true);
+    expect(isSendKey(key({ shiftKey: true }), true)).toBe(false);
+    expect(isSendKey(key(), false)).toBe(false);
+    expect(isSendKey(key({ ctrlKey: true }), false)).toBe(true);
+    expect(isSendKey(key({ metaKey: true }), false)).toBe(true);
+    expect(isSendKey(key({ composing: true }), true)).toBe(false);
+    expect(isSendKey(key({ key: 'a' }), true)).toBe(false);
   });
 });

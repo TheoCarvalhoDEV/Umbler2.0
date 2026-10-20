@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import { NavLink, Navigate, useParams } from 'react-router';
 import { useCurrentUser } from '../../lib/auth';
 import { ProfileSettings } from './ProfileSettings';
+import { PreferencesSettings } from './PreferencesSettings';
 import { ChannelsSettings } from './ChannelsSettings';
 import { UsersSettings } from './UsersSettings';
 import { SectorsSettings } from './SectorsSettings';
@@ -16,6 +17,7 @@ const GROUPS = ['Você', 'Atendimento', 'Equipe e cadastros'] as const;
 
 const SECTIONS: Array<{ path: string; label: string; group: (typeof GROUPS)[number]; adminOnly: boolean; page: ComponentType }> = [
   { path: 'perfil', label: 'Perfil', group: 'Você', adminOnly: false, page: ProfileSettings },
+  { path: 'preferencias', label: 'Preferências', group: 'Você', adminOnly: false, page: PreferencesSettings },
   { path: 'respostas-rapidas', label: 'Respostas rápidas', group: 'Você', adminOnly: false, page: QuickAnswersSettings },
   { path: 'canais', label: 'Canais', group: 'Atendimento', adminOnly: true, page: ChannelsSettings },
   { path: 'setores', label: 'Setores', group: 'Atendimento', adminOnly: true, page: SectorsSettings },

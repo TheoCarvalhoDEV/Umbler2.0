@@ -184,3 +184,12 @@ export function errorMessage(e: unknown): string {
 export function isConflict(e: unknown): boolean {
   return e instanceof ApiError && e.status === 409;
 }
+
+/** Spec 2026-10-19 §6 "Enter envia a mensagem": on, Enter sends (Shift+Enter breaks the line); off, Ctrl/Cmd+Enter sends. */
+export function isSendKey(
+  e: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; nativeEvent: { isComposing: boolean } },
+  enterSends: boolean,
+): boolean {
+  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return false;
+  return enterSends ? !e.shiftKey : e.ctrlKey || e.metaKey;
+}
