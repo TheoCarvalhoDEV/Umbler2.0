@@ -13,7 +13,8 @@ import { getChatDetail, getTimeline, listChats, toChatDetail } from '../inbox/qu
 import type { AuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest } from '../lib/http-error.js';
 import {
-  deleteMessageForEveryone, editMessage, forwardMessage, listMessageEdits, listRecentStickers, reactToMessage,
+  deleteMessageForEveryone, deleteNote, editMessage, forwardMessage, listFavorites, listMessageEdits, listRecentStickers,
+  reactToMessage, setFavorite,
 } from '../messages/actions.js';
 import { addNote, resendMessage, sendAgentMessage, type SendInput } from '../messages/send.js';
 
@@ -220,5 +221,16 @@ export async function chatRoutes(app: FastifyInstance, ctx: AppCtx): Promise<voi
     r.post('/api/messages/:id/forward', async (req) =>
       forwardMessage(ctx, req.user, idParams.parse(req.params).id, forwardBody.parse(req.body)),
     );
+
+    // Spec 2026-10-19 §3: a note leaves the chat for everyone. Editing it is the PATCH above.
+    r.delete('/api/notes/:id', async (req, reply) => {
+      await deleteNote(ctx, req.user, idParams.parse(req.params).id);
+      return reply.code(204).send();
+    });
+
+    // Spec 2026-10-19 §5: the shared star.
+    r.put('/api/messages/:id/favorite', async (req) => setFavorite(ctx, req.user, idParams.parse(req.params).id, true));
+    r.delete('/api/messages/:id/favorite', async (req) => setFavorite(ctx, req.user, idParams.parse(req.params).id, false));
+    r.get('/api/chats/:id/favorites', async (req) => listFavorites(ctx, req.user, idParams.parse(req.params).id));
   });
 }

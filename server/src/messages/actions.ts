@@ -3,11 +3,11 @@
 // then finds the work done and changes nothing (ingest applyRevoke/applyEdit).
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 import {
-  DELETED_REASON, RECENT_STICKERS_LIMIT, deleteBlock, editBlock, isSingleEmoji, reactBlock,
-  type ActionBlock, type BotAction, type MessageDto, type MessageEditDto, type RecentStickerDto,
+  DELETED_REASON, FAVORITES_LIMIT, RECENT_STICKERS_LIMIT, deleteBlock, editBlock, isSingleEmoji, noteDeleteBlock, noteEditBlock,
+  reactBlock, type ActionBlock, type BotAction, type MessageDto, type MessageEditDto, type RecentStickerDto,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
-import { chats, messageEdits, messages, users } from '../db/schema.js';
+import { chats, messageEdits, messageFavorites, messages, users } from '../db/schema.js';
 import { getChatForUser, startChat, type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import { visibleChatsWhere, type AuthUser } from '../inbox/visibility.js';
@@ -115,7 +115,10 @@ export async function deleteMessageForEveryone(ctx: AppCtx, user: AuthUser, mess
  */
 export async function editMessage(ctx: AppCtx, user: AuthUser, messageId: string, text: string): Promise<MessageDto> {
   const { msg, chat } = await loadTarget(ctx, user, messageId);
-  refuse(editBlock(asTarget(msg), user.id, Date.now()));
+  // Spec 2026-10-19 §3: a note is edited by its author, any time, with the same history; it never reaches WhatsApp
+  // and adds no timeline event ("Mensagem editada" would be wrong for a note).
+  const isNote = msg.kind === 'note';
+  refuse(isNote ? noteEditBlock(msg, user.id) : editBlock(asTarget(msg), user.id, Date.now()));
   if (text === msg.body) return toMessageDto(ctx.db, msg); // nothing to change: no WhatsApp call, no history row
 
   const sameBody = msg.body === null ? isNull(messages.body) : eq(messages.body, msg.body);
@@ -133,24 +136,26 @@ export async function editMessage(ctx: AppCtx, user: AuthUser, messageId: string
     if (!changed) throw conflict('A mensagem mudou. Recarregue e tente de novo.');
     return saved!;
   });
-  try {
-    await viaWhatsApp('edit', msg.id, async () => {
-      const { instance, key } = await keyOf(ctx, msg);
-      await ctx.wa.editText(instance, { ...key, fromMe: true }, text);
-    });
-  } catch (err) {
-    await rollbackQuietly(msg.id, () =>
-      ctx.db.transaction(async (tx) => {
-        await tx.delete(messageEdits).where(eq(messageEdits.id, edit.id));
-        await tx.update(messages).set({ body: msg.body, editedAt: msg.editedAt }).where(eq(messages.id, msg.id));
-      }),
-    );
-    throw err;
+  if (!isNote) {
+    try {
+      await viaWhatsApp('edit', msg.id, async () => {
+        const { instance, key } = await keyOf(ctx, msg);
+        await ctx.wa.editText(instance, { ...key, fromMe: true }, text);
+      });
+    } catch (err) {
+      await rollbackQuietly(msg.id, () =>
+        ctx.db.transaction(async (tx) => {
+          await tx.delete(messageEdits).where(eq(messageEdits.id, edit.id));
+          await tx.update(messages).set({ body: msg.body, editedAt: msg.editedAt }).where(eq(messages.id, msg.id));
+        }),
+      );
+      throw err;
+    }
+    // ponytail: chats.last_message_preview keeps the old text when the last message is edited; refresh it if anyone notices.
+    await addEvent(ctx.db, chat.id, 'message_edited', { messageId: msg.id, source: 'office' }, user.id);
   }
-  // ponytail: chats.last_message_preview keeps the old text when the last message is edited; refresh it if anyone notices.
-  await addEvent(ctx.db, chat.id, 'message_edited', { messageId: msg.id, source: 'office' }, user.id);
   await ctx.hub.publishMessage(chat.id, 'message.updated', msg.id);
-  await ctx.hub.publishChat(chat.id);
+  if (!isNote) await ctx.hub.publishChat(chat.id); // the timeline shows the new event
   const [row] = await ctx.db.select().from(messages).where(eq(messages.id, msg.id));
   return toMessageDto(ctx.db, row!);
 }
@@ -219,4 +224,51 @@ export async function forwardMessage(ctx: AppCtx, user: AuthUser, messageId: str
       ? to.chatId
       : (await startChat(ctx, user, { contactId: to.contactId, channelId: to.channelId ?? msg.channelId })).id;
   return sendAgentMessage(ctx, user, chatId, { forwardFromId: msg.id, signature: false, botAction: to.botAction });
+}
+
+/**
+ * Spec 2026-10-19 §3: the author or an admin removes a note for the whole team (its history and star go with it, by
+ * cascade). The timeline keeps "Nota apagada por <nome>"; the event carries no text.
+ */
+export async function deleteNote(ctx: AppCtx, user: AuthUser, messageId: string): Promise<void> {
+  const { msg, chat } = await loadTarget(ctx, user, messageId);
+  refuse(noteDeleteBlock(msg, user.id, user.role === 'admin'));
+  await ctx.db.transaction(async (tx) => {
+    // kind = 'note' again in the WHERE: whatever slips past the rule, this route never removes a WhatsApp message.
+    const [gone] = await tx
+      .delete(messages)
+      .where(and(eq(messages.id, msg.id), eq(messages.kind, 'note')))
+      .returning({ id: messages.id });
+    if (!gone) throw notFound(); // another tab removed it first
+    await addEvent(tx, chat.id, 'note_deleted', {}, user.id);
+  });
+  // There is no message event for a row that is gone: chat.updated makes every open timeline refetch.
+  await ctx.hub.publishChat(chat.id);
+}
+
+/**
+ * Spec 2026-10-19 §5: the team's shared star. Anyone who sees the chat marks or unmarks it, in any chat state; marking
+ * an already starred message keeps who marked it first.
+ */
+export async function setFavorite(ctx: AppCtx, user: AuthUser, messageId: string, on: boolean): Promise<MessageDto> {
+  const [msg] = await ctx.db.select().from(messages).where(eq(messages.id, messageId));
+  if (!msg) throw notFound();
+  await getChatForUser(ctx, user, msg.chatId);
+  if (on) await ctx.db.insert(messageFavorites).values({ messageId: msg.id, userId: user.id }).onConflictDoNothing();
+  else await ctx.db.delete(messageFavorites).where(eq(messageFavorites.messageId, msg.id));
+  await ctx.hub.publishMessage(msg.chatId, 'message.updated', msg.id);
+  return toMessageDto(ctx.db, msg);
+}
+
+/** GET /api/chats/:id/favorites: the chat's starred messages, newest star first. */
+export async function listFavorites(ctx: AppCtx, user: AuthUser, chatId: string): Promise<MessageDto[]> {
+  await getChatForUser(ctx, user, chatId);
+  const rows = await ctx.db
+    .select({ msg: messages })
+    .from(messageFavorites)
+    .innerJoin(messages, eq(messages.id, messageFavorites.messageId))
+    .where(eq(messages.chatId, chatId))
+    .orderBy(desc(messageFavorites.createdAt), desc(messageFavorites.messageId))
+    .limit(FAVORITES_LIMIT);
+  return Promise.all(rows.map((r) => toMessageDto(ctx.db, r.msg)));
 }
