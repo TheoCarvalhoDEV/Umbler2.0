@@ -12,11 +12,26 @@ interface Props {
   active: boolean;
   onOpen(): void;
   onTogglePin(): void;
+  onMarkUnread(): void;
+  /** Opens the chat with ConversationHeader's own dialog (?acao=…), so its rules apply. */
+  onOpenWith(acao: 'transferir' | 'finalizar'): void;
+  /** Admins only; undefined hides the item. */
+  onDelete?: () => void;
 }
 
-export function ChatListItem({ chat, sectorName, channelName = null, owner, active, onOpen, onTogglePin }: Props) {
+export function ChatListItem({
+  chat, sectorName, channelName = null, owner, active, onOpen, onTogglePin, onMarkUnread, onOpenWith, onDelete,
+}: Props) {
   const title = contactLabel(chat.contact);
   const unread = chat.unread > 0;
+  const workable = chat.state === 'open' && !chat.history;
+  const menu: Array<{ label: string; run: () => void; danger?: boolean } | false> = [
+    { label: chat.pinned ? 'Desafixar' : 'Fixar', run: onTogglePin },
+    !unread && { label: 'Marcar como não lida', run: onMarkUnread },
+    workable && { label: 'Transferir', run: () => onOpenWith('transferir') },
+    workable && { label: 'Finalizar', run: () => onOpenWith('finalizar') },
+    !!onDelete && { label: 'Excluir conversa', run: onDelete, danger: true },
+  ];
   return (
     <li className={`flex items-stretch rounded-xl ${active ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
       <button
@@ -70,16 +85,22 @@ export function ChatListItem({ chat, sectorName, channelName = null, owner, acti
           <DotsThreeVertical size={18} />
         </summary>
         <div className="absolute right-1 z-10 mt-1 rounded-lg border border-border bg-surface py-1 shadow-lg">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.currentTarget.closest('details')?.removeAttribute('open');
-              onTogglePin();
-            }}
-            className="block w-full whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-sidebar-hover"
-          >
-            {chat.pinned ? 'Desafixar' : 'Fixar'}
-          </button>
+          {menu.map(
+            (item) =>
+              item && (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={(e) => {
+                    e.currentTarget.closest('details')?.removeAttribute('open');
+                    item.run();
+                  }}
+                  className={`block w-full whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-sidebar-hover ${item.danger ? 'text-danger' : ''}`}
+                >
+                  {item.label}
+                </button>
+              ),
+          )}
         </div>
       </details>
     </li>

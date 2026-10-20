@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, gt, isNull, type SQL } from 'drizzle-orm';
+import { rm } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, max, type SQL } from 'drizzle-orm';
+import { stopRunsForChat } from '../bots/engine.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
-import { channels, chatPins, chats, contacts, sectors, settings, users } from '../db/schema.js';
+import {
+  channels, chatPins, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, users,
+} from '../db/schema.js';
 import { HttpError, badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
 import { BlockError } from '../bots/block-error.js';
 import type { BotActor } from '../bots/registry.js';
@@ -257,6 +262,64 @@ export async function markChatRead(ctx: AppCtx, user: AuthUser, chatId: string):
     .where(and(eq(chats.id, chatId), gt(chats.unread, 0)))
     .returning({ id: chats.id });
   if (changed.length) await ctx.hub.publishChat(chatId);
+}
+
+/** "Marcar como não lida": 0 becomes 1; a chat that already has unread messages keeps its count. */
+export async function markChatUnread(ctx: AppCtx, user: AuthUser, chatId: string): Promise<void> {
+  await getChatForUser(ctx, user, chatId);
+  const changed = await ctx.db
+    .update(chats)
+    .set({ unread: 1 })
+    .where(and(eq(chats.id, chatId), eq(chats.unread, 0)))
+    .returning({ id: chats.id });
+  if (changed.length) await ctx.hub.publishChat(chatId);
+}
+
+/**
+ * Admin only. Removes the chat with its messages, events, pins and bot runs (FK cascades), writes a deleted_chats
+ * tombstone so a later history import skips the contact's rows on the channel up to now, then removes the chat's
+ * media files. The contact stays; a live message after this opens a new chat.
+ */
+export async function deleteChat(ctx: AppCtx, user: AuthUser, chatId: string): Promise<void> {
+  if (user.role !== 'admin') throw forbidden('Só administradores podem excluir conversas.');
+  const chat = await getChatForUser(ctx, user, chatId);
+  // reason: the runs and their bot_stopped events go with the chat, so no reason of its own is ever shown
+  await stopRunsForChat(ctx, chatId, { userId: user.id, reason: 'chat_closed' });
+  const now = ctx.botRuntime.now();
+  // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
+  const orphanPaths = await ctx.db.transaction(async (tx) => {
+    const rows = await tx
+      .selectDistinct({ path: messages.mediaPath })
+      .from(messages)
+      .where(and(eq(messages.chatId, chatId), isNotNull(messages.mediaPath)));
+    // chatbot library files are shared by every chat that ran the bot
+    const paths = rows.flatMap((r) => (r.path && !r.path.startsWith('bots/') ? [r.path] : []));
+    // a phone clock ahead of the server can stamp a message after `now`: cover every message of the chat
+    const [last] = await tx.select({ at: max(messages.sentAt) }).from(messages).where(eq(messages.chatId, chatId));
+    const until = last?.at && last.at > now ? last.at : now;
+    await tx.insert(deletedChats).values({
+      id: randomUUID(), contactId: chat.contactId, channelId: chat.channelId, until, deletedBy: user.id, deletedAt: now,
+    });
+    await tx.delete(chats).where(eq(chats.id, chatId));
+    if (paths.length === 0) return [];
+    // a forwarded or resent file is shared with the copy's row: keep any path something else still uses
+    const stillUsed = new Set<string | null>([
+      ...(await tx.select({ p: messages.mediaPath }).from(messages).where(inArray(messages.mediaPath, paths))).map((r) => r.p),
+      ...(await tx.select({ p: quickAnswers.attachmentPath }).from(quickAnswers).where(inArray(quickAnswers.attachmentPath, paths)))
+        .map((r) => r.p),
+    ]);
+    return paths.filter((p) => !stillUsed.has(p));
+  });
+  const root = resolve(ctx.config.mediaDir);
+  for (const rel of orphanPaths) {
+    const file = resolve(root, rel);
+    if (!file.startsWith(root + sep)) continue;
+    await rm(file, { force: true }).catch((err: unknown) =>
+      console.error('chat media not removed', { chatId, err: err instanceof Error ? err.name : 'unknown' }),
+    );
+  }
+  ctx.hub.publishChatRemoved(chatId);
+  console.info('chat deleted', { chatId, userId: user.id });
 }
 
 export async function pinChat(ctx: AppCtx, user: AuthUser, chatId: string, pinned: boolean): Promise<void> {

@@ -64,12 +64,13 @@ describe('mediaResponseHeaders', () => {
     expect(h['Content-Security-Policy']).toBe('sandbox');
   });
 
-  it('application/pdf → inline, nosniff, and NO CSP sandbox (browser viewer needs scripts)', () => {
+  it('application/pdf → inline, nosniff, NO CSP sandbox (browser viewer needs scripts), framed by our own page only', () => {
     const h = mediaResponseHeaders('application/pdf', 'contrato.pdf');
     expect(h['Content-Type']).toBe('application/pdf');
     expect(h['Content-Disposition']).toMatch(/^inline;/);
     expect(h['X-Content-Type-Options']).toBe('nosniff');
-    expect(h['Content-Security-Policy']).toBeUndefined();
+    expect(h['Content-Security-Policy']).toBe("frame-ancestors 'self'");
+    expect(h['X-Frame-Options']).toBe('SAMEORIGIN');
   });
 
   // Review Focus 5: malicious media must never render inline.

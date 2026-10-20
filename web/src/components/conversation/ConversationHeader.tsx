@@ -1,6 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockSimpleOpen, User, UserPlus } from '@phosphor-icons/react';
+import {
+  ArrowBendUpRight, ArrowCounterClockwise, CheckCircle, LockSimple, LockSimpleOpen, MagnifyingGlass, User, UserPlus,
+} from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, ChatDetail } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
@@ -54,9 +57,14 @@ export interface ConversationHeaderProps {
   contactPanelOpen: boolean;
   onToggleContactPanel: () => void;
   onOpenChat: (chatId: string) => void;
+  /** Spec 2026-10-19 §4: the search bar under the header. */
+  searchOpen?: boolean;
+  onToggleSearch?: () => void;
 }
 
-export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPanel, onOpenChat }: ConversationHeaderProps) {
+export function ConversationHeader({
+  chat, contactPanelOpen, onToggleContactPanel, onOpenChat, searchOpen = false, onToggleSearch,
+}: ConversationHeaderProps) {
   const qc = useQueryClient();
   const me = useCurrentUser();
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list }).data ?? [];
@@ -72,6 +80,22 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
   const open = chat.state === 'open';
   const ownerOrAdmin = me.role === 'admin' || chat.ownerId === me.id;
   const lockedByPrivacy = chat.private && !ownerOrAdmin; // §5.3: private → only owner/admin transfer or close
+  // The chat list menu opens a chat with ?acao=transferir|finalizar: the same dialog as the buttons below, only when
+  // that button is enabled; the param goes away (replace) so a reload does not reopen it.
+  const [params, setParams] = useSearchParams();
+  const acao = params.get('acao');
+  useEffect(() => {
+    if (!acao) return;
+    if (open && !lockedByPrivacy) setDialog(acao === 'transferir' ? 'transfer' : acao === 'finalizar' ? 'close' : null);
+    setParams(
+      (p) => {
+        p.delete('acao');
+        return p;
+      },
+      { replace: true },
+    );
+  }, [acao, open, lockedByPrivacy, setParams]);
+
   const sectorName = sectors.find((s) => s.id === chat.sectorId)?.name ?? '—';
   const ownerName = chat.ownerId ? (users.find((u) => u.id === chat.ownerId)?.name ?? 'Atendente') : 'Sem atendente';
 
@@ -141,6 +165,9 @@ export function ConversationHeader({ chat, contactPanelOpen, onToggleContactPane
           </button>
         )}
 
+        <HeaderButton label="Buscar na conversa" pressed={searchOpen} onClick={() => onToggleSearch?.()}>
+          <MagnifyingGlass size={20} />
+        </HeaderButton>
         <HeaderButton label="Contato" pressed={contactPanelOpen} onClick={onToggleContactPanel}>
           <User size={20} />
         </HeaderButton>

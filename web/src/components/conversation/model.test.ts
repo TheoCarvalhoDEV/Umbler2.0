@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
 import { ApiError } from '../../lib/api';
 import {
-  buildTimelineRows, dayLabel, deletedTag, editedTag, errorMessage, eventText, isConflict, mergeTimelinePages, previewText,
+  buildTimelineRows, dayLabel, deletedTag, editedTag, errorMessage, eventText, isConflict, mergeTimelinePages, newerCursor,
+  isSendKey, olderCursor, previewText, resultsLabel,
 } from './model';
 
 // local wall-clock times, so the day boundaries match the browser's time zone
@@ -193,5 +194,63 @@ describe('message action texts', () => {
     expect(editedTag({ at: when, source: 'contact', newTextUnavailable: false })).toBe('editada pelo contato');
     expect(editedTag({ at: when, source: 'contact', newTextUnavailable: true })).toBe('editada pelo contato (novo texto indisponível)');
     expect(editedTag({ at: when, source: 'phone', newTextUnavailable: false })).toBe('editada pelo celular');
+  });
+});
+
+describe('note texts (spec 2026-10-19 §3)', () => {
+  it('names who deleted a note', () => {
+    const names = new Map<string, string>();
+    expect(eventText(event({ kind: 'note_deleted', authorName: 'Bia' }), names)).toBe('Nota apagada por Bia');
+    expect(eventText(event({ kind: 'note_deleted' }), names)).toBe('Nota apagada');
+  });
+});
+
+describe('anchored timeline cursors (spec 2026-10-19 §4)', () => {
+  const page = (...ids: string[]) => ids.map((id, i) => msg(id, at(2026, 10, 14, 9, i)));
+
+  it('the page around a message pages on from an end only when that half came back full', () => {
+    const full = page('a', 'b', 'c', 'd', 'e'); // size 4 → half 2: two older, the target, two newer
+    expect(olderCursor(full, { around: 'c' }, 4)).toEqual({ before: 'a' });
+    expect(newerCursor(full, { around: 'c' }, 4)).toEqual({ after: 'e' });
+    expect(olderCursor(page('c', 'd', 'e'), { around: 'c' }, 4)).toBeUndefined(); // nothing older than c
+    expect(newerCursor(page('a', 'b', 'c', 'd'), { around: 'c' }, 4)).toBeUndefined(); // one newer: the present
+  });
+
+  it('an after page (the start of a refetch) always pages older from its first item', () => {
+    expect(olderCursor(page('d', 'e'), { after: 'c' }, 4)).toEqual({ before: 'd' });
+  });
+
+  it('before and after pages stop when one comes back short', () => {
+    expect(olderCursor(page('a', 'b', 'c', 'd'), { before: 'x' }, 4)).toEqual({ before: 'a' });
+    expect(olderCursor(page('a', 'b'), { before: 'x' }, 4)).toBeUndefined();
+    expect(newerCursor(page('a', 'b', 'c', 'd'), { after: 'x' }, 4)).toEqual({ after: 'd' });
+    expect(newerCursor(page('a'), { after: 'x' }, 4)).toBeUndefined();
+    expect(olderCursor([], { before: 'x' }, 4)).toBeUndefined();
+  });
+});
+
+describe('resultsLabel (spec 2026-10-19 §4)', () => {
+  it('counts the hits; a full page reads 50+', () => {
+    expect(resultsLabel(0)).toBe('Nenhum resultado');
+    expect(resultsLabel(1)).toBe('1 resultado');
+    expect(resultsLabel(12)).toBe('12 resultados');
+    expect(resultsLabel(50)).toBe('50+ resultados');
+  });
+});
+
+describe('isSendKey (spec 2026-10-19 §6)', () => {
+  const key = (over: Partial<{ key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; composing: boolean }> = {}) => ({
+    key: over.key ?? 'Enter', shiftKey: !!over.shiftKey, ctrlKey: !!over.ctrlKey, metaKey: !!over.metaKey,
+    nativeEvent: { isComposing: !!over.composing },
+  });
+
+  it('on: Enter sends, Shift+Enter does not; off: only Ctrl or Cmd+Enter sends; never while composing', () => {
+    expect(isSendKey(key(), true)).toBe(true);
+    expect(isSendKey(key({ shiftKey: true }), true)).toBe(false);
+    expect(isSendKey(key(), false)).toBe(false);
+    expect(isSendKey(key({ ctrlKey: true }), false)).toBe(true);
+    expect(isSendKey(key({ metaKey: true }), false)).toBe(true);
+    expect(isSendKey(key({ composing: true }), true)).toBe(false);
+    expect(isSendKey(key({ key: 'a' }), true)).toBe(false);
   });
 });

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import type { NotificationDto } from '@talk/shared';
+import { DEFAULT_PREFERENCES, type BrowserNotificationMode, type Me, type NotificationDto } from '@talk/shared';
+import { qk } from '../../lib/api';
 import { connectWs } from '../../lib/ws';
 import { NotificationToasts, TOAST_MS } from './NotificationToasts';
 
@@ -38,7 +39,12 @@ const NOTE: NotificationDto = {
 
 let stopWs: () => void = () => {};
 
-function setup(permission: NotificationPermission) {
+const ME: Me = {
+  id: 'u1', name: 'Ana Lima', email: 'ana@teste.local', role: 'agent', signature: null, sectorIds: [], seeAllSectors: false, avatarUrl: null,
+};
+
+/** `mode`: the user's "Notificações do navegador" (spec 2026-10-19 §6); 'always' keeps the older tests' meaning. */
+function setup(permission: NotificationPermission, mode: BrowserNotificationMode = 'always') {
   vi.useFakeTimers();
   FakeNotification.permission = permission;
   FakeNotification.instances = [];
@@ -46,14 +52,18 @@ function setup(permission: NotificationPermission) {
   vi.stubGlobal('Notification', FakeNotification);
   vi.spyOn(window, 'focus').mockImplementation(() => {}); // jsdom: window.focus is "not implemented"
   stopWs = connectWs(new QueryClient(), 'ws://test/ws');
+  const qc = new QueryClient();
+  qc.setQueryData(qk.me, { ...ME, preferences: { ...DEFAULT_PREFERENCES, browserNotifications: mode } });
   render(
-    <MemoryRouter initialEntries={['/chats']}>
-      <NotificationToasts />
-      <Routes>
-        <Route path="/chats" element={<p>Lista</p>} />
-        <Route path="/chats/:id" element={<p>Conversa aberta</p>} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/chats']}>
+        <NotificationToasts />
+        <Routes>
+          <Route path="/chats" element={<p>Lista</p>} />
+          <Route path="/chats/:id" element={<p>Conversa aberta</p>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -126,5 +136,18 @@ describe('NotificationToasts', () => {
     emit({ type: 'notification', notification: { ...NOTE, id: 'n2', title: '' } });
     expect(screen.getByText('Notificação do chatbot')).toBeTruthy();
     expect(FakeNotification.instances[0]!.title).toBe('Notificação do chatbot');
+  });
+
+  it('"Nunca" keeps the toast and skips the browser notification (spec 2026-10-19 §6)', () => {
+    setup('granted', 'never');
+    emit({ type: 'notification', notification: NOTE });
+    expect(screen.getByRole('link')).toBeTruthy();
+    expect(FakeNotification.instances).toHaveLength(0);
+  });
+
+  it('"Só quando a aba está em segundo plano" skips it while the tab is visible', () => {
+    setup('granted', 'background'); // jsdom: document.hidden is false
+    emit({ type: 'notification', notification: NOTE });
+    expect(FakeNotification.instances).toHaveLength(0);
   });
 });

@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_PREFERENCES } from '@talk/shared';
 import { buildApp } from '../../src/app.js';
 import { requireAdmin } from '../../src/auth/plugin.js';
 import { deleteUserSessions } from '../../src/auth/sessions.js';
@@ -44,6 +45,7 @@ describe('POST /api/auth/login', () => {
       sectorIds: [seed.sectorA],
       seeAllSectors: false,
       avatarUrl: null,
+      preferences: DEFAULT_PREFERENCES,
     });
     const sid = res.cookies.find((c) => c.name === 'sid');
     expect(sid?.value).toBeTruthy();
@@ -257,5 +259,50 @@ describe('requireAdmin', () => {
     } finally {
       await a.close();
     }
+  });
+});
+
+describe('PUT /api/auth/me/preferences (spec 2026-10-19 §6)', () => {
+  const put = (headers: Record<string, string>, payload: object) =>
+    app.inject({ method: 'PUT', url: '/api/auth/me/preferences', headers, payload });
+  const meOf = async (cookie: string) => (await app.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie } })).json();
+  const stored = async (id: string) => (await ctx.db.select().from(users).where(eq(users.id, id)))[0]!.preferences;
+
+  it('starts from the defaults and changes only the named fields, for this user only', async () => {
+    const ana = await loginAs(app, seed.agentA.email);
+    expect((await meOf(ana.cookie)).preferences).toEqual(DEFAULT_PREFERENCES);
+
+    const first = await put(ana.headers, { sounds: false });
+    expect(first.statusCode).toBe(200);
+    expect(first.json().preferences).toEqual({ ...DEFAULT_PREFERENCES, sounds: false });
+    expect((await put(ana.headers, { browserNotifications: 'never' })).json().preferences).toEqual({
+      enterSends: true, sounds: false, browserNotifications: 'never',
+    });
+    expect(await stored(seed.agentA.id)).toEqual({ sounds: false, browserNotifications: 'never' });
+
+    const bruno = await loginAs(app, seed.agentB.email);
+    expect((await meOf(bruno.cookie)).preferences).toEqual(DEFAULT_PREFERENCES);
+  });
+
+  it('two saves at once keep both fields (Review Focus 5)', async () => {
+    const ana = await loginAs(app, seed.agentA.email);
+    await Promise.all([put(ana.headers, { enterSends: false }), put(ana.headers, { sounds: false })]);
+    expect(await stored(seed.agentA.id)).toEqual({ enterSends: false, sounds: false });
+  });
+
+  it('a stored value the schema no longer accepts falls back to the defaults', async () => {
+    await ctx.db.update(users).set({ preferences: { browserNotifications: 'old' } as never }).where(eq(users.id, seed.agentA.id));
+    const ana = await loginAs(app, seed.agentA.email);
+    expect((await meOf(ana.cookie)).preferences).toEqual(DEFAULT_PREFERENCES);
+  });
+
+  it('refuses unknown fields, bad values, a request without Origin and one without a session', async () => {
+    const ana = await loginAs(app, seed.agentA.email);
+    expect((await put(ana.headers, { theme: 'dark' })).statusCode).toBe(400);
+    expect((await put(ana.headers, { browserNotifications: 'sometimes' })).statusCode).toBe(400);
+    expect((await put(ana.headers, { sounds: 'no' })).statusCode).toBe(400);
+    expect((await put({ cookie: ana.cookie }, { sounds: false })).statusCode).toBe(403);
+    expect((await put({ origin: TEST_ORIGIN }, { sounds: false })).statusCode).toBe(401);
+    expect(await stored(seed.agentA.id)).toEqual({});
   });
 });

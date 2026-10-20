@@ -7,6 +7,7 @@ import { loadAuthUser } from '../inbox/visibility.js';
 import { HttpError, badRequest, forbidden } from '../lib/http-error.js';
 import { AVATAR_MAX_BYTES, AVATAR_TYPES, removeAvatarFile, writeAvatarFile } from '../media/avatar-files.js';
 import { hashPassword, verifyPassword } from './password.js';
+import { preferencesSchema } from './preferences.js';
 import { SESSION_COOKIE, authUser, requireAdmin, requireUser } from './plugin.js';
 import { createSession, deleteSession } from './sessions.js';
 
@@ -109,6 +110,18 @@ export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx
     await ctx.db.update(users).set({ seeAllSectors }).where(eq(users.id, id));
     // Sockets keep the scope they had at connect time: drop them so every open tab reconnects and refetches.
     ctx.hub.disconnectUser(id);
+    return loadAuthUser(ctx.db, id);
+  });
+
+  // Spec 2026-10-19 §6: any user, own preferences. jsonb || merges the named fields in one UPDATE, so two tabs
+  // saving different fields at the same time both stick (no read-modify-write).
+  app.put('/api/auth/me/preferences', { preHandler: requireUser }, async (req) => {
+    const patch = preferencesSchema.parse(req.body);
+    const id = authUser(req).id;
+    await ctx.db
+      .update(users)
+      .set({ preferences: sql`${users.preferences} || ${JSON.stringify(patch)}::jsonb` })
+      .where(eq(users.id, id));
     return loadAuthUser(ctx.db, id);
   });
 

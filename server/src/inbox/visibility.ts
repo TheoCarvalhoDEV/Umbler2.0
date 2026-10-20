@@ -1,4 +1,6 @@
 import { and, eq, inArray, or, type SQL } from 'drizzle-orm';
+import type { UserPreferences } from '@talk/shared';
+import { readPreferences } from '../auth/preferences.js';
 import type { Db, Tx } from '../db/client.js';
 import { chats, users, userSectors } from '../db/schema.js';
 import { userAvatarUrl } from '../media/avatar-files.js';
@@ -12,6 +14,7 @@ export interface AuthUser {
   sectorIds: string[];
   seeAllSectors: boolean; // only meaningful for admins ("Ver todos os setores")
   avatarUrl: string | null;
+  preferences?: UserPreferences; // spec 2026-10-19 §6: optional so literals compile; loadAuthUser always fills it
 }
 
 export interface ChatVisibilityFields {
@@ -65,5 +68,6 @@ export async function loadAuthUser(db: Db | Tx, userId: string): Promise<AuthUse
     sectorIds: rows.map((r) => r.sectorId),
     seeAllSectors: u.seeAllSectors,
     avatarUrl: userAvatarUrl(u),
+    preferences: readPreferences(u.preferences),
   };
 }

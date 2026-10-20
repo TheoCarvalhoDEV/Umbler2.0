@@ -47,12 +47,12 @@ const ME: Me = {
   id: 'u1', name: 'Ana Lima', email: 'ana@teste.local', role: 'agent', signature: null, sectorIds: [], seeAllSectors: false, avatarUrl: null,
 };
 
-function renderBubble(m: MessageDto, opts: { chatOpen?: boolean } = {}) {
+function renderBubble(m: MessageDto, opts: { chatOpen?: boolean; me?: Me; highlighted?: boolean } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  qc.setQueryData(qk.me, ME);
+  qc.setQueryData(qk.me, opts.me ?? ME);
   return render(
     <QueryClientProvider client={qc}>
-      <MessageBubble m={m} onReply={() => {}} chatOpen={opts.chatOpen ?? false} />
+      <MessageBubble m={m} onReply={() => {}} chatOpen={opts.chatOpen ?? false} highlighted={opts.highlighted} />
     </QueryClientProvider>,
   ).container;
 }
@@ -139,7 +139,7 @@ describe('MessageBubble action menu', () => {
   it('offers every action on my recent text in an open chat', () => {
     renderBubble(recent, { chatOpen: true });
     openMenu();
-    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar', 'Editar', 'Apagar para todos']);
+    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar', 'Favoritar', 'Editar', 'Apagar para todos']);
     expect(screen.getAllByRole('menuitem').every((b) => !(b as HTMLButtonElement).disabled)).toBe(true);
   });
 
@@ -159,15 +159,15 @@ describe('MessageBubble action menu', () => {
   it('leaves out what does not apply: inbound, deleted and closed-chat messages', () => {
     renderBubble({ ...recent, direction: 'in', authorId: null, authorName: null, authorAvatarUrl: null }, { chatOpen: true });
     openMenu();
-    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar']);
+    expect(labels()).toEqual(['Reagir', 'Responder', 'Encaminhar', 'Copiar', 'Favoritar']);
     cleanup();
     renderBubble({ ...recent, deleted: { at: recent.sentAt, source: 'office', byName: 'Ana Lima' } }, { chatOpen: true });
     openMenu();
-    expect(labels()).toEqual(['Copiar']);
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
     cleanup();
     renderBubble(recent, { chatOpen: false });
     openMenu();
-    expect(labels()).toEqual(['Copiar']);
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
   });
 
   it('reacts with a quick emoji', async () => {
@@ -253,5 +253,136 @@ describe('MessageBubble media that is not on the server', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Baixar' }));
 
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/messages/m1/media', body: undefined }));
+  });
+});
+
+describe('MessageBubble saving a file', () => {
+  const doc: MessageDto = {
+    ...base, kind: 'document', body: null, media: { url: '/api/media/m1', mime: 'application/pdf', name: 'contrato.pdf', size: 2048 },
+  };
+
+  it('shows a download link with the original name on stored media', () => {
+    renderBubble(doc);
+    const link = screen.getByRole('link', { name: 'Baixar arquivo' });
+    expect(link.getAttribute('href')).toBe('/api/media/m1');
+    expect(link.getAttribute('download')).toBe('contrato.pdf');
+    cleanup();
+    renderBubble({ ...doc, kind: 'image', media: { ...doc.media!, mime: 'image/png', name: null } });
+    expect(screen.getByRole('link', { name: 'Baixar arquivo' }).getAttribute('download')).toBe('');
+  });
+
+  it('offers Baixar arquivo in the menu, also in a closed chat, and never without a stored file', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    renderBubble(doc, { chatOpen: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Ações da mensagem' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Baixar arquivo/ }));
+    expect(click).toHaveBeenCalledTimes(1);
+    click.mockRestore();
+    cleanup();
+    renderBubble({ ...doc, media: null, mediaUnavailable: true, body: 'legenda' }, { chatOpen: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Ações da mensagem' }));
+    expect(screen.queryByRole('menuitem', { name: /^Baixar arquivo/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Baixar arquivo' })).toBeNull();
+  });
+});
+
+describe('MessageBubble media viewer', () => {
+  const media = { url: '/api/media/m1', mime: 'application/pdf', name: 'contrato.pdf', size: 2048 };
+  const doc: MessageDto = { ...base, kind: 'document', body: null, media };
+  const viewer = () => screen.queryByRole('dialog', { hidden: true });
+
+  it('opens a photo in the page, not in a new tab, and closes on Fechar', () => {
+    renderBubble({ ...doc, kind: 'image', media: { ...media, mime: 'image/png', name: null } });
+    expect(document.querySelector('a[target="_blank"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Abrir imagem' }));
+    expect(viewer()?.querySelector('img')?.getAttribute('src')).toBe('/api/media/m1');
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar', hidden: true }));
+    expect(viewer()).toBeNull();
+  });
+
+  it('shows a PDF in the page and offers only the download for other documents', () => {
+    renderBubble(doc);
+    fireEvent.click(screen.getByRole('button', { name: /contrato.pdf/ }));
+    expect(viewer()?.querySelector('iframe')?.getAttribute('src')).toBe('/api/media/m1');
+    cleanup();
+    renderBubble({ ...doc, media: { ...media, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name: 'peticao.docx' } });
+    fireEvent.click(screen.getByRole('button', { name: /peticao.docx/ }));
+    expect(viewer()?.querySelector('iframe')).toBeNull();
+    expect(viewer()?.textContent).toContain('não tem pré-visualização');
+    expect(viewer()?.querySelector('a[download="peticao.docx"]')).toBeTruthy();
+  });
+});
+
+describe('MessageBubble notes, favorites and focus (spec 2026-10-19 §3, §4, §5)', () => {
+  const note: MessageDto = { ...base, kind: 'note', body: 'Cliente pediu retorno', sentAt: new Date(Date.now() - 60_000).toISOString() };
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Ações da mensagem' }));
+  const labels = () => screen.getAllByRole('menuitem').map((b) => b.firstChild?.textContent);
+  const item = (name: string) => screen.getByRole('menuitem', { name: new RegExp(`^${name}`) }) as HTMLButtonElement;
+
+  it('offers Editar nota and Apagar nota to the author, only Apagar nota to an admin, neither to another agent', () => {
+    renderBubble(note, { chatOpen: true });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar', 'Editar nota', 'Apagar nota']);
+    cleanup();
+    renderBubble({ ...note, authorId: 'u2' }, { chatOpen: true, me: { ...ME, role: 'admin' } });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar', 'Apagar nota']);
+    cleanup();
+    renderBubble({ ...note, authorId: 'u2' }, { chatOpen: true });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
+    cleanup();
+    renderBubble(note, { chatOpen: false });
+    openMenu();
+    expect(labels()).toEqual(['Copiar', 'Favoritar']);
+  });
+
+  it('edits a note in place through the same PATCH', async () => {
+    stubFetch({ 'PATCH /api/messages/m1': { ...note, body: 'Cliente pediu retorno amanhã' } });
+    renderBubble(note, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Editar nota'));
+    const box = screen.getByLabelText('Editar mensagem') as HTMLTextAreaElement;
+    expect(box.value).toBe('Cliente pediu retorno');
+    fireEvent.change(box, { target: { value: 'Cliente pediu retorno amanhã' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() =>
+      expect(calls).toEqual([{ method: 'PATCH', path: '/api/messages/m1', body: { text: 'Cliente pediu retorno amanhã' } }]),
+    );
+  });
+
+  it('asks before deleting a note, with the spec text, then calls DELETE /api/notes/:id', async () => {
+    stubFetch({ 'DELETE /api/notes/m1': null });
+    renderBubble(note, { chatOpen: true });
+    openMenu();
+    fireEvent.click(item('Apagar nota'));
+    await waitFor(() => expect(calls).toEqual([{ method: 'DELETE', path: '/api/notes/m1', body: undefined }]));
+    expect(confirmDialog).toHaveBeenCalledWith({
+      title: 'Apagar nota?', body: 'A nota sai da conversa para todos.', confirmLabel: 'Apagar nota',
+    });
+  });
+
+  it('stars and unstars, also in a closed chat, and shows the star with who marked it', async () => {
+    const starred = { ...base, favorite: { at: base.sentAt, byName: 'Bia' } };
+    stubFetch({ 'PUT /api/messages/m1/favorite': starred, 'DELETE /api/messages/m1/favorite': base });
+    renderBubble(base);
+    expect(document.querySelector('[data-tag="favorite"]')).toBeNull();
+    openMenu();
+    fireEvent.click(item('Favoritar'));
+    await waitFor(() => expect(calls).toEqual([{ method: 'PUT', path: '/api/messages/m1/favorite', body: undefined }]));
+    cleanup();
+    renderBubble(starred);
+    expect(screen.getByTitle('Favoritada por Bia')).toBeTruthy();
+    openMenu();
+    fireEvent.click(item('Remover dos favoritos'));
+    await waitFor(() => expect(calls.at(-1)).toEqual({ method: 'DELETE', path: '/api/messages/m1/favorite', body: undefined }));
+  });
+
+  it('marks the focused message for the timeline', () => {
+    const c = renderBubble(base, { highlighted: true });
+    const root = c.querySelector('[data-message-id="m1"]');
+    expect(root?.getAttribute('data-highlighted')).toBe('true');
+    cleanup();
+    expect(renderBubble(base).querySelector('[data-message-id="m1"]')?.hasAttribute('data-highlighted')).toBe(false);
   });
 });

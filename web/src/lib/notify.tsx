@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { useMatch, useNavigate } from 'react-router';
+import { useQueryClient } from '@tanstack/react-query';
+import type { BrowserNotificationMode, UserPreferences } from '@talk/shared';
+import { preferencesOf } from './auth';
 import { onWsEvent } from './ws';
 
 function beep(): void {
@@ -18,24 +21,51 @@ function beep(): void {
   }
 }
 
-/** Sound + browser notification for incoming WhatsApp messages while this tab is hidden. Mount once in the layout. */
+/** "Notificações do navegador" (spec 2026-10-19 §6): Sempre, Só quando a aba está em segundo plano, Nunca. */
+export function browserNotificationAllowed(mode: BrowserNotificationMode, hidden: boolean): boolean {
+  return mode === 'always' || (mode === 'background' && hidden);
+}
+
+/** What a new contact message sets off. Nothing for the chat the user is reading in a visible tab. */
+export function messageAlerts(
+  prefs: UserPreferences,
+  s: { hidden: boolean; chatOnScreen: boolean },
+): { sound: boolean; browser: boolean } {
+  const reading = s.chatOnScreen && !s.hidden;
+  return { sound: prefs.sounds && !reading, browser: !reading && browserNotificationAllowed(prefs.browserNotifications, s.hidden) };
+}
+
+/** A browser notification, when the browser allows it, that focuses the tab and runs `open` on click. */
+export function showBrowserNotification(title: string, body: string, tag: string, open: () => void): void {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const n = new Notification(title, { body, tag });
+  n.onclick = () => {
+    window.focus();
+    open();
+    n.close();
+  };
+}
+
+/** Sound + browser notification for new contact messages, by the user's preferences. Mount once in the layout. */
 export function useMessageNotifications(): void {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  // the chat on screen; through a ref so the subscription never restarts on navigation
+  const openChatId = useMatch('/chats/:id')?.params.id;
+  const openRef = useRef(openChatId);
+  openRef.current = openChatId;
   useEffect(
     () =>
       onWsEvent((e) => {
-        if (e.type !== 'message.created' || e.message.direction !== 'in' || !document.hidden) return;
-        beep();
-        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+        if (e.type !== 'message.created' || e.message.direction !== 'in') return;
         const { chatId, body } = e.message;
-        const n = new Notification('Nova mensagem', { body: body ? body.slice(0, 120) : 'Mídia recebida', tag: chatId });
-        n.onclick = () => {
-          window.focus();
-          navigate(`/chats/${chatId}`);
-          n.close();
-        };
+        const alerts = messageAlerts(preferencesOf(qc), { hidden: document.hidden, chatOnScreen: openRef.current === chatId });
+        if (alerts.sound) beep();
+        if (alerts.browser) {
+          showBrowserNotification('Nova mensagem', body ? body.slice(0, 120) : 'Mídia recebida', chatId, () => navigate(`/chats/${chatId}`));
+        }
       }),
-    [navigate],
+    [navigate, qc],
   );
 }
 

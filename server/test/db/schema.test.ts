@@ -3,7 +3,9 @@ import { PgTable } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import * as schema from '../../src/db/schema.js';
-import { botRuns, botVersions, bots, chats, contacts, historyImports, messageEdits, messages, sectors } from '../../src/db/schema.js';
+import {
+  botRuns, botVersions, bots, chats, contacts, historyImports, messageEdits, messageFavorites, messages, sectors,
+} from '../../src/db/schema.js';
 import { makeTestDb, seedBasics, type Seeded } from '../helpers.js';
 
 // Postgres error code of a rejected query (drizzle wraps driver errors in `cause`), null if it succeeded.
@@ -30,9 +32,27 @@ describe('database schema', () => {
 
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(22);
+    expect(tables).toHaveLength(24);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
+  });
+
+  it('message_favorites: one star per message, gone with the message; users.preferences starts empty (spec 2026-10-19)', async () => {
+    const [c] = await db.insert(contacts).values({ phone: '5565999990003' }).returning({ id: contacts.id });
+    const [chat] = await db
+      .insert(chats)
+      .values({ contactId: c!.id, channelId: s.channelId, sectorId: s.defaultSector })
+      .returning({ id: chats.id });
+    const [m] = await db
+      .insert(messages)
+      .values({ chatId: chat!.id, channelId: s.channelId, direction: 'out', kind: 'note', body: 'nota', status: 'sent', sentAt: new Date() })
+      .returning({ id: messages.id });
+    expect(await pgCode(db.insert(messageFavorites).values({ messageId: m!.id, userId: s.agentA.id }))).toBeNull();
+    expect(await pgCode(db.insert(messageFavorites).values({ messageId: m!.id, userId: s.agentB.id }))).toBe(UNIQUE_VIOLATION);
+    await db.delete(messages).where(eq(messages.id, m!.id));
+    expect(await db.select().from(messageFavorites)).toEqual([]);
+    const [u] = await db.select().from(schema.users).where(eq(schema.users.id, s.agentA.id));
+    expect(u!.preferences).toEqual({});
   });
 
   it('history_imports: one running import per channel; finished ones never block a new one (§5.1)', async () => {

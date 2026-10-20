@@ -1,12 +1,13 @@
 {$DOMAIN} {
 	encode zstd gzip
 
-	# Headers de segurança. "?" só define se o app não definiu: a mídia já sai com CSP sandbox.
+	# Headers de segurança. "?" só define se o app não definiu: a mídia já sai com CSP sandbox,
+	# e o PDF sai com frame-ancestors 'self' + SAMEORIGIN para abrir no visualizador do próprio app.
 	# img-src data: é o QR code do canal; media-src blob: e microphone=(self), o gravador de áudio.
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		?X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
+		?X-Frame-Options "DENY"
 		Referrer-Policy "same-origin"
 		Permissions-Policy "camera=(), geolocation=(), microphone=(self)"
 		?Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' wss://{$DOMAIN}; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"

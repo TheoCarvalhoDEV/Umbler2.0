@@ -1,7 +1,7 @@
 import { desc, eq } from 'drizzle-orm';
 import type { MessageDto } from '@talk/shared';
 import type { Db, Tx } from '../db/client.js';
-import { botRuns, bots, messageEdits, messages, users } from '../db/schema.js';
+import { botRuns, bots, messageEdits, messageFavorites, messages, users } from '../db/schema.js';
 import { userAvatarUrl } from '../media/avatar-files.js';
 
 type MessageRow = typeof messages.$inferSelect;
@@ -48,6 +48,12 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
         .orderBy(desc(messageEdits.editedAt))
         .limit(1)
     : [];
+  // ponytail: one primary-key lookup per message; join it into the timeline query if a page of 100 ever gets slow.
+  const [favorite] = await db
+    .select({ at: messageFavorites.createdAt, byName: users.name })
+    .from(messageFavorites)
+    .leftJoin(users, eq(users.id, messageFavorites.userId))
+    .where(eq(messageFavorites.messageId, row.id));
 
   return {
     id: row.id,
@@ -86,5 +92,6 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
         }
       : null,
     forwarded: row.forwardedFromId !== null,
+    favorite: favorite ? { at: favorite.at.toISOString(), byName: favorite.byName ?? null } : null,
   };
 }

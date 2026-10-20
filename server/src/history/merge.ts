@@ -1,7 +1,9 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
-import { botRuns, chatEvents, chats, contactFieldValues, contactNotes, contactTags, contacts, messages } from '../db/schema.js';
+import {
+  botRuns, chatEvents, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
+} from '../db/schema.js';
 import { type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import { type Contact } from '../messages/ingest.js';
@@ -67,6 +69,8 @@ async function moveContact(tx: Tx, from: Contact, into: Contact): Promise<{ touc
   }
   await tx.update(contactNotes).set({ contactId: into.id }).where(eq(contactNotes.contactId, from.id));
   await tx.update(botRuns).set({ contactId: into.id }).where(eq(botRuns.contactId, from.id));
+  // a deleted chat's tombstone follows the contact, or this very import would bring the conversation back
+  await tx.update(deletedChats).set({ contactId: into.id }).where(eq(deletedChats.contactId, from.id));
   await tx.delete(contacts).where(eq(contacts.id, from.id)); // frees the lid (unique); its tag/field rows cascade
   await tx
     .update(contacts)

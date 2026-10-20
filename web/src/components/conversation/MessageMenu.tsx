@@ -1,18 +1,21 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { CaretDown } from '@phosphor-icons/react';
 import {
-  QUICK_REACTIONS, deleteBlock, editBlock, forwardBlock, isSingleEmoji, reactBlock, replyBlock, type ActionBlock, type MessageDto,
+  QUICK_REACTIONS, deleteBlock, editBlock, forwardBlock, isSingleEmoji, noteDeleteBlock, noteEditBlock, reactBlock,
+  replyBlock, type ActionBlock, type MessageDto,
 } from '@talk/shared';
 
-export type MenuAction = 'react' | 'reply' | 'forward' | 'copy' | 'edit' | 'delete';
+export type MenuAction = 'react' | 'reply' | 'forward' | 'copy' | 'download' | 'favorite' | 'edit' | 'delete' | 'deleteNote';
 /** hint set = the action applies but its time is over: shown disabled with the hint. */
 export interface MenuItem { action: MenuAction; label: string; hint: string | null }
 
 /**
- * Spec §9: Reagir · Responder · Encaminhar · Copiar · Editar · Apagar para todos. An action that does not apply to
- * this message is left out; one whose time is over stays, disabled, with its hint. A closed chat only offers Copiar.
+ * Spec §9 (2026-10-16) and §8 (2026-10-19): Reagir · Responder · Encaminhar · Copiar · Baixar arquivo · Favoritar · Editar ·
+ * Apagar para todos; a note offers Editar nota · Apagar nota instead of the last two. An action that does not apply to this
+ * message is left out; one whose time is over stays, disabled, with its hint. A closed chat only offers Copiar, Baixar arquivo
+ * and Favoritar.
  */
-export function menuItems(m: MessageDto, meId: string | null, chatOpen: boolean, now: number): MenuItem[] {
+export function menuItems(m: MessageDto, meId: string | null, chatOpen: boolean, now: number, isAdmin = false): MenuItem[] {
   const items: MenuItem[] = [];
   const add = (action: MenuAction, label: string, block: ActionBlock | null) => {
     if (!block) items.push({ action, label, hint: null });
@@ -24,7 +27,13 @@ export function menuItems(m: MessageDto, meId: string | null, chatOpen: boolean,
     add('forward', 'Encaminhar', forwardBlock(m));
   }
   if (m.body) items.push({ action: 'copy', label: 'Copiar', hint: null });
-  if (chatOpen) {
+  if (m.media) items.push({ action: 'download', label: 'Baixar arquivo', hint: null }); // only a file the server has
+  // Spec 2026-10-19 §5: any message, any chat state: a team bookmark, not a WhatsApp action
+  items.push({ action: 'favorite', label: m.favorite ? 'Remover dos favoritos' : 'Favoritar', hint: null });
+  if (chatOpen && m.kind === 'note') {
+    add('edit', 'Editar nota', noteEditBlock(m, meId));
+    add('deleteNote', 'Apagar nota', noteDeleteBlock(m, meId, isAdmin));
+  } else if (chatOpen) {
     add('edit', 'Editar', editBlock(m, meId, now));
     add('delete', 'Apagar para todos', deleteBlock(m, now));
   }

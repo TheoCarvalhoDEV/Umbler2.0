@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { chats, contacts, messageEdits, messages } from '../../src/db/schema.js';
+import { chats, contacts, messageEdits, messageFavorites, messages } from '../../src/db/schema.js';
 import { messagePreview, toMessageDto } from '../../src/messages/dto.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -41,7 +41,7 @@ describe('toMessageDto', () => {
       mediaUnavailable: false,
       mediaExpired: false,
       authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
-      officeReaction: null, deleted: null, edited: null, forwarded: false,
+      officeReaction: null, deleted: null, edited: null, forwarded: false, favorite: null,
       replyTo: { id: quotedId, body: 'Pode mandar o contrato?', kind: 'text' },
       reaction: null, status: 'pending', error: null,
       sentAt: '2026-10-14T12:05:00.000Z',
@@ -94,6 +94,17 @@ describe('toMessageDto', () => {
 
     const [plain] = await ctx.db.select().from(messages).where(eq(messages.id, sourceId));
     expect(await toMessageDto(ctx.db, plain!)).toMatchObject({ officeReaction: null, deleted: null, edited: null, forwarded: false });
+  });
+
+  it('fills the shared star with who marked it (spec 2026-10-19 §5)', async () => {
+    const { ctx, s, chatId } = await setup();
+    const [row] = await ctx.db.insert(messages).values({
+      id: randomUUID(), chatId, channelId: s.channelId, direction: 'in', kind: 'text', body: 'Prazo: 20/10',
+      externalId: 'ext-fav', status: 'sent', sentAt: new Date('2026-10-19T10:00:00Z'),
+    }).returning();
+    expect((await toMessageDto(ctx.db, row!)).favorite).toBeNull();
+    await ctx.db.insert(messageFavorites).values({ messageId: row!.id, userId: s.agentA.id, createdAt: new Date('2026-10-19T11:00:00Z') });
+    expect((await toMessageDto(ctx.db, row!)).favorite).toEqual({ at: '2026-10-19T11:00:00.000Z', byName: s.agentA.name });
   });
 });
 

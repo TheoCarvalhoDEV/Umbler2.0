@@ -1,18 +1,20 @@
 import { useState, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Checks, Clock, FileText, ImageBroken, Robot, ShareFat, WarningCircle } from '@phosphor-icons/react';
+import { Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, Robot, ShareFat, Star, WarningCircle } from '@phosphor-icons/react';
 import type { Me, MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 import { Avatar } from '../Avatar';
 import { applyWsEvent } from '../../lib/ws';
-import { EditHistoryDialog, ForwardDialog } from './MessageDialogs';
+import { EditHistoryDialog, ForwardDialog, MediaViewer } from './MessageDialogs';
 import { MessageMenu, menuItems, type MenuAction } from './MessageMenu';
 import { deletedTag, editedTag, errorMessage, previewText, timeOfDay } from './model';
 
 const chip = 'rounded-full border border-border bg-surface px-1.5 text-sm shadow-sm';
 
 const MEDIA_KINDS = new Set(['image', 'audio', 'video', 'document', 'sticker']);
+// download button over a photo or video: shows on hover, like WhatsApp Web
+const overlay = 'absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100';
 
 function formatSize(bytes: number | null): string {
   if (bytes == null) return '';
@@ -66,7 +68,24 @@ function DownloadButton({ m }: { m: MessageDto }) {
   );
 }
 
+/** Saves the stored file with its original name (same origin, so the download attribute wins over inline). */
+function saveFile(url: string, name: string | null) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name ?? '';
+  a.click();
+}
+
+function SaveLink({ url, name, className = '' }: { url: string; name: string | null; className?: string }) {
+  return (
+    <a href={url} download={name ?? ''} aria-label="Baixar arquivo" title="Baixar arquivo" className={`shrink-0 ${className}`}>
+      <DownloadSimple size={18} />
+    </a>
+  );
+}
+
 function MediaView({ m }: { m: MessageDto }) {
+  const [viewing, setViewing] = useState(false);
   if (m.mediaExpired) {
     return (
       <p className="flex items-center gap-1 text-sm italic text-muted">
@@ -84,35 +103,53 @@ function MediaView({ m }: { m: MessageDto }) {
   // inbound media is downloaded after the message is stored (§5.1 step 6); message.updated fills it in
   if (!m.media) return MEDIA_KINDS.has(m.kind) ? <p className="text-sm italic text-muted">Carregando mídia…</p> : null;
   const { url, name, size } = m.media;
+  const viewer = viewing && <MediaViewer media={m.media} kind={m.kind} onClose={() => setViewing(false)} />;
   switch (m.kind) {
     case 'image':
     case 'sticker':
       return (
-        <a href={url} target="_blank" rel="noopener noreferrer">
-          <img
-            src={url}
-            alt={name ?? 'Imagem'}
-            loading="lazy"
-            className={m.kind === 'sticker' ? 'size-32 object-contain' : 'max-h-72 max-w-full rounded'}
-          />
-        </a>
+        <div className="relative">
+          <button type="button" onClick={() => setViewing(true)} aria-label="Abrir imagem" className="block cursor-zoom-in">
+            <img
+              src={url}
+              alt={name ?? 'Imagem'}
+              loading="lazy"
+              className={m.kind === 'sticker' ? 'size-32 object-contain' : 'max-h-72 max-w-full rounded'}
+            />
+          </button>
+          <SaveLink url={url} name={name} className={overlay} />
+          {viewer}
+        </div>
       );
     case 'audio':
-      return <audio controls preload="none" src={url} className="max-w-full" />;
+      return (
+        <div className="flex items-center gap-2">
+          <audio controls preload="none" src={url} className="max-w-full" />
+          <SaveLink url={url} name={name} className="text-muted hover:text-fg" />
+        </div>
+      );
     case 'video':
-      return <video controls preload="metadata" src={url} className="max-h-72 max-w-full rounded" />;
+      return (
+        <div className="relative">
+          <video controls preload="metadata" src={url} className="max-h-72 max-w-full rounded" />
+          <SaveLink url={url} name={name} className={overlay} />
+        </div>
+      );
     default:
       return (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 rounded bg-black/20 px-2 py-1.5 text-sm hover:bg-black/30"
-        >
-          <FileText size={24} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{name ?? 'Documento'}</span>
-          <span className="text-xs opacity-70">{formatSize(size)}</span>
-        </a>
+        <div className="flex items-center gap-2 rounded bg-black/20 px-2 py-1.5 text-sm">
+          <button
+            type="button"
+            onClick={() => setViewing(true)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left hover:underline"
+          >
+            <FileText size={24} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{name ?? 'Documento'}</span>
+            <span className="text-xs opacity-70">{formatSize(size)}</span>
+          </button>
+          <SaveLink url={url} name={name} className="opacity-80 hover:opacity-100" />
+          {viewer}
+        </div>
       );
   }
 }
@@ -122,9 +159,11 @@ export interface MessageBubbleProps {
   onReply: (m: MessageDto) => void;
   /** Spec §2: no action in a closed chat (only Copiar). */
   chatOpen?: boolean;
+  /** Spec 2026-10-19 §4: the search hit or favorite the timeline just jumped to. */
+  highlighted?: boolean;
 }
 
-export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubbleProps) {
+export function MessageBubble({ m, onReply, chatOpen = false, highlighted = false }: MessageBubbleProps) {
   const qc = useQueryClient();
   const [resending, setResending] = useState(false);
   const [resendError, setResendError] = useState<string | null>(null);
@@ -153,8 +192,8 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
       ? 'rounded-2xl rounded-tr-sm bg-bubble-out text-fg'
       : 'rounded-2xl rounded-tl-sm bg-bubble-in text-fg shadow-sm';
   // me is loaded before any chat renders (RequireAuth); read it without subscribing
-  const meId = qc.getQueryData<Me | null>(qk.me)?.id ?? null;
-  const items = menuItems(m, meId, chatOpen, Date.now());
+  const me = qc.getQueryData<Me | null>(qk.me);
+  const items = menuItems(m, me?.id ?? null, chatOpen, Date.now(), me?.role === 'admin');
 
   async function resend() {
     setResending(true);
@@ -169,11 +208,12 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
   }
 
   /** Runs one action; its answer goes through the same cache path as the WS echo. */
-  async function act(call: () => Promise<MessageDto>): Promise<boolean> {
+  async function act(call: () => Promise<MessageDto | void>): Promise<boolean> {
     setBusy(true);
     setActionError(null);
     try {
-      applyWsEvent(qc, { type: 'message.updated', message: await call() });
+      const message = await call();
+      if (message) applyWsEvent(qc, { type: 'message.updated', message });
       return true;
     } catch (e) {
       setActionError(errorMessage(e));
@@ -200,15 +240,35 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
     if (ok) await act(() => api.messages.remove(m.id));
   }
 
+  /** Spec 2026-10-19 §3: the row goes away, so reload the timeline (chat.updated does the same on the other screens). */
+  async function removeNote() {
+    const ok = await confirmDialog({ title: 'Apagar nota?', body: 'A nota sai da conversa para todos.', confirmLabel: 'Apagar nota' });
+    if (ok && (await act(() => api.notes.remove(m.id)))) void qc.invalidateQueries({ queryKey: qk.timeline(m.chatId) });
+  }
+
   function onAction(action: Exclude<MenuAction, 'react'>) {
-    if (action === 'reply') onReply(m);
-    else if (action === 'forward') setForwarding(true);
-    else if (action === 'copy') void copy();
-    else if (action === 'edit') {
-      setDraft(m.body ?? '');
-      setActionError(null);
-      setEditing(true);
-    } else void remove();
+    switch (action) {
+      case 'reply':
+        return onReply(m);
+      case 'forward':
+        return setForwarding(true);
+      case 'copy':
+        return void copy();
+      case 'download':
+        if (m.media) saveFile(m.media.url, m.media.name);
+        return;
+      case 'favorite':
+        return void act(() => api.messages.favorite(m.id, !m.favorite));
+      case 'edit':
+        setDraft(m.body ?? '');
+        setActionError(null);
+        setEditing(true);
+        return;
+      case 'delete':
+        return void remove();
+      case 'deleteNote':
+        return void removeNote();
+    }
   }
 
   async function saveEdit() {
@@ -241,7 +301,11 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
   );
 
   return (
-    <div className={`group flex px-4 py-1 ${right ? 'justify-end' : 'justify-start'}`}>
+    <div
+      data-message-id={m.id}
+      data-highlighted={highlighted || undefined}
+      className={`group flex px-4 py-1 ${right ? 'justify-end' : 'justify-start'}`}
+    >
       {right && menu}
       <div
         onContextMenu={(e) => {
@@ -250,7 +314,9 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
           e.preventDefault();
           setMenuOpen(true);
         }}
-        className={`relative max-w-[70%] px-3 py-2 ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''}`}
+        className={`relative max-w-[70%] px-3 py-2 ${tone} ${m.reaction || m.officeReaction ? 'mb-3' : ''} ${
+          highlighted ? 'ring-2 ring-brass' : ''
+        }`}
       >
         {label && (
           <p className="mb-1 flex items-center gap-1 text-xs font-semibold opacity-75">
@@ -303,6 +369,11 @@ export function MessageBubble({ m, onReply, chatOpen = false }: MessageBubblePro
             >
               {editedTag(m.edited)}
             </button>
+          )}
+          {m.favorite && (
+            <span data-tag="favorite" title={`Favoritada por ${m.favorite.byName ?? 'atendente'}`} className="text-brass">
+              <Star size={12} weight="fill" aria-label="Favorita" />
+            </span>
           )}
           <time dateTime={m.sentAt}>{timeOfDay(m.sentAt)}</time>
           {showStatus && <StatusTick status={m.status} />}

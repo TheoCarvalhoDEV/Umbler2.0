@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
-import type { ChannelDto, ChatDetail, ChatListItem, TimelineItem, WsEvent } from '@talk/shared';
-import { qk, type ChatListData, type TimelineData } from './api';
+import type { ChannelDto, ChatDetail, ChatListItem, MessageDto, TimelineItem, WsEvent } from '@talk/shared';
+import { qk, type AnchoredTimelineData, type ChatListData, type TimelineData } from './api';
 
 const listeners = new Set<(ev: WsEvent) => void>();
 
@@ -30,7 +30,7 @@ const at = (i: TimelineItem) => Date.parse(i.type === 'message' ? i.sentAt : i.c
 // No id tie-break: the sort is stable, so same-second messages keep the server's arrival order.
 const byTime = (a: TimelineItem, b: TimelineItem) => at(a) - at(b);
 
-function upsertTimeline(d: TimelineData, next: TimelineItem, insert: boolean): TimelineData {
+function upsertTimeline<D extends { pages: TimelineItem[][] }>(d: D, next: TimelineItem, insert: boolean): D {
   let found = false;
   const pages = d.pages.map((p) =>
     p.map((i) => {
@@ -45,6 +45,12 @@ function upsertTimeline(d: TimelineData, next: TimelineItem, insert: boolean): T
   if (!insert) return d;
   pages[0] = [...(pages[0] ?? []), next].sort(byTime); // pages[0] is the newest page
   return { ...d, pages };
+}
+
+/** Spec 2026-10-19 §5: the chat's favorites list follows the stars without a refetch (newest star first). */
+function favoritesAfter(list: MessageDto[], m: MessageDto): MessageDto[] {
+  if (!m.favorite) return list.filter((f) => f.id !== m.id);
+  return list.some((f) => f.id === m.id) ? list.map((f) => (f.id === m.id ? m : f)) : [m, ...list];
 }
 
 /** Pure cache reducer for one server event. Exported for tests and for tasks that need to apply a DTO the same way. */
@@ -75,9 +81,11 @@ export function applyWsEvent(qc: QueryClient, ev: WsEvent): void {
     case 'message.created':
     case 'message.updated': {
       const item: TimelineItem = { type: 'message', ...ev.message };
-      qc.setQueryData<TimelineData>(qk.timeline(ev.message.chatId), (d) =>
-        d && upsertTimeline(d, item, ev.type === 'message.created'),
-      );
+      const { chatId } = ev.message;
+      qc.setQueryData<TimelineData>(qk.timeline(chatId), (d) => d && upsertTimeline(d, item, ev.type === 'message.created'));
+      // An anchored view (search hit, favorite) takes updates only: a new message belongs at the present, which it may not hold.
+      qc.setQueriesData<AnchoredTimelineData>({ queryKey: qk.timelineAnchors(chatId) }, (d) => d && upsertTimeline(d, item, false));
+      qc.setQueryData<MessageDto[]>(qk.chatFavorites(chatId), (list) => list && favoritesAfter(list, ev.message));
       return;
     }
     case 'channel.status': {

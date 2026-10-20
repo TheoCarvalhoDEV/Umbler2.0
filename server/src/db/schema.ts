@@ -16,6 +16,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type {
   BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
+  UserPreferences,
 } from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
@@ -33,6 +34,8 @@ export const users = pgTable('users', {
   seeAllSectors: boolean('see_all_sectors').notNull().default(false),
   avatarPath: text('avatar_path'),
   createdAt: createdAt(),
+  // Spec 2026-10-19 §6: only what the user changed; readPreferences (auth/preferences.ts) fills in the defaults.
+  preferences: jsonb('preferences').$type<Partial<UserPreferences>>().notNull().default({}),
 });
 
 export const sessions = pgTable('sessions', {
@@ -345,6 +348,13 @@ export const messageEdits = pgTable(
   (t) => [index('message_edits_message_idx').on(t.messageId, t.editedAt)],
 );
 
+/** Spec 2026-10-19 §5: the team's shared star. The primary key makes it one star per message; the first who marks it stays. */
+export const messageFavorites = pgTable('message_favorites', {
+  messageId: uuid('message_id').primaryKey().references(() => messages.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: createdAt(),
+});
+
 export const historyImports = pgTable(
   'history_imports',
   {
@@ -367,4 +377,18 @@ export const historyImports = pgTable(
     uniqueIndex('history_imports_one_running_per_channel').on(t.channelId).where(sql`${t.state} = 'running'`),
     index('history_imports_channel_idx').on(t.channelId, t.startedAt),
   ],
+);
+
+/** A chat an admin deleted: history imports and back-fills never bring back its (contact, channel) rows up to `until`. */
+export const deletedChats = pgTable(
+  'deleted_chats',
+  {
+    id: id(),
+    contactId: uuid('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+    channelId: uuid('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+    until: timestamp('until', { withTimezone: true }).notNull(),
+    deletedBy: uuid('deleted_by').references(() => users.id, { onDelete: 'set null' }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('deleted_chats_channel_contact_idx').on(t.channelId, t.contactId)],
 );

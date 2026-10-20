@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { MessageDto, QuickAnswerDto } from '@talk/shared';
+import { DEFAULT_PREFERENCES, type Me, type MessageDto, type QuickAnswerDto } from '@talk/shared';
 import { qk, type TimelineData } from '../../lib/api';
 import { Composer, SIGNATURE_KEY } from './Composer';
 
@@ -82,6 +82,21 @@ describe('Composer', () => {
     fireEvent.change(box(), { target: { value: 'linha 1' } });
     expect(fireEvent.keyDown(box(), { key: 'Enter', shiftKey: true })).toBe(true); // not prevented → browser inserts \n
     expect(calls).toEqual([]);
+  });
+
+  it('with "Enter envia a mensagem" off, Enter breaks the line and Ctrl+Enter sends (spec 2026-10-19 §6)', async () => {
+    stubFetch({ 'POST /api/chats/c1/messages': message() });
+    const { qc } = renderComposer();
+    const me: Me = {
+      id: 'u1', name: 'Ana', email: 'ana@teste.local', role: 'agent', signature: null, sectorIds: [], seeAllSectors: false,
+      avatarUrl: null, preferences: { ...DEFAULT_PREFERENCES, enterSends: false },
+    };
+    qc.setQueryData(qk.me, me);
+    fireEvent.change(box(), { target: { value: 'linha 1' } });
+    expect(fireEvent.keyDown(box(), { key: 'Enter' })).toBe(true); // not prevented → the browser breaks the line
+    expect(posts('/api/chats/c1/messages')).toEqual([]);
+    expect(fireEvent.keyDown(box(), { key: 'Enter', ctrlKey: true })).toBe(false);
+    await waitFor(() => expect(posts('/api/chats/c1/messages').map((c) => c.body)).toEqual([{ text: 'linha 1', signature: true }]));
   });
 
   it('sends replyToId and clears the reply chip', async () => {

@@ -1,7 +1,38 @@
-import type { ChatEventDto, MessageDto, TimelineItem } from '@talk/shared';
-import { ApiError } from '../../lib/api';
+import { SEARCH_LIMIT, type ChatEventDto, type MessageDto, type TimelineItem } from '@talk/shared';
+import { ApiError, type TimelineCursor } from '../../lib/api';
 
 export const TIMELINE_PAGE_SIZE = 50;
+
+/** Spec 2026-10-19 §4: a message to bring into view; a new `seq` jumps again to the same message. */
+export interface TimelineFocus { messageId: string; seq: number }
+export const FOCUS_HIGHLIGHT_MS = 3000;
+
+/**
+ * Anchored timeline: the cursor of the next older page, or undefined at the start of the chat. The page around a message
+ * asked for half a page on each side, so a full older half means there may be more.
+ */
+export function olderCursor(page: TimelineItem[], param: TimelineCursor, size: number): TimelineCursor | undefined {
+  const first = page[0];
+  if (!first) return undefined;
+  // a refetch restarts from the `after` page: older pages are derived from it, so it always has an older neighbour
+  if ('after' in param) return { before: first.id };
+  if ('around' in param) {
+    const i = page.findIndex((it) => it.id === param.around);
+    return i >= Math.floor(size / 2) ? { before: first.id } : undefined;
+  }
+  return page.length < size ? undefined : { before: first.id };
+}
+
+/** Anchored timeline: the cursor of the next newer page, or undefined once the present is loaded. */
+export function newerCursor(page: TimelineItem[], param: TimelineCursor, size: number): TimelineCursor | undefined {
+  const last = page.at(-1);
+  if (!last) return undefined;
+  if ('around' in param) {
+    const i = page.findIndex((it) => it.id === param.around);
+    return i >= 0 && page.length - 1 - i >= Math.floor(size / 2) ? { after: last.id } : undefined;
+  }
+  return page.length < size ? undefined : { after: last.id };
+}
 
 export type TimelineRow =
   | { kind: 'date'; key: string; label: string }
@@ -64,6 +95,19 @@ export function previewText(body: string | null, kind: string): string {
   return body?.trim() || KIND_PREVIEW[kind] || 'Mensagem';
 }
 
+/** "Buscar na conversa" counter (spec 2026-10-19 §4). The server stops at SEARCH_LIMIT, so a full page reads "50+". */
+export function resultsLabel(n: number): string {
+  if (n === 0) return 'Nenhum resultado';
+  if (n === 1) return '1 resultado';
+  // ponytail: exactly 50 matches also reads "50+"; ask the server for one more row if that ever confuses someone
+  return n >= SEARCH_LIMIT ? `${n}+ resultados` : `${n} resultados`;
+}
+
+/** dd/mm/aaaa hh:mm in the browser's time zone. */
+export function shortDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
 /** `names` maps sector and user ids to names (UUIDs never collide across tables). */
 export function eventText(e: ChatEventDto, names: Map<string, string>): string {
   const name = (v: unknown) => (typeof v === 'string' ? names.get(v) : undefined);
@@ -109,6 +153,8 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
       return `Histórico do WhatsApp importado: ${Number(e.data.count ?? 0).toLocaleString('pt-BR')} mensagens`;
     case 'contact_merged':
       return 'Contato sem número juntado a este contato';
+    case 'note_deleted':
+      return `Nota apagada${by}`;
   }
 }
 
@@ -139,4 +185,13 @@ export function errorMessage(e: unknown): string {
 /** §7: 409 = the chat changed under us (another agent acted first). */
 export function isConflict(e: unknown): boolean {
   return e instanceof ApiError && e.status === 409;
+}
+
+/** Spec 2026-10-19 §6 "Enter envia a mensagem": on, Enter sends (Shift+Enter breaks the line); off, Ctrl/Cmd+Enter sends. */
+export function isSendKey(
+  e: { key: string; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; nativeEvent: { isComposing: boolean } },
+  enterSends: boolean,
+): boolean {
+  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return false;
+  return enterSends ? !e.shiftKey : e.ctrlKey || e.metaKey;
 }

@@ -36,6 +36,20 @@
       "when": 1792429390059,
       "tag": "0004_historico_whatsapp",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792443154723,
+      "tag": "0005_excluir_conversa",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792447934355,
+      "tag": "0006_conversa_dia_a_dia",
+      "breakpoints": true
     }
   ]
 }

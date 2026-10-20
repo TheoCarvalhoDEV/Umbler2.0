@@ -5,6 +5,7 @@ import { Eye, EyeSlash, Funnel, MagnifyingGlass, Plus } from '@phosphor-icons/re
 import type { ChatListFilters, ChatListItem as ChatItem, ChatTab } from '@talk/shared';
 import { api, ApiError, qk } from '../lib/api';
 import { useMe } from '../lib/auth';
+import { confirmDialog } from '../lib/confirm';
 import { ChatListItem } from '../components/inbox/ChatListItem';
 import { FilterPanel } from '../components/inbox/FilterPanel';
 import { NewChatDialog } from '../components/inbox/NewChatDialog';
@@ -85,6 +86,31 @@ export function Inbox() {
             : 'Não foi possível concluir. Tente de novo.',
       ),
   });
+
+  const failed = (err: unknown) => setActionError(err instanceof Error ? err.message : 'Não foi possível concluir. Tente de novo.');
+  const refreshLists = () => {
+    setActionError(null);
+    return qc.invalidateQueries({ queryKey: qk.chatLists });
+  };
+  const markUnread = useMutation({ mutationFn: api.chats.markUnread, onSuccess: refreshLists, onError: failed });
+  // chat.removed (WS) drops it from every list too; the refetch covers a socket that is reconnecting
+  const remove = useMutation({
+    mutationFn: api.chats.remove,
+    onSuccess: (_data, id) => {
+      if (id === activeId) navigate('/chats');
+      return refreshLists();
+    },
+    onError: failed,
+  });
+
+  async function confirmRemove(id: string) {
+    const ok = await confirmDialog({
+      title: 'Excluir conversa?',
+      body: 'A conversa, as mensagens e os arquivos dela saem do sistema para todos. O WhatsApp do contato e o celular não mudam. Não dá para desfazer.',
+      confirmLabel: 'Excluir',
+    });
+    if (ok) remove.mutate(id);
+  }
 
   // Admin-only "Ver todos os setores": the server re-reads it on every request, so refetch what it filters.
   const view = useMutation({
@@ -219,6 +245,13 @@ export function Inbox() {
               owner={c.ownerId ? (userById.get(c.ownerId) ?? null) : null}
               onOpen={() => navigate(`/chats/${c.id}`)}
               onTogglePin={() => pin.mutate(c)}
+              onMarkUnread={() => {
+                // leave first: the open pane marks a chat read as soon as it sees unread > 0
+                if (c.id === activeId) navigate('/chats');
+                markUnread.mutate(c.id);
+              }}
+              onOpenWith={(acao) => navigate(`/chats/${c.id}?acao=${acao}`)}
+              onDelete={me?.role === 'admin' ? () => void confirmRemove(c.id) : undefined}
             />
           ))}
           {list.isPending && <li className="p-4 text-sm text-muted">Carregando…</li>}
