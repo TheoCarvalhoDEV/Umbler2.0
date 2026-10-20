@@ -113,6 +113,11 @@ export function Timeline({
     stickToBottom.current = true;
   }
 
+  // the anchored message is gone (a deleted note): its refetch fails, so leave it for the live view
+  useEffect(() => {
+    if (anchor !== null && anchored.isError) backToLive();
+  }, [anchor, anchored.isError]);
+
   function onScroll() {
     const el = ref.current;
     if (!el) return;

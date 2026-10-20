@@ -49,6 +49,7 @@ export function ChatSearchBar({ chatId, onFocusMessage, onClose }: ChatSearchBar
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.nativeEvent.isComposing) return; // an IME-confirming Enter must not jump
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();

@@ -104,4 +104,30 @@ describe('Timeline focus (spec 2026-10-19 §4)', () => {
     expect(await screen.findByText('texto m9')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Ir para as mensagens recentes' })).toBeNull();
   });
+
+  it('leaves the anchored view for the live one when the anchor can no longer be loaded', async () => {
+    let aroundCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost');
+        if (url.searchParams.has('around') && ++aroundCalls > 1) return new Response(JSON.stringify({ error: 'x' }), { status: 400 });
+        const body = url.pathname === '/api/chats/c1/timeline' ? (url.searchParams.has('around') ? AROUND : LIVE) : [];
+        return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+      }),
+    );
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (focus: TimelineFocus | null) => (
+      <QueryClientProvider client={qc}>
+        <Timeline chatId="c1" onReply={() => {}} focus={focus} />
+      </QueryClientProvider>
+    );
+    const view = render(ui(null));
+    await screen.findByText('texto m9');
+    view.rerender(ui({ messageId: 'm2', seq: 1 }));
+    await screen.findByRole('button', { name: 'Ir para as mensagens recentes' });
+    await qc.invalidateQueries({ queryKey: ['chats'] }); // any refetch of the anchored page
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Ir para as mensagens recentes' })).toBeNull());
+    expect(await screen.findByText('texto m9')).toBeTruthy();
+  });
 });

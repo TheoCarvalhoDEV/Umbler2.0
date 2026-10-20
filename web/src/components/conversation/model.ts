@@ -14,6 +14,8 @@ export const FOCUS_HIGHLIGHT_MS = 3000;
 export function olderCursor(page: TimelineItem[], param: TimelineCursor, size: number): TimelineCursor | undefined {
   const first = page[0];
   if (!first) return undefined;
+  // a refetch restarts from the `after` page: older pages are derived from it, so it always has an older neighbour
+  if ('after' in param) return { before: first.id };
   if ('around' in param) {
     const i = page.findIndex((it) => it.id === param.around);
     return i >= Math.floor(size / 2) ? { before: first.id } : undefined;

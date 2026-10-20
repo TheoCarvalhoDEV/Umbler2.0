@@ -216,6 +216,10 @@ describe('anchored timeline cursors (spec 2026-10-19 §4)', () => {
     expect(newerCursor(page('a', 'b', 'c', 'd'), { around: 'c' }, 4)).toBeUndefined(); // one newer: the present
   });
 
+  it('an after page (the start of a refetch) always pages older from its first item', () => {
+    expect(olderCursor(page('d', 'e'), { after: 'c' }, 4)).toEqual({ before: 'd' });
+  });
+
   it('before and after pages stop when one comes back short', () => {
     expect(olderCursor(page('a', 'b', 'c', 'd'), { before: 'x' }, 4)).toEqual({ before: 'a' });
     expect(olderCursor(page('a', 'b'), { before: 'x' }, 4)).toBeUndefined();
