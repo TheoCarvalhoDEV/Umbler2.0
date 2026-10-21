@@ -73,7 +73,7 @@ Em **Ajustes**, grupo "Equipe e cadastros", item **"Importar do Umbler"** (`/con
 
 ### 6.2 "O que foi encontrado" e mapeamento proposto
 - **Contagens:** contatos (novos / já existem aqui / sem telefone nem LID, que não vêm), conversas abertas (das quais "esperando"), conversas finalizadas, período ("de dd/mm/aaaa a dd/mm/aaaa", pelo `createdAtUTC`), setores, etiquetas, campos (e os não suportados, pelo nome), respostas rápidas, atendentes. Observações dos contatos são contadas só na importação (exigem uma chamada por contato).
-- **Canais** (uma linha por canal do Umbler: nome, tipo, número, nº de conversas) → seletor com os nossos canais e **"Não importar"**. Proposta: o canal com o **mesmo número** (`normalizePhoneBR`); sem número igual, "Não importar" (no ensaio o admin escolhe o canal de teste de propósito). Canal que não é WhatsApp (Webchat, Instagram): fixo em "Não importar".
+- **Canais** (uma linha por canal do Umbler: nome, tipo, número, nº de conversas) → seletor com os nossos canais e **"Não importar"**. Proposta: o canal com o **mesmo número** (`normalizePhoneBR`). Um canal de WhatsApp do Umbler **sem número igual aqui** (número antigo do escritório) vai, por padrão, para o **canal oficial** (decisão do usuário em 21/10, §18), com o aviso "As conversas do número <número antigo> entram no canal <nome>; respostas a elas saem do número oficial". O admin ainda pode escolher "Não importar". No ensaio o admin escolhe o canal de teste de propósito. Canal que não é WhatsApp (Webchat, Instagram): fixo em "Não importar".
 - **Setores** → seletor com os nossos setores e **"Criar setor “<nome>”"**. Proposta: mesmo nome (sem espaços nas pontas, sem diferenciar maiúsculas); senão criar.
 - **Atendentes** (nome, e-mail, ativo no Umbler, nº de conversas) → seletor com os nossos usuários, **"Criar usuário inativo"** e **"Sem atendente"**. Proposta: usuário com o **mesmo e-mail** (sem diferenciar maiúsculas); senão "Criar usuário inativo" (§7.2).
 - Etiquetas, campos e respostas rápidas não têm seletor: casam pelo nome, como hoje ("N novas, M já existem").
@@ -253,8 +253,8 @@ No ambiente de teste: anotar no Umbler 3 conversas abertas com não lidas (conta
 9. **Dados reais no ambiente de teste** e conversas abertas reais com o número de teste: avisos na tela, aceite sem responder, ambiente apagado no fim.
 10. **Inferência da resposta rápida "apenas para mim"** por `organizationMember`: conferida no ensaio.
 
-## 18. Perguntas para o usuário
-1. O ambiente de teste pode receber os dados reais dos clientes (e ser apagado por inteiro depois do aceite)?
-2. Na virada, o escritório aceita começar a atender aqui logo depois de conectar o número, com as finalizadas chegando aos poucos por algumas horas (§13)?
-3. O Umbler tem outros números de WhatsApp (antigos) além do oficial? Se tiver, as conversas deles vão para o canal oficial daqui (respostas sairiam do número oficial) ou ficam de fora?
-4. Confirma "Criar usuário inativo" como padrão para ex-atendentes (§7.2), em vez de "Sem atendente"?
+## 18. Respostas do usuário (21/10)
+1. **Sim:** o ambiente de teste pode receber os dados reais dos clientes e é apagado por inteiro depois do aceite (§12, §13).
+2. **Sim:** na virada, o escritório começa a atender aqui logo depois de conectar o número, com as finalizadas chegando aos poucos (§13, ordem das fases §9.1).
+3. **Entram:** as conversas de números antigos do Umbler vêm para o **canal oficial** daqui (proposta padrão no mapeamento de canais, §6.2), mantendo aberta/finalizada como no Umbler; o "Analisar" avisa que as respostas saem do número oficial.
+4. **Sim:** ex-atendente sem e-mail correspondente vira **usuário inativo** por padrão (§7.2).
