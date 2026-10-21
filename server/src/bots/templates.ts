@@ -33,6 +33,8 @@ const OUT_OF_HOURS_TEXT =
   'Estamos fora do horário de atendimento. Deixe sua mensagem que retornaremos assim que possível.';
 const WELCOME_TEXT =
   'Olá {{contato.primeiro_nome}}! 👋 Sou o assistente virtual da {{empresa}}. Como posso te ajudar hoje?';
+// Triagem: the CPF question follows right away, so the welcome must not end with a question.
+const TRIAGE_WELCOME_TEXT = 'Olá {{contato.primeiro_nome}}! 👋 Sou o assistente virtual da {{empresa}}.';
 const MENU_TEXT = 'Escolha uma das opções abaixo digitando o número correspondente:';
 const NOTICE_TEXT =
   '⚠️ COMUNICADO — Informamos que nosso WhatsApp está com uma demanda muito alta no momento. Por isso, pedimos um prazo de até 2 dias úteis para retorno. Enquanto isso, deixe aqui sua dúvida ou necessidade. Agradecemos a compreensão! 🤝';
@@ -154,8 +156,9 @@ const TRIAGE_RETRY_TEXT =
   'Desculpe, não entendi. Digite só o número da opção ou escreva o assunto (por exemplo: boleto, audiência):';
 // message_contains ignores case and accents and matches substrings ("processo" also hits "processos").
 const KEYWORDS: Record<(typeof DESTINATIONS)[number]['key'], string[]> = {
-  financeiro: ['financeiro', 'boleto', 'pagamento', 'pagar', 'valor', 'cobrança', 'nota fiscal'],
-  processos: ['processo', 'andamento', 'audiência', 'prazo', 'petição', 'sentença'],
+  // no 'valor': "valor da causa / indenização / acordo" is a case question and Financeiro is checked first
+  financeiro: ['financeiro', 'boleto', 'pagamento', 'pagar', 'cobrança', 'nota fiscal', 'honorário', 'parcela', 'pix', 'fatura'],
+  processos: ['processo', 'andamento', 'audiência', 'prazo', 'petição', 'sentença', 'recurso', 'decisão', 'intimação', 'alvará'],
   atendimento: ['atendimento', 'atendente', 'humano'],
 };
 
@@ -197,7 +200,7 @@ export function buildTriageGraph(input: OfficeTemplateInput, cpfFieldId: string)
     1,
   );
   add('fora_do_horario', 'send_message', message(OUT_OF_HOURS_TEXT), 2, 0);
-  add('boas_vindas', 'send_message', message(WELCOME_TEXT.replace('{{empresa}}', () => input.companyName)), 2, 2);
+  add('boas_vindas', 'send_message', message(TRIAGE_WELCOME_TEXT.replace('{{empresa}}', () => input.companyName)), 2, 2);
   add('cliente_conhecido', 'contact_field', { fieldId: cpfFieldId, operator: 'not_empty', value: '' } satisfies ContactFieldConfig, 3, 2);
   add(
     'cpf',
@@ -208,7 +211,7 @@ export function buildTriageGraph(input: OfficeTemplateInput, cpfFieldId: string)
       useLastMessage: false,
       invalidText: CPF_INVALID_TEXT,
       invalidRetries: 2,
-      timeoutHours: null,
+      timeoutHours: 24, // it comes before the menu: whoever never answers must not wait forever
       saveToField: cpfFieldId,
     } satisfies AskInputConfig,
     4,
@@ -225,6 +228,7 @@ export function buildTriageGraph(input: OfficeTemplateInput, cpfFieldId: string)
   link('cliente_conhecido', 'no', 'cpf');
   link('cpf', 'next', 'menu');
   link('cpf', 'invalid', 'menu'); // like the office flow: goes on anyway
+  link('cpf', 'timeout', 'resumo_atendimento'); // nobody answered: hand over silently, like the menu
   for (const m of ['menu', 'menu_2']) {
     for (const d of DESTINATIONS) link(m, `opt:${d.option}`, `confirma_${d.key}`);
     link(m, 'timeout', 'resumo_atendimento'); // nobody answered: hand over silently
@@ -260,6 +264,7 @@ export function buildTriageGraph(input: OfficeTemplateInput, cpfFieldId: string)
     add(resumo, 'note', { text: `Resumo da triagem: {{contato.nome}} · Destino: ${d.label} · CPF: {{campo.CPF}}` } satisfies NoteConfig, 13, i * 2);
     add(setor, 'transfer_sector', { sectorId: dest.sectorId, onlyIfAgentAllowed: false } satisfies TransferSectorConfig, 14, i * 2);
     link(confirma, 'next', resumo);
+    link(confirma, 'error', resumo); // the confirmation failed to send: the chat is still transferred
     link(resumo, 'next', setor);
     if (!dest.userId) return;
     const [agente, aviso] = [`agente_${d.key}`, `aviso_${d.key}`];

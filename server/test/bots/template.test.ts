@@ -22,6 +22,7 @@ const NOTICE =
   '⚠️ COMUNICADO — Informamos que nosso WhatsApp está com uma demanda muito alta no momento. Por isso, pedimos um prazo de até 2 dias úteis para retorno. Enquanto isso, deixe aqui sua dúvida ou necessidade. Agradecemos a compreensão! 🤝';
 const CPF_ASK = 'Para agilizar, digite seu CPF:';
 const CPF_INVALID = 'CPF inválido, confira e digite de novo.';
+const TRIAGE_WELCOME = 'Olá Maria! 👋 Sou o assistente virtual da Silva Advogados.'; // no question: the CPF one follows
 const WORKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
 
 const ids = {
@@ -129,11 +130,13 @@ describe('buildOfficeGraph', () => {
         useLastMessage: false,
         invalidText: CPF_INVALID,
         invalidRetries: 2,
+        timeoutHours: null, // the triage template is the one with a deadline
         saveToField: ids.cpf,
       },
     });
     expect(target('cpf', 'next')).toBe('destino');
     expect(target('cpf', 'invalid')).toBe('destino');
+    expect(target('cpf', 'timeout')).toBeNull();
   });
 
   it('routes by the menu answer; only a mapped agent gets the transfer and the notification', () => {
@@ -208,7 +211,10 @@ describe('buildTriageGraph', () => {
     expect(node('fora_do_horario')).toMatchObject({ type: 'send_message', config: { text: OUT_OF_HOURS } });
     expect(target('fora_do_horario', 'next')).toBeNull();
     expect(target('horario', 'in')).toBe('boas_vindas');
-    expect(node('boas_vindas')?.config.text).toBe(office.nodes.find((n) => n.name === 'boas_vindas')?.config.text);
+    expect(node('boas_vindas')?.config.text).toBe(
+      'Olá {{contato.primeiro_nome}}! 👋 Sou o assistente virtual da Silva Advogados.',
+    );
+    expect(String(node('boas_vindas')?.config.text)).not.toContain('?'); // the CPF question follows right away
   });
 
   it('skips the CPF question when the contact already has a CPF, otherwise asks it like the office flow', () => {
@@ -225,6 +231,13 @@ describe('buildTriageGraph', () => {
     });
     expect(target('cpf', 'next')).toBe('menu');
     expect(target('cpf', 'invalid')).toBe('menu');
+  });
+
+  it('gives the CPF question 24 h; no answer hands the chat over to Atendimento', () => {
+    expect(node('cpf')?.config.timeoutHours).toBe(24);
+    expect(target('cpf', 'timeout')).toBe('resumo_atendimento'); // the same node the menu timeouts use
+    expect(target('menu', 'timeout')).toBe('resumo_atendimento');
+    expect(sectorOf('cpf', 'timeout')).toBe(ids.atendimento);
   });
 
   it('routes every area by number and by keyword', () => {
@@ -248,11 +261,13 @@ describe('buildTriageGraph', () => {
     expect(node('menu')?.config.text).toBe(TRIAGE_MENU_TEXT);
     const words = (name: string) => node(name)?.config.keywords;
     expect(words('palavras_financeiro')).toEqual(
-      expect.arrayContaining(['boleto', 'pagamento', 'pagar', 'valor', 'cobrança', 'nota fiscal']),
+      expect.arrayContaining(['boleto', 'pagamento', 'pagar', 'cobrança', 'nota fiscal', 'honorário', 'parcela', 'pix', 'fatura']),
     );
     expect(words('palavras_processos')).toEqual(
-      expect.arrayContaining(['processo', 'andamento', 'audiência', 'prazo', 'petição', 'sentença']),
+      expect.arrayContaining(['processo', 'andamento', 'audiência', 'prazo', 'petição', 'sentença', 'recurso', 'decisão', 'intimação', 'alvará']),
     );
+    // "valor da causa / indenização / acordo" is a case question, and Financeiro is checked first
+    for (const name of ['palavras_financeiro', 'palavras_financeiro_2']) expect(words(name)).not.toContain('valor');
     expect(words('palavras_atendimento')).toEqual(expect.arrayContaining(['atendente', 'humano']));
     expect(target('menu', 'invalid')).toBe('palavras_financeiro');
     expect(sectorOf('palavras_financeiro', 'yes')).toBe(ids.financeiro);
@@ -290,6 +305,7 @@ describe('buildTriageGraph', () => {
     for (const a of AREAS) {
       expect(node(`confirma_${a}`)).toMatchObject({ type: 'send_message', config: { text: forwarded(LABEL[a]) } });
       expect(target(`confirma_${a}`, 'next')).toBe(`resumo_${a}`);
+      expect(target(`confirma_${a}`, 'error')).toBe(`resumo_${a}`); // a failed send must not stop the transfer
       expect(node(`resumo_${a}`)).toMatchObject({
         type: 'note',
         config: { text: `Resumo da triagem: {{contato.nome}} · Destino: ${LABEL[a]} · CPF: {{campo.CPF}}` },
@@ -639,7 +655,7 @@ describe('Triagem inteligente end to end', () => {
 
   it('a new client gives the CPF, writes the subject and the team gets the summary', async () => {
     const notify = vi.spyOn(ctx.hub, 'publishNotification');
-    expect(await say('Bom dia')).toEqual([WELCOME, CPF_ASK]);
+    expect(await say('Bom dia')).toEqual([TRIAGE_WELCOME, CPF_ASK]);
     expect(await say('52998224725')).toEqual([TRIAGE_MENU]);
     expect(await say('Quero a segunda via do BOLETO')).toEqual([forwarded('Financeiro')]);
 
@@ -659,7 +675,7 @@ describe('Triagem inteligente end to end', () => {
 
   it('a known client skips the CPF question and can answer with the number', async () => {
     await knownClient();
-    expect(await say('Oi')).toEqual([WELCOME, TRIAGE_MENU]);
+    expect(await say('Oi')).toEqual([TRIAGE_WELCOME, TRIAGE_MENU]);
     expect(await say('3')).toEqual([forwarded('Processos')]);
     expect(await theChat()).toMatchObject({ state: 'open', sectorId: seed.sectorB, ownerId: null });
   });
@@ -679,5 +695,35 @@ describe('Triagem inteligente end to end', () => {
     expect(await say('tudo bem?')).toEqual([TRIAGE_RETRY]);
     expect(await say('Como está a AUDIENCIA?')).toEqual([forwarded('Processos')]);
     expect((await theChat()).sectorId).toBe(seed.sectorB);
+  });
+
+  it('a case question that mentions "valor" goes to Processos, not Financeiro', async () => {
+    await knownClient();
+    await say('Oi');
+    expect(await say('qual o valor da causa do meu processo')).toEqual([forwarded('Processos')]);
+    expect((await theChat()).sectorId).toBe(seed.sectorB);
+  });
+
+  it('no CPF for 24 h hands the chat over to Atendimento silently, with the summary note', async () => {
+    expect(await say('Bom dia')).toEqual([TRIAGE_WELCOME, CPF_ASK]);
+    expect(await theRun()).toMatchObject({ state: 'waiting_reply', waitNodeId: 'cpf' });
+    expect((await theRun()).timeoutAt?.toISOString()).toBe('2026-10-15T13:00:00.000Z');
+    const sends = ctx.wa.sent.length;
+    const scheduler = createScheduler(ctx);
+
+    ctx.clock.advance(24 * 60 * 60 * 1000 - 1000);
+    expect(await scheduler.tick(ctx.clock.now())).toBe(0);
+    ctx.clock.advance(2000);
+    expect(await scheduler.tick(ctx.clock.now())).toBe(1);
+
+    expect(await theRun()).toMatchObject({ state: 'finished', timeoutAt: null });
+    expect(ctx.wa.sent).toHaveLength(sends); // silent: no confirmation text
+    const chat = await theChat();
+    expect(chat).toMatchObject({ state: 'open', sectorId: seed.defaultSector, ownerId: null });
+    const events = await eventsOf(ctx, chat.id);
+    expect(events.filter((e) => e.kind === 'bot_note').map((e) => (e.data as { text: string }).text)).toEqual([
+      expect.stringContaining('Destino: Atendimento'),
+    ]);
+    expect(events.filter((e) => e.kind === 'bot_transferred')).toHaveLength(1);
   });
 });

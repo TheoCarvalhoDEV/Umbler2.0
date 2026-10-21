@@ -68,6 +68,7 @@ export function graphProblems(e: unknown): GraphProblem[] | null {
 
 /** An exported chatbot file → the import body. Catches the wrong file only; the server validates the graph again (zod) and recomputes `valid`. */
 export async function readBotExport(file: Blob): Promise<BotExport> {
+  if (file.size > 1_000_000) throw new Error('Arquivo grande demais (máx. 1 MB).');
   let data: unknown;
   try {
     data = JSON.parse(await file.text());

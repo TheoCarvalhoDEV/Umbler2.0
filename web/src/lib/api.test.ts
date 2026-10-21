@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_AUTO_RULES } from '@talk/shared';
-import { api, ApiError, botRunningRuns, graphProblems, request } from './api';
+import { api, ApiError, botRunningRuns, graphProblems, readBotExport, request } from './api';
 
 const json = (status: number, body?: unknown) =>
   new Response(body === undefined ? null : JSON.stringify(body), {
@@ -210,6 +210,28 @@ describe('bot client', () => {
     expect(fetchMock.mock.calls[4]![1]?.body).toBe('{"contactId":"k1"}');
     expect(fetchMock.mock.calls[5]![1]?.body).toBe('{"stickerFromMessageId":"m2"}');
     expect([...(fetchMock.mock.calls[7]![1]?.body as FormData).keys()]).toEqual(['signature', 'asSticker', 'file']);
+  });
+});
+
+describe('readBotExport', () => {
+  const file = (text: string) => new File([text], 'bot.json', { type: 'application/json' });
+
+  it('reads an exported chatbot', async () => {
+    const graph = { nodes: [], edges: [] };
+    await expect(readBotExport(file(JSON.stringify({ name: 'Triagem', graph, extra: 1 })))).resolves.toEqual({ name: 'Triagem', graph });
+  });
+
+  it('rejects a file that is not JSON or not a chatbot', async () => {
+    await expect(readBotExport(file('oi'))).rejects.toThrow('não é um JSON');
+    await expect(readBotExport(file('{"a":1}'))).rejects.toThrow('não é um chatbot exportado');
+  });
+
+  it('rejects a file over 1 MB before reading it, and accepts one right at the limit', async () => {
+    const text = vi.fn(async () => '{}');
+    const big = { size: 1_000_001, text } as unknown as Blob;
+    await expect(readBotExport(big)).rejects.toThrow('Arquivo grande demais (máx. 1 MB).');
+    expect(text).not.toHaveBeenCalled();
+    await expect(readBotExport(file('x'.repeat(1_000_000)))).rejects.toThrow('não é um JSON'); // passed the guard
   });
 });
 
