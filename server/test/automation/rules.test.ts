@@ -11,7 +11,7 @@ import type { InboundEvent } from '../../src/whatsapp/types.js';
 import { seedChat, type SeedChatOpts } from '../chats/seed.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 import { eventsOf } from '../inbox/fixtures.js';
-import { insertScheduled, runningBot } from './seed.js';
+import { insertAppointment, insertScheduled, runningBot } from './seed.js';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -177,6 +177,15 @@ describe('"Finalizar por inatividade" (spec 2026-10-20 agendamentos §4.2)', () 
     expect((await run()).closed).toBe(1);
     expect((await chatRow(priv.chatId)).state).toBe('closed');
     for (const c of [waiting, bot, scheduled]) expect((await chatRow(c.chatId)).state).toBe('open');
+  });
+
+  it('a pending appointment reminder does not keep the chat open (spec 2026-10-21 compromissos §3.6, decision 10; Review Focus 5)', async () => {
+    await setRules({ closeInactive: { enabled: true, hours: 24, sendClosingMessage: false } });
+    const c = await chat({ at: ago(25 * HOUR) });
+    const { reminderId } = await insertAppointment(ctx, { chatId: c.chatId, authorId: s.agentA.id, startsAt: ago(-30 * 24 * HOUR) });
+    await insertScheduled(ctx, { chatId: c.chatId, authorId: s.agentA.id, sendAt: ago(-29 * 24 * HOUR), reminderId });
+    expect((await run()).closed).toBe(1);
+    expect((await chatRow(c.chatId)).state).toBe('closed');
   });
 
   it('an agent writing after the selection wins: no close, no closing message (ruling)', async () => {

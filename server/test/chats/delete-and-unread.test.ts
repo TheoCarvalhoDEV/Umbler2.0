@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chatEvents, chatPins, chats, contacts, deletedChats, messages, scheduledMessages } from '../../src/db/schema.js';
+import {
+  appointmentReminders, appointments, chatEvents, chatPins, chats, contacts, deletedChats, messages, scheduledMessages,
+} from '../../src/db/schema.js';
+import { insertAppointment } from '../automation/seed.js';
 import { placeRecords } from '../../src/history/place.js';
 import { deleteChat } from '../../src/inbox/chats.js';
 import { handleInbound, type IngestHooks } from '../../src/messages/ingest.js';
@@ -117,6 +120,21 @@ describe('DELETE /api/chats/:id', () => {
     const [tomb] = await ctx.db.select().from(deletedChats);
     expect(tomb).toMatchObject({ contactId, channelId: s.channelId, deletedBy: s.admin.id, until: ctx.botRuntime.now() });
     expect(console.info).toHaveBeenCalledWith('chat deleted', { chatId, userId: s.admin.id });
+  });
+
+  it('deleting the chat removes its appointments, their reminders and their scheduled messages (spec 2026-10-21 compromissos §3.8; Review Focus 5)', async () => {
+    // two cascade paths reach the scheduled row: chats → scheduled_messages, and chats → appointments → reminders (set null)
+    const { chatId } = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, phone: PHONE });
+    const { reminderId } = await insertAppointment(ctx, { chatId, authorId: s.agentA.id, startsAt: new Date('2026-10-20T12:00:00Z') });
+    await ctx.db.insert(scheduledMessages).values({
+      chatId, authorId: s.agentA.id, body: 'Lembrete', signature: true, sendAt: new Date('2026-10-20T11:00:00Z'), reminderId,
+    });
+    await enableSeeAll(ctx, s.admin);
+    const { headers } = await loginAs(app, s.admin.email);
+    expect((await app.inject({ method: 'DELETE', url: `/api/chats/${chatId}`, headers })).statusCode).toBe(204);
+    expect(await ctx.db.select().from(appointments)).toEqual([]);
+    expect(await ctx.db.select().from(appointmentReminders)).toEqual([]);
+    expect(await ctx.db.select().from(scheduledMessages)).toEqual([]);
   });
 });
 

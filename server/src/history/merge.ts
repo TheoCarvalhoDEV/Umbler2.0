@@ -2,7 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
 import {
-  botRuns, chatEvents, chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
+  appointments, botRuns, chatEvents, chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
   scheduledMessages,
 } from '../db/schema.js';
 import { type ChatRow } from '../inbox/chats.js';
@@ -36,6 +36,9 @@ async function absorb(tx: Tx, from: ChatRow, twin: ChatRow): Promise<void> {
   }
   // spec 2026-10-20 agendamentos §3.3: scheduled messages follow the chat (the delete below would cascade them away)
   await tx.update(scheduledMessages).set({ chatId: twin.id }).where(eq(scheduledMessages.chatId, from.id));
+  // spec 2026-10-21 compromissos §3.8: so do appointments, with their reminders; a chat that only changes contact needs
+  // nothing, because an appointment takes its contact from the chat
+  await tx.update(appointments).set({ chatId: twin.id }).where(eq(appointments.chatId, from.id));
   await tx.delete(chats).where(eq(chats.id, from.id));
   const newer = from.lastMessageAt !== null && (twin.lastMessageAt === null || from.lastMessageAt > twin.lastMessageAt);
   await tx

@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, scheduledMessages, tags,
+  appointments, chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages,
+  scheduledMessages, tags,
 } from '../../src/db/schema.js';
+import { insertAppointment } from '../automation/seed.js';
 import { mergeLidPairs } from '../../src/history/merge.js';
 import { placeRecords } from '../../src/history/place.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
@@ -122,6 +124,22 @@ describe('mergeLidPairs (§5.4)', () => {
     await mergeLidPairs(ctx, pair);
 
     expect((await ctx.db.select().from(scheduledMessages)).map((r) => r.chatId)).toEqual([phoneChat]);
+  });
+
+  it("an absorbed chat's appointments move to the twin, with their reminders (spec 2026-10-21 compromissos §3.8; Review Focus 5)", async () => {
+    const lidId = await lidOnly();
+    const phoneId = await newContact(ctx, { phone: PHONE });
+    const lidChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId: lidId });
+    const phoneChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, contactId: phoneId });
+    const { reminderId } = await insertAppointment(ctx, { chatId: lidChat, authorId: s.agentA.id, startsAt: new Date() });
+    await ctx.db
+      .insert(scheduledMessages)
+      .values({ chatId: lidChat, authorId: s.agentA.id, body: 'Lembrete', signature: false, sendAt: new Date(), reminderId });
+
+    await mergeLidPairs(ctx, pair);
+
+    expect((await ctx.db.select().from(appointments)).map((a) => a.chatId)).toEqual([phoneChat]);
+    expect((await ctx.db.select().from(scheduledMessages)).map((r) => [r.chatId, r.reminderId])).toEqual([[phoneChat, reminderId]]);
   });
 
   it('two history chats become one spanning both', async () => {

@@ -1,5 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppointmentDto } from '@talk/shared';
 import { FAIL, deliverDueScheduled } from '../../src/automation/delivery.js';
 import { botRuns, chats, messages, scheduledMessages, users } from '../../src/db/schema.js';
 import { toMessageDto } from '../../src/messages/dto.js';
@@ -161,6 +162,60 @@ describe('the send route (Review Focus 6)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({ kind: 'text', media: null, scheduled: false });
+    await app.close();
+  });
+});
+
+describe('an appointment reminder (spec 2026-10-21 compromissos §3.6: delivery.ts does not change)', () => {
+  const TEXT_AT = (hora: string) => `Olá, Contato! Hoje às ${hora}.`;
+  /** Ana's appointment in the chat with one "1 hora antes" reminder, through the route; the caller closes `app`. */
+  async function appoint(startsAt: Date, extra: object = {}) {
+    const { app } = await makeTestApp(ctx);
+    const { headers } = await loginAs(app, s.agentA.email);
+    const res = await app.inject({
+      method: 'POST', url: '/api/appointments', headers,
+      payload: {
+        chatId, title: 'Audiência', startsAt: startsAt.toISOString(),
+        reminders: [{ amount: 1, unit: 'hours', text: 'Olá, {nome}! Hoje às {hora}.' }], ...extra,
+      },
+    });
+    return { app, headers, appointment: res.json() as AppointmentDto };
+  }
+
+  it('goes out at its time as the author, unsigned when the box was off, with the "Agendada" mark', async () => {
+    const { app } = await appoint(inMin(65), { signature: false }); // 10:05 in Cuiabá; the reminder at 09:05
+    ctx.clock.advance(5 * MIN);
+    expect(await beat()).toBe(1);
+    expect(texts()).toHaveLength(1);
+    expect(texts()[0]).toMatchObject({ phone: PHONE, payload: { text: TEXT_AT('10:05') } });
+    const [row] = await ctx.db.select().from(scheduledMessages);
+    expect(await messageOf(row!.messageId)).toMatchObject({ chatId, authorId: s.agentA.id, scheduled: true });
+    await app.close();
+  });
+
+  it('in a closed chat, opens a new chat in the original sector like "Nova conversa", signed by default', async () => {
+    await closeOriginal();
+    const { app } = await appoint(inMin(65));
+    ctx.clock.advance(5 * MIN);
+    expect(await beat()).toBe(1);
+    const [open] = await ctx.db.select().from(chats).where(and(eq(chats.contactId, contactId), eq(chats.state, 'open')));
+    expect(open).toMatchObject({ sectorId: s.sectorA, ownerId: s.agentA.id });
+    expect(texts()[0]!.payload).toMatchObject({ text: formatSignature(TEXT_AT('10:05'), signatureLabel(s.agentA, 'Financeiro')) });
+    await app.close();
+  });
+
+  it('a reschedule sends it once, at the new time (Review Focus 1)', async () => {
+    const { app, headers, appointment } = await appoint(inMin(65));
+    const moved = await app.inject({
+      method: 'PATCH', url: `/api/appointments/${appointment.id}`, headers, payload: { startsAt: inMin(75).toISOString() },
+    });
+    expect(moved.statusCode).toBe(200);
+    ctx.clock.advance(5 * MIN); // the old time
+    expect(await beat()).toBe(0);
+    ctx.clock.advance(10 * MIN); // the new one
+    expect(await beat()).toBe(1);
+    expect(await beat()).toBe(0);
+    expect(texts().map((t) => t.payload)).toMatchObject([{ text: expect.stringContaining(TEXT_AT('10:15')) }]);
     await app.close();
   });
 });

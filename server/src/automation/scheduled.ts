@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, type SQL } from 'drizzle-orm';
 import { scheduleTimeProblem, type ScheduledMessageDto, type ScheduledStatus, type ScheduledTab } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db } from '../db/client.js';
-import { chats, contacts, messages, scheduledMessages, users } from '../db/schema.js';
+import { appointmentReminders, appointments, chats, contacts, messages, scheduledMessages, users } from '../db/schema.js';
 import { getChatForUser } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import type { AuthUser } from '../inbox/visibility.js';
@@ -14,6 +14,8 @@ import { saveMedia } from '../messages/media.js';
 type ScheduledRow = typeof scheduledMessages.$inferSelect;
 
 export const NOT_PENDING = 'Esta mensagem agendada não está mais pendente';
+/** Spec 2026-10-21 compromissos §3.7 (decision 4): the appointment is the only source of a reminder's time and text. */
+export const REMINDER_LOCKED = 'Este lembrete é de um compromisso; altere pelo compromisso';
 /** Still to go out: the chat's strip and the "Pendentes" tab show both. */
 export const OPEN_STATUSES: ScheduledStatus[] = ['pending', 'sending'];
 // ponytail: one page of 100 per tab, no cursor; add keyset paging on (send_at, id) if an office ever keeps more.
@@ -29,13 +31,16 @@ async function scheduledDtos(db: Db, user: AuthUser, where: SQL | undefined, ord
   const rows = await db
     .select({
       s: scheduledMessages, contactId: contacts.id, contactName: contacts.name, contactPhone: contacts.phone,
-      authorName: users.name, sentChatId: messages.chatId,
+      authorName: users.name, sentChatId: messages.chatId, appointmentId: appointments.id, appointmentTitle: appointments.title,
     })
     .from(scheduledMessages)
     .innerJoin(chats, eq(chats.id, scheduledMessages.chatId))
     .innerJoin(contacts, eq(contacts.id, chats.contactId))
     .innerJoin(users, eq(users.id, scheduledMessages.authorId))
     .leftJoin(messages, eq(messages.id, scheduledMessages.messageId))
+    // spec 2026-10-21 compromissos §3.7: a reminder's appointment, for the "Lembrete · <título>" mark
+    .leftJoin(appointmentReminders, eq(appointmentReminders.id, scheduledMessages.reminderId))
+    .leftJoin(appointments, eq(appointments.id, appointmentReminders.appointmentId))
     .where(where)
     .orderBy(...order)
     .limit(LIST_LIMIT);
@@ -57,7 +62,8 @@ async function scheduledDtos(db: Db, user: AuthUser, where: SQL | undefined, ord
     sentChatId: r.sentChatId,
     createdAt: s.createdAt.toISOString(),
     finishedAt: s.finishedAt?.toISOString() ?? null,
-    canEdit: s.status === 'pending' && canManage(user, s),
+    canEdit: s.status === 'pending' && !s.reminderId && canManage(user, s),
+    appointment: r.appointmentId ? { id: r.appointmentId, title: r.appointmentTitle ?? '' } : null,
   }));
 }
 
@@ -71,6 +77,7 @@ async function dtoOf(db: Db, user: AuthUser, id: string): Promise<ScheduledMessa
 async function pendingRowFor(ctx: AppCtx, user: AuthUser, id: string): Promise<ScheduledRow> {
   const [row] = await ctx.db.select().from(scheduledMessages).where(eq(scheduledMessages.id, id));
   if (!row || !canManage(user, row)) throw notFound();
+  if (row.reminderId) throw conflict(REMINDER_LOCKED); // before "not pending": a reminder never changes here
   if (row.status !== 'pending') throw conflict(NOT_PENDING);
   return row;
 }
