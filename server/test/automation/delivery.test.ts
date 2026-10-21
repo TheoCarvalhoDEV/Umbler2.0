@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FAIL, deliverDueScheduled } from '../../src/automation/delivery.js';
 import { botRuns, chats, messages, scheduledMessages, users } from '../../src/db/schema.js';
+import { toMessageDto } from '../../src/messages/dto.js';
 import { saveMedia } from '../../src/messages/media.js';
 import { formatSignature, signatureLabel } from '../../src/messages/signature.js';
 import { seedChat } from '../chats/seed.js';
@@ -46,7 +47,9 @@ describe('deliverDueScheduled (spec 2026-10-20 agendamentos §3.3)', () => {
     expect(texts()[0]).toMatchObject({ phone: PHONE, payload: { text: TEXT } });
     const done = await rowOf(row.id);
     expect(done).toMatchObject({ status: 'sent', error: null, finishedAt: ctx.clock.now() });
-    expect(await messageOf(done.messageId)).toMatchObject({ chatId, authorId: s.agentA.id, body: TEXT, scheduled: true, status: 'sent' });
+    const sent = await messageOf(done.messageId);
+    expect(sent).toMatchObject({ chatId, authorId: s.agentA.id, body: TEXT, scheduled: true, status: 'sent' });
+    expect((await toMessageDto(ctx.db, sent)).scheduled).toBe(true); // the bubble's "agendada" mark
     expect(ctx.hub.events).toContainEqual({ type: 'chat', chatId });
   });
 

@@ -81,7 +81,7 @@ describe('Composer', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z'));
     stubFetch({ 'POST /api/chats/c1/scheduled-messages': {} });
-    renderComposer();
+    const { onClearReply } = renderComposer(message({ id: 'q1' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Agendar mensagem' }));
     expect(screen.getByRole('alert').textContent).toBe('Digite a mensagem que será agendada');
@@ -98,6 +98,7 @@ describe('Composer', () => {
     });
     await waitFor(() => expect(box().value).toBe('')); // box() throws while the dialog's textarea is a second textbox
     expect(posts('/api/chats/c1/messages')).toEqual([]);
+    expect(onClearReply).toHaveBeenCalledTimes(1); // the "Respondendo:" quote goes too
   });
 
   it('Shift+Enter keeps the newline and sends nothing', () => {

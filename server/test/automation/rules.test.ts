@@ -94,18 +94,20 @@ describe('"Devolver à fila conversas paradas" (spec 2026-10-20 agendamentos §4
     expect((await chatRow(chatId)).ownerId).toBeNull();
   });
 
-  it('leaves private, unowned, answered, triage and chatbot chats alone', async () => {
+  it('leaves private, unowned, answered, triage, history and chatbot chats alone', async () => {
     await setRules({ returnToQueue: { enabled: true, minutes: 30 } });
     const priv = await chat({ ...waitingFor(2 * HOUR), private: true });
     await chat({ ...waitingFor(2 * HOUR), ownerId: null });
     const answered = await chat({ at: ago(2 * HOUR) });
     const triage = await chat(waitingFor(2 * HOUR));
     await ctx.db.update(chats).set({ triagePending: true }).where(eq(chats.id, triage.chatId));
+    const history = await chat(waitingFor(2 * HOUR));
+    await ctx.db.update(chats).set({ history: true }).where(eq(chats.id, history.chatId));
     const bot = await chat(waitingFor(2 * HOUR));
     await runningBot(ctx, bot.chatId, bot.contactId);
 
     expect((await run()).returned).toBe(0);
-    for (const c of [priv, answered, triage, bot]) expect((await chatRow(c.chatId)).ownerId).toBe(s.agentA.id);
+    for (const c of [priv, answered, triage, history, bot]) expect((await chatRow(c.chatId)).ownerId).toBe(s.agentA.id);
   });
 });
 
@@ -135,6 +137,32 @@ describe('"Finalizar por inatividade" (spec 2026-10-20 agendamentos §4.2)', () 
     expect((await run()).closed).toBe(1);
     expect(texts()).toEqual([]);
     expect((await eventsOf(ctx, chatId)).at(-1)).toMatchObject({ kind: 'closed', data: { closingMessageSent: false, reason: 'inactivity' } });
+  });
+
+  it('closes without sending when the contact has no phone, or the closing message is empty', async () => {
+    await setRules({ closeInactive: { enabled: true, hours: 24, sendClosingMessage: true } });
+    const noPhone = await chat({ at: ago(25 * HOUR), phone: null });
+    expect(await run()).toEqual({ returned: 0, closed: 1 });
+    expect((await chatRow(noPhone.chatId)).state).toBe('closed');
+    expect((await eventsOf(ctx, noPhone.chatId)).at(-1)).toMatchObject({ kind: 'closed', data: { closingMessageSent: false, reason: 'inactivity' } });
+
+    await ctx.db.update(settings).set({ value: '' }).where(eq(settings.key, 'closing_message'));
+    const emptyText = await chat({ at: ago(25 * HOUR) });
+    expect(await run()).toEqual({ returned: 0, closed: 1 });
+    expect((await chatRow(emptyText.chatId)).state).toBe('closed');
+    expect((await eventsOf(ctx, emptyText.chatId)).at(-1)).toMatchObject({ kind: 'closed', data: { closingMessageSent: false } });
+    expect(texts()).toEqual([]);
+  });
+
+  it('leaves history and triage-pending chats alone', async () => {
+    await setRules({ closeInactive: { enabled: true, hours: 24, sendClosingMessage: false } });
+    const history = await chat({ at: ago(25 * HOUR) });
+    await ctx.db.update(chats).set({ history: true }).where(eq(chats.id, history.chatId));
+    const triage = await chat({ at: ago(25 * HOUR) });
+    await ctx.db.update(chats).set({ triagePending: true }).where(eq(chats.id, triage.chatId));
+
+    expect((await run()).closed).toBe(0);
+    for (const c of [history, triage]) expect((await chatRow(c.chatId)).state).toBe('open');
   });
 
   it('leaves waiting, chatbot and scheduled chats alone, and closes private ones (Review Focus 7)', async () => {

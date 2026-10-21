@@ -124,7 +124,6 @@ export async function deleteChannel(ctx: AppCtx, channelId: string, userId: stri
   }
   setChannelQr(ctx, row.evolutionInstance, null);
 
-  const chatIds = (await ctx.db.select({ id: chats.id }).from(chats).where(eq(chats.channelId, channelId))).map((c) => c.id);
   // as in deleteChat: a bot step in flight then fails its conditional save and ends silently
   const busy = await ctx.db
     .selectDistinct({ chatId: botRuns.chatId })
@@ -134,7 +133,9 @@ export async function deleteChannel(ctx: AppCtx, channelId: string, userId: stri
   for (const { chatId } of busy) await stopRunsForChat(ctx, chatId, { userId, reason: 'chat_closed' });
 
   // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
-  const orphanPaths = await ctx.db.transaction(async (tx) => {
+  const { orphanPaths, chatIds } = await ctx.db.transaction(async (tx) => {
+    // the ids are read in the tx, so a chat created meanwhile still has its scheduled files removed
+    const chatIds = (await tx.select({ id: chats.id }).from(chats).where(eq(chats.channelId, channelId))).map((c) => c.id);
     const paths = [...(await chatMediaPaths(tx, eq(messages.channelId, channelId))), ...(await scheduledMediaPaths(tx, chatIds))];
     await tx.delete(chats).where(eq(chats.channelId, channelId));
     await tx
@@ -143,7 +144,7 @@ export async function deleteChannel(ctx: AppCtx, channelId: string, userId: stri
       .where(sql`${channelId}::uuid = any(${bots.startChannelIds})`);
     // messages.channel_id has no cascade on purpose: every message sits in a chat of its own channel, gone above
     await tx.delete(channels).where(eq(channels.id, channelId));
-    return unusedMediaPaths(tx, paths);
+    return { orphanPaths: await unusedMediaPaths(tx, paths), chatIds };
   });
   await removeMediaFiles(ctx, orphanPaths, { channelId });
   for (const chatId of chatIds) ctx.hub.publishChatRemoved(chatId);

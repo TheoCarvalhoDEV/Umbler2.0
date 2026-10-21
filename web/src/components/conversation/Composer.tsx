@@ -197,6 +197,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
     setScheduling(false);
     setText('');
     setFile(null);
+    onClearReply(); // "o compositor fica vazio" (spec §3.1); the scheduled message does not quote it
     void qc.invalidateQueries({ queryKey: qk.chatScheduled(chatId), exact: true });
   }
 
