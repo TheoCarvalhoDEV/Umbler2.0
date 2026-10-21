@@ -16,7 +16,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type {
   BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
-  UserPreferences,
+  ScheduledStatus, UserPreferences,
 } from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
@@ -231,6 +231,7 @@ export const messages = pgTable(
     forwardedFromId: uuid('forwarded_from_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
     mediaSha256: text('media_sha256'), // hex digest of the stored file; dedupes the recent stickers (spec §6)
     mediaStatus: text('media_status').$type<'queued' | 'expired'>(), // §5.5 history media: waiting for the queue, or gone from WhatsApp
+    scheduled: boolean('scheduled').notNull().default(false), // spec 2026-10-20 agendamentos §3.3: sent by the scheduled-message worker
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },
@@ -366,6 +367,34 @@ export const messageFavorites = pgTable('message_favorites', {
   userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: createdAt(),
 });
+
+/**
+ * Spec 2026-10-20 agendamentos §3: a message to send later as `author_id`. pending → sending (claimed) → sent | failed,
+ * or pending → canceled. The file is saved when it is scheduled; `message_id` is the message it became.
+ */
+export const scheduledMessages = pgTable(
+  'scheduled_messages',
+  {
+    id: id(),
+    chatId: uuid('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id').notNull().references(() => users.id),
+    body: text('body').notNull(),
+    signature: boolean('signature').notNull(),
+    mediaPath: text('media_path'), // relative to config.mediaDir
+    mediaMime: text('media_mime'),
+    mediaName: text('media_name'),
+    mediaSize: integer('media_size'),
+    mediaSha256: text('media_sha256'),
+    sendAt: timestamp('send_at', { withTimezone: true }).notNull(),
+    status: text('status').$type<ScheduledStatus>().notNull().default('pending'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }), // when it went 'sending'
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
+    error: text('error'), // pt-BR reason of a failure (never gateway text)
+    createdAt: createdAt(),
+  },
+  (t) => [index('scheduled_messages_due_idx').on(t.status, t.sendAt), index('scheduled_messages_chat_idx').on(t.chatId)],
+);
 
 export const historyImports = pgTable(
   'history_imports',

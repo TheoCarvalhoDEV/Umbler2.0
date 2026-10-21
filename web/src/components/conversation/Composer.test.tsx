@@ -61,6 +61,7 @@ const posts = (path: string) => calls.filter((c) => c.method === 'POST' && c.pat
 beforeEach(() => localStorage.clear());
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -74,6 +75,30 @@ describe('Composer', () => {
     await waitFor(() => expect(box().value).toBe(''));
     expect(posts('/api/chats/c1/messages').map((c) => c.body)).toEqual([{ text: 'Olá, tudo bem?', signature: true }]);
     expect(qc.getQueryData<TimelineData>(qk.timeline('c1'))!.pages[0]!.map((i) => i.id)).toEqual(['m-new']);
+  });
+
+  it('Agendar mensagem asks for a text first, then schedules it with the signature choice and clears the box (spec 2026-10-20 agendamentos §3.1)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z'));
+    stubFetch({ 'POST /api/chats/c1/scheduled-messages': {} });
+    const { onClearReply } = renderComposer(message({ id: 'q1' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agendar mensagem' }));
+    expect(screen.getByRole('alert').textContent).toBe('Digite a mensagem que será agendada');
+
+    fireEvent.change(box(), { target: { value: 'Lembrete da audiência' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Agendar mensagem' }));
+    expect((screen.getByLabelText('Texto da mensagem') as HTMLTextAreaElement).value).toBe('Lembrete da audiência');
+    fireEvent.change(screen.getByLabelText('Data e hora (horário de Cuiabá)'), { target: { value: '2026-10-21T09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Agendar' }));
+
+    await waitFor(() => expect(posts('/api/chats/c1/scheduled-messages')).toHaveLength(1));
+    expect(posts('/api/chats/c1/scheduled-messages')[0]!.body).toEqual({
+      text: 'Lembrete da audiência', sendAt: '2026-10-21T13:00:00.000Z', signature: true,
+    });
+    await waitFor(() => expect(box().value).toBe('')); // box() throws while the dialog's textarea is a second textbox
+    expect(posts('/api/chats/c1/messages')).toEqual([]);
+    expect(onClearReply).toHaveBeenCalledTimes(1); // the "Respondendo:" quote goes too
   });
 
   it('Shift+Enter keeps the newline and sends nothing', () => {

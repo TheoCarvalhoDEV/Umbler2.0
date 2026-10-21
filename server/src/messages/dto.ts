@@ -92,6 +92,7 @@ export async function toMessageDto(db: Db | Tx, row: MessageRow): Promise<Messag
         }
       : null,
     forwarded: row.forwardedFromId !== null,
+    scheduled: row.scheduled,
     favorite: favorite ? { at: favorite.at.toISOString(), byName: favorite.byName ?? null } : null,
   };
 }

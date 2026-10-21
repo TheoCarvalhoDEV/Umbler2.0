@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { getBotRunningBehavior } from '../../src/catalog/settings.js';
+import { DEFAULT_AUTO_RULES } from '@talk/shared';
+import { getAutoRules, getBotRunningBehavior } from '../../src/catalog/settings.js';
 import { settings } from '../../src/db/schema.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -106,4 +107,40 @@ it('stores bot_running_behavior, defaults to ask and rejects unknown values', as
   expect(await getBotRunningBehavior(ctx.db)).toBe('ask');
   const got = await app.inject({ method: 'GET', url: '/api/settings', headers: agent });
   expect(got.json().botRunningBehavior).toBe('ask');
+});
+
+it('auto rules: both off by default, admin only, saved apart from the other settings and validated (spec 2026-10-20 agendamentos §4)', async () => {
+  const get = (headers: Record<string, string>) => app.inject({ method: 'GET', url: '/api/settings/auto-rules', headers });
+  const putRules = (headers: Record<string, string>, payload: object) =>
+    app.inject({ method: 'PUT', url: '/api/settings/auto-rules', headers, payload });
+  const rules = { returnToQueue: { enabled: true, minutes: 45 }, closeInactive: { enabled: true, hours: 48, sendClosingMessage: false } };
+
+  expect((await get(admin)).json()).toEqual(DEFAULT_AUTO_RULES);
+  expect((await get(agent)).statusCode).toBe(403);
+  expect((await putRules(agent, rules)).statusCode).toBe(403);
+  expect((await putRules({ cookie: admin.cookie! }, rules)).statusCode).toBe(403); // no Origin
+
+  const saved = await putRules(admin, rules);
+  expect([saved.statusCode, saved.json()]).toEqual([200, rules]);
+  expect(await getAutoRules(ctx.db)).toEqual(rules);
+
+  // the whole-settings PUT does not touch them
+  expect((await put(admin, { closingMessage: 'Tchau', triageMenu: { enabled: false, welcomeText: '', invalidText: '', options: [] } })).statusCode).toBe(200);
+  expect(await getAutoRules(ctx.db)).toEqual(rules);
+
+  for (const bad of [
+    { ...rules, returnToQueue: { enabled: true, minutes: 4 } },
+    { ...rules, returnToQueue: { enabled: true, minutes: 1441 } },
+    { ...rules, closeInactive: { enabled: true, hours: 0, sendClosingMessage: true } },
+    { ...rules, closeInactive: { enabled: true, hours: 721, sendClosingMessage: true } },
+    { ...rules, closeInactive: { enabled: true, hours: 1.5, sendClosingMessage: true } },
+    { returnToQueue: rules.returnToQueue },
+  ]) {
+    expect((await putRules(admin, bad)).statusCode).toBe(400);
+  }
+  expect(await getAutoRules(ctx.db)).toEqual(rules);
+
+  // a broken stored value reads as the defaults (both off)
+  await ctx.db.update(settings).set({ value: { returnToQueue: 'sim' } }).where(eq(settings.key, 'auto_rules'));
+  expect(await getAutoRules(ctx.db)).toEqual(DEFAULT_AUTO_RULES);
 });

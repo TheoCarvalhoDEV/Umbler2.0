@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import * as schema from '../../src/db/schema.js';
 import {
-  botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits, messageFavorites, messages, sectors, tags,
+  botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits, messageFavorites, messages, scheduledMessages,
+  sectors, tags,
 } from '../../src/db/schema.js';
 import { makeTestDb, seedBasics, type Seeded } from '../helpers.js';
 
@@ -32,7 +33,7 @@ describe('database schema', () => {
 
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(25);
+    expect(tables).toHaveLength(26);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
   });
@@ -128,6 +129,29 @@ describe('database schema', () => {
     expect((await db.select().from(chatTags)).map((r) => r.tagId)).toEqual([t2!.id]);
     await db.delete(chats).where(eq(chats.id, chat!.id));
     expect(await db.select().from(chatTags)).toEqual([]);
+  });
+
+  it('scheduled_messages: pending by default, gone with the chat; messages.scheduled starts false (spec 2026-10-20 agendamentos)', async () => {
+    const [c] = await db.insert(contacts).values({ phone: '5565999990004' }).returning({ id: contacts.id });
+    const [chat] = await db
+      .insert(chats)
+      .values({ contactId: c!.id, channelId: s.channelId, sectorId: s.defaultSector })
+      .returning({ id: chats.id });
+    const [m] = await db
+      .insert(messages)
+      .values({ chatId: chat!.id, channelId: s.channelId, direction: 'out', kind: 'text', body: 'oi', status: 'sent', sentAt: new Date() })
+      .returning();
+    expect(m!.scheduled).toBe(false);
+    const [row] = await db
+      .insert(scheduledMessages)
+      .values({ chatId: chat!.id, authorId: s.agentA.id, body: 'Lembrete', signature: true, sendAt: new Date(), messageId: m!.id })
+      .returning();
+    expect(row).toMatchObject({ status: 'pending', claimedAt: null, finishedAt: null, error: null, mediaPath: null });
+
+    await db.delete(messages).where(eq(messages.id, m!.id));
+    expect((await db.select().from(scheduledMessages))[0]!.messageId).toBeNull();
+    await db.delete(chats).where(eq(chats.id, chat!.id));
+    expect(await db.select().from(scheduledMessages)).toEqual([]);
   });
 });
 

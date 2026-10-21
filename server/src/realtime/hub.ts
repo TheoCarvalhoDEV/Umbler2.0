@@ -20,6 +20,8 @@ export interface Hub {
   publishChannelRemoved(channelId: string): void;
   /** Chatbot "Notificar atendente": WS only, to the listed users who can see the chat. */
   publishNotification(chatId: string, userIds: string[], notification: NotificationDto): Promise<void>;
+  /** One user's sockets, no chat check: a failed scheduled message reaches its author even without access to the chat. */
+  notifyUser(userId: string, notification: NotificationDto): void;
   publishUsersChanged(): void;
 }
 
@@ -118,6 +120,9 @@ export function createHub(getDb: () => Db): Hub {
         if (user && canSee(user, chat)) for (const socket of [...sockets]) send(socket, event);
       }
     },
+    notifyUser(userId, notification) {
+      for (const socket of [...(byUser.get(userId) ?? [])]) send(socket, { type: 'notification', notification });
+    },
     publishUsersChanged() {
       for (const sockets of [...byUser.values()]) for (const socket of [...sockets]) send(socket, { type: 'users.changed' });
     },
@@ -140,6 +145,7 @@ export function createRecordingHub(): Hub & {
     publishNotification: async (chatId, userIds) => {
       for (const userId of userIds) events.push({ type: 'notification', chatId, userId });
     },
+    notifyUser: (userId, n) => { events.push({ type: 'notification', chatId: n.chatId, userId }); },
     publishUsersChanged: () => { events.push({ type: 'users.changed' }); },
   };
 }

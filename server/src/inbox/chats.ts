@@ -6,7 +6,7 @@ import { stopRunsForChat } from '../bots/engine.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import {
-  channels, chatPins, chatTags, chats, contacts, deletedChats, messages, quickAnswers, sectors, settings, tags, users,
+  channels, chatPins, chatTags, chats, contacts, deletedChats, messages, quickAnswers, scheduledMessages, sectors, settings, tags, users,
 } from '../db/schema.js';
 import { HttpError, badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
 import { BlockError } from '../bots/block-error.js';
@@ -293,7 +293,7 @@ export async function deleteChat(ctx: AppCtx, user: AuthUser, chatId: string): P
   const now = ctx.botRuntime.now();
   // Only `tx` inside (PGlite serializes transactions; ctx.db here would deadlock).
   const orphanPaths = await ctx.db.transaction(async (tx) => {
-    const paths = await chatMediaPaths(tx, eq(messages.chatId, chatId));
+    const paths = [...(await chatMediaPaths(tx, eq(messages.chatId, chatId))), ...(await scheduledMediaPaths(tx, [chatId]))];
     // a phone clock ahead of the server can stamp a message after `now`: cover every message of the chat
     const [last] = await tx.select({ at: max(messages.sentAt) }).from(messages).where(eq(messages.chatId, chatId));
     const until = last?.at && last.at > now ? last.at : now;
@@ -311,6 +311,16 @@ export async function deleteChat(ctx: AppCtx, user: AuthUser, chatId: string): P
 /** Media files of the messages `where` selects. Chatbot library files (bots/) are left out: every chat that ran the bot shares them. */
 export async function chatMediaPaths(tx: Tx, where: SQL): Promise<string[]> {
   const rows = await tx.selectDistinct({ path: messages.mediaPath }).from(messages).where(and(where, isNotNull(messages.mediaPath)));
+  return rows.flatMap((r) => (r.path && !r.path.startsWith('bots/') ? [r.path] : []));
+}
+
+/** Files of the scheduled messages of `chatIds` (any state), same bots/ exclusion; call before the chats are deleted (the rows cascade). */
+export async function scheduledMediaPaths(tx: Tx, chatIds: string[]): Promise<string[]> {
+  if (chatIds.length === 0) return [];
+  const rows = await tx
+    .selectDistinct({ path: scheduledMessages.mediaPath })
+    .from(scheduledMessages)
+    .where(and(inArray(scheduledMessages.chatId, chatIds), isNotNull(scheduledMessages.mediaPath)));
   return rows.flatMap((r) => (r.path && !r.path.startsWith('bots/') ? [r.path] : []));
 }
 
@@ -509,5 +519,65 @@ export async function closeChatAsBot(
     eq(chats.state, 'open'),
     { state: 'closed', closedAt: new Date(), waiting: false, waitingSince: null, triagePending: false },
     { kind: 'closed', data: { closingMessageSent, ...actorData(actor) } },
+  );
+}
+
+// ---------- automatic rules (spec 2026-10-20 agendamentos §4) ----------
+// The system acts: no canSee, events without author. Each UPDATE re-checks the condition the rule selected on, so a
+// contact or an agent acting in between wins: the 409 STALE becomes `false` and nothing changes.
+
+async function unlessStale(change: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await change();
+    return true;
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 409) return false;
+    throw e;
+  }
+}
+
+/** "Devolver à fila": the waiting chat loses its owner, back to "Sem atendente" in the same sector. */
+export async function returnChatToQueue(ctx: AppCtx, chatId: string, ownerId: string, minutes: number): Promise<boolean> {
+  return unlessStale(() =>
+    updateChat(
+      ctx,
+      chatId,
+      and(eq(chats.state, 'open'), eq(chats.waiting, true), eq(chats.private, false), eq(chats.ownerId, ownerId)),
+      { ownerId: null },
+      { kind: 'returned_to_queue', data: { minutes, previousOwnerId: ownerId }, authorId: null },
+    ),
+  );
+}
+
+/**
+ * "Finalizar por inatividade": the closing text (if any) goes first as a system message, without author or signature.
+ * A chat whose last message is no longer older than `hours` (an agent wrote meanwhile) is left alone. A gateway failure
+ * keeps the chat open with the failed bubble; a contact without an address is closed without the message.
+ */
+export async function closeChatForInactivity(
+  ctx: AppCtx,
+  chatId: string,
+  opts: { closingText: string | null; hours: number; now: Date },
+): Promise<boolean> {
+  const [chat] = await ctx.db.select().from(chats).where(eq(chats.id, chatId));
+  if (!chat || chat.state !== 'open' || chat.waiting) return false;
+  if ((chat.lastMessageAt ?? chat.createdAt).getTime() >= opts.now.getTime() - opts.hours * 3_600_000) return false;
+  let closingMessageSent = false;
+  if (opts.closingText) {
+    const sent = await sendSystemMessage(ctx, chat, { text: opts.closingText });
+    if (!sent.ok && sent.messageId !== null) {
+      await ctx.hub.publishChat(chatId); // the failed bubble is the chat's last message now
+      return false;
+    }
+    closingMessageSent = sent.ok;
+  }
+  return unlessStale(() =>
+    updateChat(
+      ctx,
+      chatId,
+      and(eq(chats.state, 'open'), eq(chats.waiting, false)), // the contact wrote meanwhile: keep it open
+      { state: 'closed', closedAt: new Date(), waiting: false, waitingSince: null, triagePending: false },
+      { kind: 'closed', data: { closingMessageSent, reason: 'inactivity', hours: opts.hours }, authorId: null },
+    ),
   );
 }

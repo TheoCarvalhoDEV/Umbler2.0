@@ -35,6 +35,13 @@ export interface SendInput {
   replyToId?: string;
   /** Spec §5.5: the agent's answer to BOT_RUNNING; absent = settings.bot_running_behavior decides. */
   botAction?: BotAction;
+  /**
+   * Spec 2026-10-20 agendamentos §3.3, scheduled-message worker only (the routes build SendInput from zod fields, so a
+   * body can never set it): the file saved when the message was scheduled. The text is its caption.
+   */
+  storedFile?: { path: string; mime: string; name: string; size: number; sha256: string | null };
+  /** Same: the message carries the "Agendada" mark. */
+  scheduled?: boolean;
 }
 
 /**
@@ -321,7 +328,8 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
   // Reused content (spec §6, §7): the source's stored file and text are sent as they are, unsigned.
   const source = sticker ?? forwarded;
   const text = asVoice || asSticker || source ? null : input.text?.trim() || null;
-  if (!text && !file && !source) throw badRequest('Mensagem vazia');
+  const stored = input.storedFile ?? null;
+  if (!text && !file && !source && !stored) throw badRequest('Mensagem vazia');
 
   let replyToId: string | null = null;
   if (input.replyToId) {
@@ -343,12 +351,16 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
     body = formatSignature(text, signatureLabel(user, sector?.name ?? ''));
   }
 
-  const kind: OutKind = source ? (source.kind as OutKind) : asSticker ? 'sticker' : file ? fileKind(file.mime, asVoice) : 'text';
+  const kind: OutKind = source
+    ? (source.kind as OutKind)
+    : asSticker ? 'sticker' : file ? fileKind(file.mime, asVoice) : stored ? fileKind(stored.mime, false) : 'text';
   const saved = file ? await saveMedia(ctx.config.mediaDir, file.buffer, file.mime, file.name) : null;
   // ponytail: a reused file is shared by both rows (nothing deletes media files today); copy it if files ever get pruned.
   const media = source
     ? { path: source.mediaPath, mime: source.mediaMime, size: source.mediaSize, name: source.mediaName, sha256: source.mediaSha256 }
-    : { path: saved?.path ?? null, mime: file?.mime ?? null, size: saved?.size ?? null, name: file?.name ?? null, sha256: saved?.sha256 ?? null };
+    : stored
+      ? { ...stored }
+      : { path: saved?.path ?? null, mime: file?.mime ?? null, size: saved?.size ?? null, name: file?.name ?? null, sha256: saved?.sha256 ?? null };
   const now = new Date();
 
   const row = await ctx.db.transaction(async (tx) => {
@@ -368,6 +380,7 @@ export async function sendAgentMessage(ctx: AppCtx, user: AuthUser, chatId: stri
         mediaName: media.name,
         mediaSha256: media.sha256,
         forwardedFromId: forwarded?.id ?? null,
+        scheduled: input.scheduled ?? false,
         authorId: user.id,
         replyToId,
         status: 'pending',

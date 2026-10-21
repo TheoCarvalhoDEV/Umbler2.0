@@ -1,7 +1,9 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { BotRunningBehavior, SettingsDto } from '@talk/shared';
+import {
+  CLOSE_INACTIVE_HOURS, DEFAULT_AUTO_RULES, RETURN_TO_QUEUE_MINUTES, type AutoRulesDto, type BotRunningBehavior, type SettingsDto,
+} from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { sectors, settings } from '../db/schema.js';
@@ -36,6 +38,25 @@ export async function getBotRunningBehavior(db: Db | Tx): Promise<BotRunningBeha
   return parsed.success ? parsed.data : 'ask';
 }
 
+const AutoRulesBody = z.object({
+  returnToQueue: z.object({
+    enabled: z.boolean(),
+    minutes: z.number().int().min(RETURN_TO_QUEUE_MINUTES.min).max(RETURN_TO_QUEUE_MINUTES.max),
+  }),
+  closeInactive: z.object({
+    enabled: z.boolean(),
+    hours: z.number().int().min(CLOSE_INACTIVE_HOURS.min).max(CLOSE_INACTIVE_HOURS.max),
+    sendClosingMessage: z.boolean(),
+  }),
+});
+
+/** settings 'auto_rules' (spec 2026-10-20 agendamentos §4); the defaults (both off) when the key is missing or invalid. */
+export async function getAutoRules(db: Db | Tx): Promise<AutoRulesDto> {
+  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'auto_rules'));
+  const parsed = AutoRulesBody.safeParse(row?.value);
+  return parsed.success ? parsed.data : DEFAULT_AUTO_RULES;
+}
+
 async function readSettings(db: Db): Promise<SettingsDto> {
   const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'closing_message'));
   return {
@@ -47,6 +68,22 @@ async function readSettings(db: Db): Promise<SettingsDto> {
 
 export function registerSettingsRoutes(app: FastifyInstance, ctx: AppCtx): void {
   app.get('/api/settings', async () => readSettings(ctx.db));
+
+  // Own route (spec §5): PUT /api/settings replaces the whole SettingsDto and must never switch the rules off.
+  app.get('/api/settings/auto-rules', async (req) => {
+    if (req.user.role !== 'admin') throw forbidden();
+    return getAutoRules(ctx.db);
+  });
+
+  app.put('/api/settings/auto-rules', async (req) => {
+    if (req.user.role !== 'admin') throw forbidden();
+    const value = AutoRulesBody.parse(req.body);
+    await ctx.db
+      .insert(settings)
+      .values({ key: 'auto_rules', value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } });
+    return getAutoRules(ctx.db);
+  });
 
   app.put('/api/settings', async (req) => {
     if (req.user.role !== 'admin') throw forbidden();

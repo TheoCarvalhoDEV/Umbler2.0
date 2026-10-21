@@ -162,7 +162,7 @@ describe('createHub.publishMessage', () => {
     const message = {
       id: messageId, chatId: chat.id, direction: 'out', kind: 'text', body: 'Bom dia',
       media: null, mediaUnavailable: false, mediaExpired: false, authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
-      officeReaction: null, deleted: null, edited: null, forwarded: false, favorite: null,
+      officeReaction: null, deleted: null, edited: null, forwarded: false, favorite: null, scheduled: false,
       replyTo: null, reaction: null, status: 'sent', error: null, sentAt: '2026-10-14T12:01:00.000Z',
     };
     expect(a.events).toEqual([{ type: 'message.created', message }]);
@@ -288,5 +288,25 @@ describe('publishNotification', () => {
       { type: 'notification', chatId: 'c1', userId: 'u1' },
       { type: 'notification', chatId: 'c1', userId: 'u2' },
     ]);
+  });
+});
+
+describe('notifyUser (spec 2026-10-20 agendamentos §3.3)', () => {
+  it('real hub sends to that user only, with no chat check', () => {
+    const a = fakeSocket(); const b = fakeSocket();
+    hub.register(s.agentA, a); hub.register(s.agentB, b);
+    const n: NotificationDto = {
+      id: 'n2', chatId: randomUUID(), title: 'Mensagem agendada não enviada', text: 'Erro inesperado', botName: '',
+      kind: 'scheduled_failed', createdAt: '2026-10-14T13:00:00.000Z',
+    };
+    hub.notifyUser(s.agentA.id, n);
+    expect(a.events).toEqual([{ type: 'notification', notification: n }]);
+    expect(b.events).toEqual([]);
+  });
+
+  it('recording hub records it like a notification', () => {
+    const rec = createRecordingHub();
+    rec.notifyUser('u1', { id: 'n1', chatId: 'c1', title: 't', text: 'x', botName: '', createdAt: '2026-10-14T13:00:00.000Z' });
+    expect(rec.events).toEqual([{ type: 'notification', chatId: 'c1', userId: 'u1' }]);
   });
 });

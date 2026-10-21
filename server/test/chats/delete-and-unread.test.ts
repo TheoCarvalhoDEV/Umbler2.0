@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chatEvents, chatPins, chats, contacts, deletedChats, messages } from '../../src/db/schema.js';
+import { chatEvents, chatPins, chats, contacts, deletedChats, messages, scheduledMessages } from '../../src/db/schema.js';
 import { placeRecords } from '../../src/history/place.js';
 import { deleteChat } from '../../src/inbox/chats.js';
 import { handleInbound, type IngestHooks } from '../../src/messages/ingest.js';
@@ -67,6 +67,11 @@ describe('DELETE /api/chats/:id', () => {
     await seedMessage(ctx, chatId, s.channelId, at, { kind: 'sticker', mediaPath: '2026/10/figurinha.webp', externalId: 'M2' });
     await seedMessage(ctx, chatId, s.channelId, at, { kind: 'document', mediaPath: 'bots/boas-vindas.pdf', externalId: 'M3' });
     await seedEvent(ctx, chatId, 'created', at);
+    // a scheduled message's file (any state) goes with the chat
+    await writeFile(join(ctx.config.mediaDir, '2026/10/agendado.pdf'), 'x');
+    await ctx.db.insert(scheduledMessages).values({
+      chatId, authorId: s.agentA.id, body: 'Lembrete', signature: false, sendAt: at, status: 'canceled', mediaPath: '2026/10/agendado.pdf',
+    });
     await ctx.db.insert(chatPins).values({ userId: s.agentA.id, chatId });
     // the same sticker file, resent in another chat, must survive
     const other = await seedChat(ctx, { channelId: s.channelId, sectorId: s.sectorA });
@@ -104,6 +109,7 @@ describe('DELETE /api/chats/:id', () => {
     expect(await ctx.db.select().from(chatPins).where(eq(chatPins.chatId, chatId))).toEqual([]);
     expect(await ctx.db.select().from(contacts).where(eq(contacts.id, contactId))).toHaveLength(1);
     expect(existsSync(join(ctx.config.mediaDir, '2026/10/foto.jpg'))).toBe(false);
+    expect(existsSync(join(ctx.config.mediaDir, '2026/10/agendado.pdf'))).toBe(false);
     expect(existsSync(join(ctx.config.mediaDir, '2026/10/figurinha.webp'))).toBe(true); // still used by the other chat
     expect(existsSync(join(ctx.config.mediaDir, 'bots/boas-vindas.pdf'))).toBe(true); // chatbot library file
     expect(ctx.hub.events).toContainEqual({ type: 'chat.removed', chatId });

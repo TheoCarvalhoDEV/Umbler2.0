@@ -5,6 +5,7 @@ import type { BotRunningBehavior, NotificationDto } from './bots.js';
 import type { MessageChangeSource } from './message-actions.js';
 import type { UserPreferences } from './preferences.js';
 import type { ChatSort } from './chat-list.js';
+import type { ScheduledStatus } from './automation.js';
 export { TAG_COLORS, tagColorHex } from './palette.js';
 export {
   BLOCK_TYPES, WEEKDAYS, WEEKDAY_LABELS, DEFAULT_TIMEZONE, RULE_OPERATOR_LABELS, NATIVE_CONTACT_FIELDS, BLOCK_CATALOG,
@@ -22,6 +23,12 @@ export type * from './preferences.js';
 export { SEARCH_MIN_CHARS, SEARCH_MAX_CHARS, SEARCH_LIMIT, FOLD_FROM, FOLD_TO, foldText } from './search.js';
 export { CHAT_SORTS, DEFAULT_CHAT_SORT, BULK_MAX } from './chat-list.js';
 export type * from './chat-list.js';
+export {
+  OFFICE_TIMEZONE, SCHEDULE_MIN_LEAD_MS, SCHEDULE_MAX_AHEAD_MS, SCHEDULE_TEXT_MAX, SCHEDULED_STATUSES, SCHEDULED_TABS,
+  RETURN_TO_QUEUE_MINUTES, CLOSE_INACTIVE_HOURS, DEFAULT_AUTO_RULES, scheduleTimeProblem, officeLocalToIso, isoToOfficeLocal,
+  formatOfficeDateTime,
+} from './automation.js';
+export type * from './automation.js';
 
 export type Role = 'admin' | 'agent';
 export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[]; seeAllSectors: boolean; avatarUrl: string | null;
@@ -63,14 +70,19 @@ export interface MessageDto { id: string; chatId: string; direction: 'in' | 'out
   // history media (spec 2026-10-16 historico §5.5), optional for the same reason; toMessageDto always fills it (history Task 6)
   mediaExpired?: boolean;
   // the team's shared star (spec 2026-10-19 §5), optional for the same reason; toMessageDto always fills it (Task 2)
-  favorite?: { at: string; byName: string | null } | null }
+  favorite?: { at: string; byName: string | null } | null;
+  // sent by the scheduled-message worker: the "Agendada" mark (spec 2026-10-20 agendamentos §3.3); toMessageDto always fills it
+  scheduled?: boolean }
 export interface ChatEventDto { id: string; chatId: string; kind: ChatEventKind; data: Record<string, unknown>; authorName: string | null; createdAt: string }
 export type ChatEventKind =
   | 'created' | 'assigned' | 'transferred' | 'closed' | 'reopened' | 'privacy_changed' | 'triage_routed'
   | 'bot_started' | 'bot_finished' | 'bot_stopped' | 'bot_failed' | 'bot_transferred' | 'bot_note'
   | 'message_deleted' | 'message_edited' // data: { messageId, source: MessageChangeSource }
   | 'history_imported' | 'contact_merged' // data: { count } | {}
-  | 'note_deleted'; // data: {} (spec 2026-10-19 §3); the event author is who deleted the note
+  | 'note_deleted' // data: {} (spec 2026-10-19 §3); the event author is who deleted the note
+  // spec 2026-10-20 agendamentos: data { scheduledId, sendAt, edited? } | { scheduledId } | { minutes, previousOwnerId }.
+  // The inactivity close is a 'closed' event with data.reason 'inactivity' and no author.
+  | 'message_scheduled' | 'scheduled_canceled' | 'returned_to_queue';
 export type TimelineItem = ({ type: 'message' } & MessageDto) | ({ type: 'event' } & ChatEventDto);
 /** GET /api/messages/:id/edits: the text before each edit, newest first. */
 export interface MessageEditDto { id: string; previousBody: string | null; source: MessageChangeSource; editedByName: string | null; newTextUnavailable: boolean; editedAt: string }
@@ -84,6 +96,13 @@ export interface CustomFieldDto { id: string; name: string; kind: 'text' | 'numb
 export interface QuickAnswerDto { id: string; name: string; body: string; hasAttachment: boolean; visibility: 'all' | 'owner'; ownerId: string | null }
 export interface TriageMenuDto { enabled: boolean; welcomeText: string; invalidText: string; options: Array<{ key: string; label: string; sectorId: string }> }
 export interface SettingsDto { closingMessage: string; triageMenu: TriageMenuDto; botRunningBehavior: BotRunningBehavior }
+/** Spec 2026-10-20 agendamentos §3. `chatId` = the chat it was scheduled in; `sentChatId` = where it went (a new chat when that one was closed). */
+export interface ScheduledMessageDto { id: string; chatId: string; contact: { id: string; name: string | null; phone: string | null };
+  authorId: string; authorName: string; body: string; signature: boolean; attachment: { name: string; mime: string; size: number } | null;
+  sendAt: string; status: ScheduledStatus; error: string | null; messageId: string | null; sentChatId: string | null;
+  createdAt: string; finishedAt: string | null;
+  // the author or an admin, while still pending
+  canEdit: boolean }
 export type WsEvent =
   | { type: 'chat.updated'; chat: ChatListItem }
   | { type: 'chat.removed'; chatId: string }
