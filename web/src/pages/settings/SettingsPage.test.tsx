@@ -40,6 +40,11 @@ it('filters the items by label, ignoring accents and case, and hides empty group
   fireEvent.change(search, { target: { value: 'regras auto' } });
   expect(within(nav).getAllByRole('link').map((a) => a.textContent)).toEqual(['Regras automáticas']);
 
+  fireEvent.change(search, { target: { value: 'compromissos' } }); // spec 2026-10-21 compromissos §4
+  expect(within(nav).getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+    ['Compromissos', '/configuracoes/compromissos'],
+  ]);
+
   fireEvent.change(search, { target: { value: 'xyz' } });
   expect(within(nav).queryAllByRole('link')).toHaveLength(0);
   expect(within(nav).getByText('Nenhum ajuste encontrado')).toBeTruthy();

@@ -1,7 +1,7 @@
 import { useState, type ComponentType } from 'react';
 import {
-  BuildingsIcon, ChatsCircleIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon, TagIcon,
-  TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
+  BuildingsIcon, CalendarStarIcon, ChatsCircleIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon,
+  TagIcon, TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
 } from '@phosphor-icons/react';
 import { NavLink, Navigate, useParams } from 'react-router';
 import { useCurrentUser } from '../../lib/auth';
@@ -16,6 +16,7 @@ import { QuickAnswersSettings } from './QuickAnswersSettings';
 import { TriageSettings } from './TriageSettings';
 import { ChatSettings } from './ChatSettings';
 import { AutoRulesSettings } from './AutoRulesSettings';
+import { AppointmentSettings } from './AppointmentSettings';
 import { BotsSettings } from './bots/BotsSettings';
 import { card, pageTitle, searchInput, searchPill } from '../../components/ui';
 
@@ -32,6 +33,7 @@ const SECTIONS: Item[] = [
   { path: 'chatbots', label: 'Chatbots', icon: RobotIcon, group: 'Atendimento', adminOnly: true, page: BotsSettings },
   { path: 'conversas', label: 'Conversas', icon: ChatsCircleIcon, group: 'Atendimento', adminOnly: true, page: ChatSettings },
   { path: 'regras', label: 'Regras automáticas', icon: TimerIcon, group: 'Atendimento', adminOnly: true, page: AutoRulesSettings },
+  { path: 'compromissos', label: 'Compromissos', icon: CalendarStarIcon, group: 'Atendimento', adminOnly: true, page: AppointmentSettings },
   { path: 'atendentes', label: 'Atendentes', icon: UsersThreeIcon, group: 'Equipe e cadastros', adminOnly: true, page: UsersSettings },
   { path: 'etiquetas', label: 'Etiquetas', icon: TagIcon, group: 'Equipe e cadastros', adminOnly: true, page: TagsSettings },
   { path: 'campos', label: 'Campos personalizados', icon: TextAaIcon, group: 'Equipe e cadastros', adminOnly: true, page: CustomFieldsSettings },
