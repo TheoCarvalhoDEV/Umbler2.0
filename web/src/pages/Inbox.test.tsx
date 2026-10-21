@@ -146,6 +146,18 @@ it('shows the unread badge on Entrada and switches to Esperando', async () => {
   expect(screen.getByRole('tab', { name: /Esperando/ }).getAttribute('aria-selected')).toBe('true');
 });
 
+it('an empty list under a search or filter says so and offers "Limpar filtros"', async () => {
+  renderInbox();
+  await screen.findByText('Ana Souza');
+  fireEvent.click(screen.getByRole('tab', { name: /Esperando/ }));
+  expect(await screen.findByText('Nenhuma conversa')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Buscar conversas'), { target: { value: 'zé' } });
+  expect(await screen.findByText('Nenhuma conversa com esses filtros')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }));
+  expect((screen.getByLabelText('Buscar conversas') as HTMLInputElement).value).toBe('');
+  expect(await screen.findByText('Nenhuma conversa')).toBeTruthy();
+});
+
 it('sends the debounced search term as q', async () => {
   renderInbox();
   await screen.findByText('Ana Souza');

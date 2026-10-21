@@ -1,7 +1,7 @@
 import { useEffect, useState, type UIEvent } from 'react';
 import { Outlet, useNavigate, useParams } from 'react-router';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowsDownUp, CheckSquare, Eye, EyeSlash, Funnel, MagnifyingGlass, Plus } from '@phosphor-icons/react';
+import { ArrowsDownUp, ChatsCircle, CheckSquare, Eye, EyeSlash, Funnel, MagnifyingGlass, Plus } from '@phosphor-icons/react';
 import {
   BULK_MAX, CHAT_SORTS, DEFAULT_CHAT_SORT, type ChatListFilters, type ChatListItem as ChatItem, type ChatSort, type ChatTab,
 } from '@talk/shared';
@@ -15,7 +15,7 @@ import { NewChatDialog } from '../components/inbox/NewChatDialog';
 import {
   buildChatQuery, CHAT_SORT_LABELS, EMPTY_FILTERS, readChatSort, saveChatSort, withSort, type InboxFilters,
 } from '../components/inbox/chat-query';
-import { card, iconButton, iconButtonOn, iconButtonPrimary, pageTitle, searchInput, searchPill, tab as tabClass, tabList } from '../components/ui';
+import { button, card, iconButton, iconButtonOn, iconButtonPrimary, pageTitle, searchInput, searchPill, tab as tabClass, tabList } from '../components/ui';
 
 const TABS: Array<{ tab: ChatTab; label: string }> = [
   { tab: 'inbox', label: 'Entrada' },
@@ -219,7 +219,7 @@ export function Inbox() {
               <input
                 type="search"
                 aria-label="Buscar conversas"
-                placeholder="Buscar por nome ou telefone"
+                placeholder="Nome ou telefone"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className={searchInput}
@@ -344,7 +344,31 @@ export function Inbox() {
           {list.isError && (
             <li className="mx-1 rounded-block bg-danger-soft px-3.5 py-2.5 text-[13px] font-semibold text-danger">Não foi possível carregar as conversas.</li>
           )}
-          {list.isSuccess && chats.length === 0 && <li className="px-3 py-10 text-center text-[13px] text-muted">Nenhuma conversa</li>}
+          {list.isSuccess && chats.length === 0 && (
+            // a filter or a search can hide every chat while the tab counters still count them: say so and offer the way out
+            <li className="flex flex-col items-center gap-3 px-3 py-10 text-center">
+              <span aria-hidden="true" className="grid size-12 place-items-center rounded-full bg-primary-soft text-accent-ink">
+                <ChatsCircle size={24} />
+              </span>
+              {activeFilters > 0 || search.trim() ? (
+                <>
+                  <span className="text-[13px] text-muted">Nenhuma conversa com esses filtros</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilters(EMPTY_FILTERS);
+                      setSearch('');
+                    }}
+                    className={button('secondary', 'sm')}
+                  >
+                    Limpar filtros
+                  </button>
+                </>
+              ) : (
+                <span className="text-[13px] text-muted">Nenhuma conversa</span>
+              )}
+            </li>
+          )}
           {list.isFetchingNextPage && <li className="px-3 py-3 text-center text-[13px] text-muted">Carregando…</li>}
         </ul>
 
