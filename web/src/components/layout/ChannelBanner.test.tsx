@@ -49,10 +49,10 @@ describe('downChannels', () => {
 });
 
 describe('ChannelBanner', () => {
-  it('tells an admin which channel is down and links to Configurações › Canais', () => {
+  it('tells an admin which channel is down and links to Ajustes › Canais', () => {
     renderBanner(admin, [ch({ disconnectedAt: null })]);
-    expect(screen.getByRole('alert').textContent).toBe('Canal Escritório desconectado: leia o QR code em Configurações › Canais');
-    expect(screen.getByRole('link', { name: 'Configurações › Canais' }).getAttribute('href')).toBe('/configuracoes/canais');
+    expect(screen.getByRole('alert').textContent).toBe('Canal Escritório desconectado: leia o QR code em Ajustes › Canais');
+    expect(screen.getByRole('link', { name: 'Ajustes › Canais' }).getAttribute('href')).toBe('/configuracoes/canais');
   });
 
   it('shows nothing to an agent, nor while every channel is up', () => {

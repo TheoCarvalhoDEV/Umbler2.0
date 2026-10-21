@@ -6,7 +6,7 @@ import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { Avatar } from '../../components/Avatar';
 import { badge, badgeTone, button, fieldLabel } from '../../components/ui';
-import { ErrorText, PageHeader, SaveBar, SettingRow, SettingsSection, field, hint, send, useSend } from '../../components/settings/common';
+import { ErrorText, PageHeader, SaveBar, SentBubble, SettingRow, SettingsSection, field, hint, send, useSend } from '../../components/settings/common';
 
 export function ProfileSettings() {
   const me = useCurrentUser();
@@ -99,11 +99,10 @@ function SignaturePreview({ label }: { label: string }) {
   return (
     <div className="mt-4">
       <p className={fieldLabel}>Como o cliente vê</p>
-      <div className="w-fit max-w-full rounded-card rounded-br-md bg-bubble-out px-3.5 py-2.5 text-sm text-fg sm:max-w-[360px]">
+      <SentBubble>
         <p className="font-bold break-words">{label}:</p>
         <p>Olá! Tudo bem?</p>
-        <p className="mt-1 text-right text-[11px] leading-[14px] text-bubble-meta tabular-nums">10:30</p>
-      </div>
+      </SentBubble>
     </div>
   );
 }

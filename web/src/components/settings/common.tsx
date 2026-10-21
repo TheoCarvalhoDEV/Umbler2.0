@@ -28,24 +28,9 @@ export const field = `mt-1.5 ${fieldBox}`;
 
 /** Sunken block inside the page card: danger zone, notes, QR code, read-only data. */
 export const block = 'rounded-block bg-sunken p-4';
-/** A row of a settings list: thin divider between rows, none after the last. */
-export const listRow = 'flex flex-wrap items-center gap-3 border-b border-border px-1 py-3 last:border-b-0';
 /** Help text under a control. */
 export const hint = fieldHint;
 export const okText = 'text-[13px] font-semibold text-success';
-
-/** wide: for a table that needs more than the board's 800px (Chatbots). */
-export function Section({ title, action, wide, children }: { title: string; action?: ReactNode; wide?: boolean; children: ReactNode }) {
-  return (
-    <section className={wide ? 'max-w-5xl' : 'max-w-[800px]'}>
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-4">
-        <h1 className={pageTitle}>{title}</h1>
-        {action}
-      </header>
-      {children}
-    </section>
-  );
-}
 
 /** Every settings page starts with it. action: the page's main button (Novo setor…), at the right. */
 export function PageHeader({ title, description, action }: { title: string; description?: ReactNode; action?: ReactNode }) {
@@ -108,6 +93,16 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
     >
       <span aria-hidden className={`size-5 rounded-full bg-surface shadow-float transition-transform ${checked ? 'translate-x-5' : ''}`} />
     </button>
+  );
+}
+
+/** A message as the contact receives it: a small sent bubble (the signature preview, the triage menu). */
+export function SentBubble({ children }: { children: ReactNode }) {
+  return (
+    <div className="w-fit max-w-full rounded-card rounded-br-md bg-bubble-out px-3.5 py-2.5 text-sm text-fg sm:max-w-[360px]">
+      {children}
+      <p className="mt-1 text-right text-[11px] leading-[14px] text-bubble-meta tabular-nums">10:30</p>
+    </div>
   );
 }
 

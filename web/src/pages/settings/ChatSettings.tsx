@@ -2,8 +2,8 @@ import { useId, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { BotRunningBehavior, SettingsDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
-import { fieldArea, fieldLabel, fieldSelect } from '../../components/ui';
-import { ErrorText, Loading, Section, btnPrimary, hint, okText, send, useSend } from '../../components/settings/common';
+import { fieldArea, fieldSelect } from '../../components/ui';
+import { Loading, PageHeader, SaveBar, SettingRow, SettingsSection, send, useSend } from '../../components/settings/common';
 
 const BEHAVIORS: Array<{ value: BotRunningBehavior; label: string }> = [
   { value: 'ask', label: 'Perguntar' },
@@ -20,52 +20,55 @@ export function ChatSettings() {
 function ChatSettingsForm({ settings }: { settings: SettingsDto }) {
   const [text, setText] = useState(settings.closingMessage);
   const [behavior, setBehavior] = useState<BotRunningBehavior>(settings.botRunningBehavior);
+  const textId = useId();
   const behaviorId = useId();
   const save = useSend(qk.settings);
+  const dirty = text.trim() !== settings.closingMessage.trim() || behavior !== settings.botRunningBehavior;
 
   function submit(e: FormEvent) {
     e.preventDefault();
     save.mutate(() => send('/api/settings', 'PUT', { ...settings, closingMessage: text.trim(), botRunningBehavior: behavior }));
   }
 
+  function discard() {
+    setText(settings.closingMessage);
+    setBehavior(settings.botRunningBehavior);
+    save.reset();
+  }
+
   return (
-    <Section title="Conversas">
-      <form onSubmit={submit} className="space-y-5">
-        <label className="block">
-          <span className={fieldLabel}>Mensagem de encerramento</span>
-          <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} className={fieldArea} />
-          <span className={hint}>
-            Enviada ao contato quando o atendente finaliza a conversa com a opção “Enviar mensagem de encerramento” marcada.
-            Deixe em branco para não usar.
-          </span>
-        </label>
-        <div>
-          <label htmlFor={behaviorId} className={fieldLabel}>
-            Quando o atendente enviar mensagem com chatbot em execução
-          </label>
-          <select
-            id={behaviorId}
-            value={behavior}
-            onChange={(e) => setBehavior(e.target.value as BotRunningBehavior)}
-            className={fieldSelect}
-          >
-            {BEHAVIORS.map((b) => (
-              <option key={b.value} value={b.value}>
-                {b.label}
-              </option>
-            ))}
-          </select>
-          <span className={hint}>
-            Perguntar mostra um aviso antes de enviar. Parar o bot encerra o chatbot e envia. Manter rodando envia e deixa o
-            chatbot continuar. A mesma regra vale para transferências feitas pelo atendente.
-          </span>
-        </div>
-        <ErrorText error={save.error} />
-        {save.isSuccess && <p className={okText}>Configurações salvas.</p>}
-        <button type="submit" disabled={save.isPending} className={btnPrimary}>
-          Salvar
-        </button>
+    <>
+      <PageHeader title="Conversas" description="Como uma conversa termina e o que acontece quando o atendente escreve com um chatbot rodando." />
+      <form onSubmit={submit}>
+        <SettingsSection title="Encerramento">
+          <SettingRow
+            wide
+            label="Mensagem de encerramento"
+            htmlFor={textId}
+            description="Enviada ao contato quando o atendente finaliza a conversa com a opção “Enviar mensagem de encerramento” marcada. Deixe em branco para não usar."
+            control={<textarea id={textId} rows={4} value={text} onChange={(e) => setText(e.target.value)} className={fieldArea} />}
+          />
+        </SettingsSection>
+        <SettingsSection title="Chatbots">
+          <SettingRow
+            label="Quando o atendente enviar mensagem com chatbot em execução"
+            htmlFor={behaviorId}
+            description="Perguntar mostra um aviso antes de enviar. Parar o bot encerra o chatbot e envia. Manter rodando envia e deixa o chatbot continuar. A mesma regra vale para transferências feitas pelo atendente."
+            control={
+              <div className="w-56 max-w-full">
+                <select id={behaviorId} value={behavior} onChange={(e) => setBehavior(e.target.value as BotRunningBehavior)} className={fieldSelect}>
+                  {BEHAVIORS.map((b) => (
+                    <option key={b.value} value={b.value}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            }
+          />
+        </SettingsSection>
+        <SaveBar dirty={dirty} saving={save.isPending} onDiscard={discard} error={save.error} saved={save.isSuccess} />
       </form>
-    </Section>
+    </>
   );
 }

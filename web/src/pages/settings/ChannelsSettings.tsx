@@ -177,18 +177,20 @@ export function ChannelsSettings() {
                   htmlFor={periodId}
                   description="O WhatsApp envia cerca de 3,5 meses de histórico; com “12 meses” ou “Tudo” vem só o que o celular mandar."
                   control={
-                    <select
-                      id={periodId}
-                      value={periodOf(c)}
-                      onChange={(e) => setPeriods((cur) => ({ ...cur, [c.id]: e.target.value as HistoryPeriod }))}
-                      className={`${fieldSelect} w-40`}
-                    >
-                      {PERIODS.map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="w-40">
+                      <select
+                        id={periodId}
+                        value={periodOf(c)}
+                        onChange={(e) => setPeriods((cur) => ({ ...cur, [c.id]: e.target.value as HistoryPeriod }))}
+                        className={fieldSelect}
+                      >
+                        {PERIODS.map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   }
                 />
                 {c.status !== 'connected' && (
