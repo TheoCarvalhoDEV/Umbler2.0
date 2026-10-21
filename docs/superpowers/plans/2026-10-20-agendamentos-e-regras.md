@@ -21,6 +21,8 @@
 
 If PR #22 changes before this plan runs, rebase onto the merged result and re-quote the snippets. Never regenerate `0007`.
 
+**Web base (Tasks 6–9).** After Task 5, `6b8c9dd` merged `feat/visual-mensageiro` (PR #23, the chosen "Mensageiro" look). The web snippets of Tasks 6–9 quote that code verbatim. Their new UI uses the class recipes in `web/src/components/ui.ts` (`button`, `iconButtonGhost`, `card`, `pageTitle`, `field` / `fieldArea` / `fieldLabel` / `fieldError`, `checkbox`, `tab` / `tabList`, `badge` / `badgeTone`) and the `web/src/index.css` tokens, never raw colors. The visual's additions in the touched files must survive: the Phosphor `*Icon` names, `MainNav` / `NavItem` in `AppLayout.tsx`, the composer's `ToolButton` and `roundPrimary`, and ChatDialogs' `Modal` / `Actions` built on `ui.ts`.
+
 ## Global Constraints
 
 - No new dependency in any workspace.
@@ -57,10 +59,11 @@ If PR #22 changes before this plan runs, rebase onto the merged result and re-qu
   - events: "Mensagem agendada por X para D", "Mensagem agendada alterada por X para D", "Mensagem agendada cancelada por X", "Devolvida à fila: sem resposta há N min", "Finalizada por inatividade";
   - settings: "Regras automáticas", "Devolver à fila conversas paradas", "Minutos sem resposta", "Finalizar por inatividade", "Horas sem mensagens", "Enviar a mensagem de encerramento", "Salvar", "Regras salvas.".
 - Code identifiers are English.
-- Theme tokens only (`bg-surface`, `bg-panel`, `bg-sunken`, `bg-sidebar-hover`, `bg-primary-soft`, `text-fg`, `text-muted`, `text-link`, `text-danger`, `text-success`, `border-border`, `border-field`, `divide-border`).
+- Theme tokens only (`bg-surface`, `bg-panel`, `bg-sunken`, `bg-sidebar-hover`, `bg-primary-soft`, `bg-danger-soft`, `text-fg`, `text-fg-2`, `text-muted`, `text-link`, `text-accent-ink`, `text-danger`, `text-success`, `border-border`, `border-field`, `divide-border`), through the `ui.ts` recipes wherever one exists.
 - Reuse what exists:
   - `Modal`, `Actions` (`ChatDialogs.tsx`), `confirmDialog`, `errorMessage`, `contactLabel`;
-  - `Section` / `field` / `btnPrimary` / `useSend` / `Loading` / `ErrorText` (`components/settings/common.tsx`);
+  - `Section` / `block` / `hint` / `okText` / `btnPrimary` / `useSend` / `Loading` / `ErrorText` (`components/settings/common.tsx`);
+  - the `components/ui.ts` recipes (see "Web base" above);
   - `startChat`, `sendAgentMessage`, `sendSystemMessage`, `getClosingMessage`, `updateChat`;
   - `errorTag`, `loadAuthUser`, `saveMedia`, `addEvent`;
   - the test seeds `seedChat`, `eventsOf`, `multipart`.
@@ -2383,9 +2386,11 @@ git commit -m "feat(server): automatic rules (devolver à fila, finalizar por in
 
 ### Task 6: Web client, the "Agendada" mark and the failure toast
 
+Snippets quote the web code at `6b8c9dd` (the "Mensageiro" visual merged, PR #23).
+
 **Files:**
 - Modify: `web/src/lib/api.ts` (type imports, `ScheduleInput`, `api.scheduled`, `api.settings.autoRules`, `qk`)
-- Modify: `web/src/components/layout/NotificationToasts.tsx`
+- Modify: `web/src/components/layout/NotificationToasts.tsx` (icon import, `failed` / `targetOf` / `footerOf`, the icon, the link, the footer)
 - Modify: `web/src/components/conversation/MessageBubble.tsx` (icon import, the mark)
 - Test: `web/src/lib/api.test.ts`, `web/src/components/layout/NotificationToasts.test.tsx`, `web/src/components/conversation/MessageBubble.test.tsx`
 
@@ -2408,7 +2413,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_AUTO_RULES } from '@talk/shared';
 ```
 
-and add at the end of the file:
+and add at the end of the file (after the `describe('api routes of the 2026-10-20 delivery', …)` block, which stays):
 
 ```ts
 describe('api routes of the 2026-10-20 agendamentos delivery', () => {
@@ -2494,7 +2499,7 @@ Expected: FAIL. `api.scheduled` is undefined, the toast reads "Chatbot " and lin
 
 - [ ] **Step 3: Add the client calls and query keys**
 
-In `web/src/lib/api.ts`, in the `@talk/shared` type import list, add `AutoRulesDto,` after `import type {`, and add `ScheduledMessageDto,` and `ScheduledTab,` after `SaveVersionInput,`.
+In `web/src/lib/api.ts`, in the `import type { … } from '@talk/shared'` list (one name per line), add `AutoRulesDto,` before `BotAction,`, and add `ScheduledMessageDto,` and `ScheduledTab,` after `SaveVersionInput,`.
 
 After `export interface BulkTransferInput { chatIds: string[]; sectorId?: string; ownerId?: string | null }`, add:
 
@@ -2568,6 +2573,18 @@ with
 In `web/src/components/layout/NotificationToasts.tsx`, replace
 
 ```tsx
+import { BellRingingIcon } from '@phosphor-icons/react';
+```
+
+with
+
+```tsx
+import { BellRingingIcon, WarningCircleIcon } from '@phosphor-icons/react';
+```
+
+replace
+
+```tsx
 const titleOf = (n: NotificationDto) => n.title.trim() || 'Notificação do chatbot';
 ```
 
@@ -2576,8 +2593,9 @@ with
 ```tsx
 const titleOf = (n: NotificationDto) => n.title.trim() || 'Notificação do chatbot';
 /** Spec 2026-10-20 agendamentos §3.3: a failed scheduled message opens "Agendamentos → Falharam"; a bot's notice, its chat. */
-const targetOf = (n: NotificationDto) => (n.kind === 'scheduled_failed' ? '/agendamentos?status=failed' : `/chats/${n.chatId}`);
-const footerOf = (n: NotificationDto) => (n.kind === 'scheduled_failed' ? 'Mensagens agendadas' : `Chatbot ${n.botName}`);
+const failed = (n: NotificationDto) => n.kind === 'scheduled_failed';
+const targetOf = (n: NotificationDto) => (failed(n) ? '/agendamentos?status=failed' : `/chats/${n.chatId}`);
+const footerOf = (n: NotificationDto) => (failed(n) ? 'Mensagens agendadas' : `Chatbot ${n.botName}`);
 ```
 
 replace
@@ -2604,16 +2622,36 @@ with
           to={targetOf(n)}
 ```
 
-and replace
+replace
 
 ```tsx
-          <p className="mt-1 text-xs text-muted">Chatbot {n.botName}</p>
+          <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-primary-soft text-accent-ink">
+            <BellRingingIcon size={16} />
+          </span>
 ```
 
 with
 
 ```tsx
-          <p className="mt-1 text-xs text-muted">{footerOf(n)}</p>
+          {/* a failure reads as one: the danger tone and a warning instead of the bell */}
+          <span
+            aria-hidden
+            className={`grid size-8 shrink-0 place-items-center rounded-full ${failed(n) ? 'bg-danger-soft text-danger' : 'bg-primary-soft text-accent-ink'}`}
+          >
+            {failed(n) ? <WarningCircleIcon size={16} /> : <BellRingingIcon size={16} />}
+          </span>
+```
+
+and replace
+
+```tsx
+            <p className="mt-0.5 text-xs text-muted">Chatbot {n.botName}</p>
+```
+
+with
+
+```tsx
+            <p className="mt-0.5 text-xs text-muted">{footerOf(n)}</p>
 ```
 
 - [ ] **Step 5: The "Agendada" mark**
@@ -2621,15 +2659,13 @@ with
 In `web/src/components/conversation/MessageBubble.tsx`, replace
 
 ```tsx
-import { Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, Robot, ShareFat, Star, WarningCircle } from '@phosphor-icons/react';
+  Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, PencilSimpleLine, Robot, ShareFat, Star, WarningCircle,
 ```
 
 with
 
 ```tsx
-import {
-  CalendarCheck, Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, Robot, ShareFat, Star, WarningCircle,
-} from '@phosphor-icons/react';
+  CalendarCheck, Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, PencilSimpleLine, Robot, ShareFat, Star, WarningCircle,
 ```
 
 and replace
@@ -2640,14 +2676,14 @@ and replace
         )}
 ```
 
-with
+with (the same look as "Encaminhada": the bubble's own meta color)
 
 ```tsx
             <ShareFat size={12} aria-hidden /> Encaminhada
           </p>
         )}
         {m.scheduled && (
-          <p data-tag="scheduled" className="mb-1 flex items-center gap-1 text-xs italic opacity-70">
+          <p data-tag="scheduled" className={`mb-1 flex items-center gap-1 text-xs italic ${meta}`}>
             <CalendarCheck size={12} aria-hidden /> Agendada
           </p>
         )}
@@ -2672,14 +2708,16 @@ git commit -m "feat(web): scheduled-message client, the Agendada mark and the fa
 
 ### Task 7: Schedule from the composer, and the chat's strip
 
+Snippets quote the web code at `6b8c9dd` (the "Mensageiro" visual). The new pieces use the `web/src/components/ui.ts` recipes: the dialog is ChatDialogs' `Modal` + `Actions` with `fieldLabel` / `fieldArea` / `field`, the composer button is the composer's own `ToolButton` (`iconButtonGhost`), rows use `badge` / `button(…, 'sm')`, the open list is a `card`.
+
 **Files:**
 - Create: `web/src/components/conversation/Scheduled.tsx`
-- Modify: `web/src/components/conversation/Composer.tsx` (imports, state, `openSchedule`, `schedule`, button, dialog)
+- Modify: `web/src/components/conversation/Composer.tsx` (icon import, import, state, `openSchedule`, `schedule`, button, dialog)
 - Modify: `web/src/components/conversation/ConversationView.tsx` (import, `useWsEvent`, strip)
 - Test: `web/src/components/conversation/Scheduled.test.tsx` (create), `web/src/components/conversation/Composer.test.tsx`
 
 **Interfaces:**
-- Consumes: Task 1 helpers; Task 6 `api.scheduled`, `qk.scheduled`, `qk.chatScheduled`; existing `Modal`, `Actions`, `confirmDialog`, `errorMessage`, `contactLabel`.
+- Consumes: Task 1 helpers; Task 6 `api.scheduled`, `qk.scheduled`, `qk.chatScheduled`; existing `Modal`, `Actions` (`ChatDialogs.tsx`), `confirmDialog`, `errorMessage`, `contactLabel`; the `ui.ts` recipes `field`, `fieldArea`, `fieldLabel`, `fieldError`, `badge`, `badgeTone`, `button`, `card` (imported from `../ui`, never copied; ChatDialogs imports them from there too, so nothing is exported from ChatDialogs).
 - Produces: `ScheduleDialog`, `ScheduledItem`, `ScheduledStrip`, `scheduledCount` and `STATUS_LABELS` (Task 8 reuses `ScheduledItem`).
 
 - [ ] **Step 1: Write the failing tests**
@@ -2688,6 +2726,9 @@ Create `web/src/components/conversation/Scheduled.test.tsx`:
 
 ```tsx
 // @vitest-environment jsdom
+// Review Focus 5: the dialog must not read the host zone. Set before anything reads the zone.
+process.env.TZ = 'Asia/Tokyo';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -2739,7 +2780,7 @@ function renderStrip() {
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z')); // 08:00 in Cuiabá
+  vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z')); // 08:00 in Cuiabá, 21:00 in Tokyo (the host here)
 });
 afterEach(() => {
   cleanup();
@@ -2750,6 +2791,8 @@ afterEach(() => {
 
 describe('ScheduleDialog (spec 2026-10-20 agendamentos §3.1)', () => {
   it('reads the time as Cuiabá time, refuses less than 2 minutes ahead and hands back an ISO instant (Review Focus 5)', async () => {
+    // the host clock reads 21:00, so a dialog that used the host zone would show 21:02 and send 12:30Z
+    expect(new Date().getHours()).toBe(21);
     const onConfirm = vi.fn(async () => {});
     render(<ScheduleDialog title="Agendar mensagem" confirmLabel="Agendar" initialText="Lembrete" onCancel={() => {}} onConfirm={onConfirm} />);
     const when = screen.getByLabelText('Data e hora (horário de Cuiabá)') as HTMLInputElement;
@@ -2819,7 +2862,9 @@ describe('ScheduledStrip (spec §3.2)', () => {
     fireEvent.click(await screen.findByRole('button', { name: '1 mensagem agendada' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/scheduled-messages/s1/cancel')).toBe(true));
-    expect(confirmDialog).toHaveBeenCalledWith({ title: 'Cancelar a mensagem agendada?', confirmLabel: 'Cancelar agendamento' });
+    expect(confirmDialog).toHaveBeenCalledWith({
+      title: 'Cancelar a mensagem agendada?', confirmLabel: 'Cancelar agendamento', cancelLabel: 'Manter agendamento',
+    });
   });
 
   it('edits through the dialog with PATCH', async () => {
@@ -2878,7 +2923,7 @@ and add inside `describe('Composer', …)`, after the first test:
     expect(posts('/api/chats/c1/scheduled-messages')[0]!.body).toEqual({
       text: 'Lembrete da audiência', sendAt: '2026-10-21T13:00:00.000Z', signature: true,
     });
-    await waitFor(() => expect(box().value).toBe(''));
+    await waitFor(() => expect(box().value).toBe('')); // box() throws while the dialog's textarea is a second textbox
     expect(posts('/api/chats/c1/messages')).toEqual([]);
   });
 ```
@@ -2896,7 +2941,7 @@ Create `web/src/components/conversation/Scheduled.tsx`:
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarCheck, Paperclip } from '@phosphor-icons/react';
+import { CalendarCheckIcon, PaperclipIcon } from '@phosphor-icons/react';
 import {
   SCHEDULE_MAX_AHEAD_MS, SCHEDULE_MIN_LEAD_MS, SCHEDULE_TEXT_MAX, formatOfficeDateTime, isoToOfficeLocal, officeLocalToIso,
   scheduleTimeProblem, type ScheduledMessageDto, type ScheduledStatus,
@@ -2904,6 +2949,7 @@ import {
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 import { contactLabel } from '../../lib/format';
+import { badge, badgeTone, button, card, field, fieldArea, fieldError, fieldLabel } from '../ui';
 import { Actions, Modal } from './ChatDialogs';
 import { errorMessage } from './model';
 
@@ -2913,7 +2959,9 @@ export const STATUS_LABELS: Record<ScheduledStatus, string> = {
   pending: 'Pendente', sending: 'Enviando…', sent: 'Enviada', failed: 'Falhou', canceled: 'Cancelada',
 };
 
-const field = 'mt-1 block w-full rounded border border-field bg-surface px-2 py-1.5 text-sm text-fg';
+const STATUS_TONES: Record<ScheduledStatus, string> = {
+  pending: badgeTone.neutral, sending: badgeTone.warning, sent: badgeTone.success, failed: badgeTone.danger, canceled: badgeTone.neutral,
+};
 
 /**
  * "Agendar mensagem" / "Editar agendamento" (spec 2026-10-20 agendamentos §3.1–3.2). The time is typed in Cuiabá time.
@@ -2957,17 +3005,19 @@ export function ScheduleDialog(props: {
 
   return (
     <Modal title={props.title} onCancel={props.onCancel}>
-      <label className="block text-sm font-medium">
-        Texto da mensagem
-        <textarea rows={4} maxLength={SCHEDULE_TEXT_MAX} value={text} onChange={(e) => setText(e.target.value)} className={field} />
+      <label className="block">
+        <span className={fieldLabel}>Texto da mensagem</span>
+        <textarea rows={4} maxLength={SCHEDULE_TEXT_MAX} value={text} onChange={(e) => setText(e.target.value)} className={fieldArea} />
       </label>
       {props.fileName && (
-        <p className="mt-2 flex items-center gap-1.5 text-sm text-muted">
-          <Paperclip size={14} aria-hidden /> Anexo: {props.fileName}
+        // the composer's file chip, read-only here (spec §3.2: the attachment never changes)
+        <p className="mt-3 flex items-center gap-2 rounded-block bg-panel px-3 py-2 text-[13px] text-fg">
+          <PaperclipIcon size={16} aria-hidden className="shrink-0 text-fg-2" />
+          <span className="min-w-0 truncate font-semibold">Anexo: {props.fileName}</span>
         </p>
       )}
-      <label className="mt-3 block text-sm font-medium">
-        Data e hora (horário de Cuiabá)
+      <label className="mt-4 block">
+        <span className={fieldLabel}>Data e hora (horário de Cuiabá)</span>
         <input
           type="datetime-local"
           value={local}
@@ -2990,7 +3040,10 @@ export function ScheduledItem({ item, page = false }: { item: ScheduledMessageDt
   const refresh = () => qc.invalidateQueries({ queryKey: qk.scheduled }); // the strip and every page tab
 
   async function cancel() {
-    if (!(await confirmDialog({ title: 'Cancelar a mensagem agendada?', confirmLabel: 'Cancelar agendamento' }))) return;
+    const ok = await confirmDialog({
+      title: 'Cancelar a mensagem agendada?', confirmLabel: 'Cancelar agendamento', cancelLabel: 'Manter agendamento',
+    });
+    if (!ok) return;
     setError(null);
     try {
       await api.scheduled.cancel(item.id);
@@ -3001,48 +3054,40 @@ export function ScheduledItem({ item, page = false }: { item: ScheduledMessageDt
   }
 
   return (
-    <li className="flex items-start gap-3 py-2 text-sm">
-      <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted">
-          <span className="font-semibold text-fg tabular-nums">{formatOfficeDateTime(item.sendAt)}</span>
+    <li className="flex flex-wrap items-start gap-3 py-3">
+      <div className="flex min-w-0 flex-[1_1_240px] flex-col gap-1">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-[18px] text-muted">
+          <span className="font-bold text-fg tabular-nums">{formatOfficeDateTime(item.sendAt)}</span>
           {page && (
-            <>
-              {' · '}
-              <Link to={`/chats/${item.sentChatId ?? item.chatId}`} className="text-link hover:underline">
-                {contactLabel(item.contact)}
-              </Link>
-            </>
+            <Link to={`/chats/${item.sentChatId ?? item.chatId}`} className="font-bold text-link hover:underline">
+              {contactLabel(item.contact)}
+            </Link>
           )}
-          {` · por ${item.authorName}`}
-          {page && (
-            <>
-              {' · '}
-              <span>{STATUS_LABELS[item.status]}</span>
-            </>
+          <span>por {item.authorName}</span>
+          {page && <span className={`${badge} ${STATUS_TONES[item.status]}`}>{STATUS_LABELS[item.status]}</span>}
+          {item.attachment && (
+            <span className={`${badge} ${badgeTone.neutral}`}>
+              <PaperclipIcon size={12} aria-hidden /> Anexo
+            </span>
           )}
         </p>
-        <p className="line-clamp-2 break-words whitespace-pre-wrap text-fg">{item.body}</p>
-        {item.attachment && (
-          <p className="flex items-center gap-1 text-xs text-muted">
-            <Paperclip size={12} aria-hidden /> Anexo
-          </p>
-        )}
-        {item.error && <p className="text-xs text-danger">{item.error}</p>}
+        <p className="line-clamp-2 text-sm break-words whitespace-pre-wrap text-fg">{item.body}</p>
+        {item.error && <p className="rounded-block bg-danger-soft px-2.5 py-1.5 text-xs font-semibold text-danger">{item.error}</p>}
         {error && (
-          <p role="alert" className="text-xs text-danger">
+          <p role="alert" className={fieldError}>
             {error}
           </p>
         )}
       </div>
       {item.canEdit && (
-        <div className="flex shrink-0 gap-1">
-          <button type="button" onClick={() => setEditing(true)} className="rounded px-2 py-1 text-xs font-medium text-link hover:bg-sidebar-hover">
+        <span className="flex shrink-0 items-center gap-2">
+          <button type="button" onClick={() => setEditing(true)} className={button('secondary', 'sm')}>
             Editar
           </button>
-          <button type="button" onClick={() => void cancel()} className="rounded px-2 py-1 text-xs font-medium text-danger hover:bg-sidebar-hover">
+          <button type="button" onClick={() => void cancel()} className={button('danger', 'sm')}>
             Cancelar
           </button>
-        </div>
+        </span>
       )}
       {editing && (
         <ScheduleDialog
@@ -3063,25 +3108,20 @@ export function ScheduledItem({ item, page = false }: { item: ScheduledMessageDt
   );
 }
 
-/** Spec §3.2: "N mensagens agendadas" above the composer (or the closed footer); opens the list. */
+/** Spec §3.2: "N mensagens agendadas" above the composer (or the closed footer), on the same sunken ground; opens the list. */
 export function ScheduledStrip({ chatId }: { chatId: string }) {
   const [open, setOpen] = useState(false);
   const list = useQuery({ queryKey: qk.chatScheduled(chatId), queryFn: () => api.scheduled.listForChat(chatId) });
   const items = list.data ?? [];
   if (items.length === 0) return null;
   return (
-    <div className="border-t border-border bg-sunken px-6 pt-2">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-xs font-semibold text-link hover:underline"
-      >
-        <CalendarCheck size={14} aria-hidden />
+    <div className="bg-sunken px-4 pt-3">
+      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className={button('secondary', 'sm')}>
+        <CalendarCheckIcon size={16} aria-hidden />
         {scheduledCount(items.length)}
       </button>
       {open && (
-        <ul className="max-h-48 divide-y divide-border overflow-y-auto">
+        <ul className={`${card} mt-2 max-h-56 divide-y divide-border overflow-y-auto px-3.5 shadow-float`}>
           {items.map((i) => (
             <ScheduledItem key={i.id} item={i} />
           ))}
@@ -3149,7 +3189,7 @@ Before `async function toggleRecording() {`, add:
   }
 ```
 
-Replace
+Replace (the button sits beside the send / record button, spec §3.1, as one of the composer's `ToolButton`s)
 
 ```tsx
               <div className="ml-auto">
@@ -3159,7 +3199,7 @@ Replace
 with
 
 ```tsx
-              <div className="ml-auto flex items-center gap-1">
+              <div className="ml-auto flex items-center gap-1.5">
                 {!isNote && (
                   <ToolButton label="Agendar mensagem" onClick={openSchedule}>
                     <CalendarPlus size={20} />
@@ -3218,7 +3258,7 @@ with
   });
 ```
 
-and replace
+and replace (the strip sits between the timeline and the composer or `ClosedFooter`, all three on `bg-sunken`)
 
 ```tsx
       <Timeline chatId={chatId} onReply={setReplyTo} chatOpen={chat.state === 'open'} focus={focus} />
@@ -3250,14 +3290,16 @@ git commit -m "feat(web): schedule a message from the composer and see the chat'
 
 ### Task 8: The "Agendamentos" page
 
+Snippets quote the web code at `6b8c9dd` (the "Mensageiro" visual). The page is a `card` like Contatos, with `pageTitle` and the `tabList` / `tab()` pills; the menu item is a `NavItem` with a Phosphor `*Icon`, right after Conversas.
+
 **Files:**
 - Create: `web/src/pages/ScheduledMessages.tsx`
 - Modify: `web/src/App.tsx` (import, route)
-- Modify: `web/src/components/layout/AppLayout.tsx` (icon import, menu item)
+- Modify: `web/src/components/layout/AppLayout.tsx` (icon import, `NavItem` label, `MainNav` comment and item)
 - Test: `web/src/pages/ScheduledMessages.test.tsx` (create)
 
 **Interfaces:**
-- Consumes: Task 1 `SCHEDULED_TABS`; Task 6 `api.scheduled.list`, `qk.scheduledList`; Task 7 `ScheduledItem`.
+- Consumes: Task 1 `SCHEDULED_TABS`; Task 6 `api.scheduled.list`, `qk.scheduledList`; Task 7 `ScheduledItem`; the `ui.ts` recipes `card`, `pageTitle`, `tab`, `tabList`.
 - Produces: `ScheduledMessagesPage` at `/agendamentos` (`?status=pending|sent|failed|canceled`, which the Task 6 toast links to).
 
 - [ ] **Step 1: Write the failing test**
@@ -3357,6 +3399,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { SCHEDULED_TABS, type ScheduledTab } from '@talk/shared';
 import { ScheduledItem } from '../components/conversation/Scheduled';
+import { card, pageTitle, tab as tabClass, tabList } from '../components/ui';
 import { api, qk } from '../lib/api';
 
 const TAB_LABELS: Record<ScheduledTab, string> = { pending: 'Pendentes', sent: 'Enviadas', failed: 'Falharam', canceled: 'Canceladas' };
@@ -3371,38 +3414,36 @@ export function ScheduledMessagesPage() {
   const list = useQuery({ queryKey: qk.scheduledList(tab), queryFn: () => api.scheduled.list(tab), refetchInterval: 30_000 });
 
   return (
-    <div className="h-full overflow-y-auto px-10 py-8">
-      <section className="max-w-3xl">
-        <h1 className="mb-6 text-2xl font-semibold tracking-tight">Agendamentos</h1>
-        <div role="tablist" aria-label="Situação" className="mb-4 flex flex-wrap gap-1">
-          {SCHEDULED_TABS.map((t) => (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={t === tab}
-              onClick={() => setParams({ status: t })}
-              className={`h-8 rounded-lg px-3 text-sm font-medium ${t === tab ? 'bg-primary-soft text-link' : 'text-muted hover:bg-sidebar-hover'}`}
-            >
-              {TAB_LABELS[t]}
-            </button>
+    <div className={`${card} flex h-full flex-col gap-[18px] overflow-y-auto px-[18px] py-[22px]`}>
+      <h1 className={pageTitle}>Agendamentos</h1>
+      <div role="tablist" aria-label="Situação" className={tabList}>
+        {SCHEDULED_TABS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={t === tab}
+            onClick={() => setParams({ status: t })}
+            className={tabClass(t === tab)}
+          >
+            {TAB_LABELS[t]}
+          </button>
+        ))}
+      </div>
+      {list.isPending && <p className="text-sm text-muted">Carregando…</p>}
+      {list.isError && (
+        <p role="alert" className="text-[13px] font-semibold text-danger">
+          Não foi possível carregar os agendamentos.
+        </p>
+      )}
+      {list.data?.length === 0 && <p className="text-sm text-muted">Nenhuma mensagem aqui.</p>}
+      {!!list.data?.length && (
+        <ul className="max-w-[800px] divide-y divide-border">
+          {list.data.map((i) => (
+            <ScheduledItem key={i.id} item={i} page />
           ))}
-        </div>
-        {list.isPending && <p className="text-sm text-muted">Carregando…</p>}
-        {list.isError && (
-          <p role="alert" className="text-sm text-danger">
-            Não foi possível carregar os agendamentos.
-          </p>
-        )}
-        {list.data?.length === 0 && <p className="text-sm text-muted">Nenhuma mensagem aqui.</p>}
-        {!!list.data?.length && (
-          <ul className="divide-y divide-border rounded-lg border border-border bg-surface px-4">
-            {list.data.map((i) => (
-              <ScheduledItem key={i.id} item={i} page />
-            ))}
-          </ul>
-        )}
-      </section>
+        </ul>
+      )}
     </div>
   );
 }
@@ -3432,29 +3473,55 @@ with
 In `web/src/components/layout/AppLayout.tsx`, replace
 
 ```tsx
-  AddressBookIcon,
-  ChatCircleDotsIcon,
+import { ChatIcon, RobotIcon, SignOutIcon, SlidersIcon, UsersIcon, type Icon } from '@phosphor-icons/react';
 ```
 
 with
 
 ```tsx
-  AddressBookIcon,
-  CalendarCheckIcon,
-  ChatCircleDotsIcon,
+import { CalendarDotsIcon, ChatIcon, RobotIcon, SignOutIcon, SlidersIcon, UsersIcon, type Icon } from '@phosphor-icons/react';
+```
+
+replace (in `NavItem`; "Agendamentos" is wider than the 60px item and the rail scrolls, so it would overflow sideways)
+
+```tsx
+      </span>
+      {label}
+    </NavLink>
+```
+
+with
+
+```tsx
+      </span>
+      {/* a long label ("Agendamentos") wraps inside the 60px item: hyphenated (lang pt-BR), else broken anywhere */}
+      <span className="max-w-full text-center hyphens-auto wrap-anywhere">{label}</span>
+    </NavLink>
+```
+
+replace
+
+```tsx
+/** Conversas (with the unread badge), Contatos, Chatbot (admins: the settings page is admin only) and Ajustes. */
+```
+
+with
+
+```tsx
+/** Conversas (with the unread badge), Agendamentos, Contatos, Chatbot (admins: the settings page is admin only) and Ajustes. */
 ```
 
 and replace
 
 ```tsx
-        <NavItem to="/contacts" label="Contatos" icon={AddressBookIcon} />
+      <NavItem to="/chats" label="Conversas" icon={ChatIcon} badge={unread} />
 ```
 
 with
 
 ```tsx
-        <NavItem to="/contacts" label="Contatos" icon={AddressBookIcon} />
-        <NavItem to="/agendamentos" label="Agendamentos" icon={CalendarCheckIcon} />
+      <NavItem to="/chats" label="Conversas" icon={ChatIcon} badge={unread} />
+      <NavItem to="/agendamentos" label="Agendamentos" icon={CalendarDotsIcon} />
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**
@@ -3476,13 +3543,15 @@ git commit -m "feat(web): Agendamentos page with pendentes, enviadas, falharam a
 
 ### Task 9: "Regras automáticas" settings page
 
+Snippets quote the web code at `6b8c9dd` (the "Mensageiro" visual). The page follows the visual's settings pattern: `Section` with the page title, each rule in a sunken `block`, the `checkbox` recipe with a `hint` under it (as Triagem and Preferências), `fieldLabel` + `field` for the numbers (as Conversas), `okText` for the saved message.
+
 **Files:**
 - Create: `web/src/pages/settings/AutoRulesSettings.tsx`
 - Modify: `web/src/pages/settings/SettingsPage.tsx` (import, section)
 - Test: `web/src/pages/settings/AutoRulesSettings.test.tsx` (create)
 
 **Interfaces:**
-- Consumes: Task 1 `RETURN_TO_QUEUE_MINUTES`, `CLOSE_INACTIVE_HOURS`, `AutoRulesDto`; Task 6 `api.settings.autoRules`, `qk.autoRules`; `Section`, `field`, `btnPrimary`, `useSend`, `Loading`, `ErrorText`.
+- Consumes: Task 1 `RETURN_TO_QUEUE_MINUTES`, `CLOSE_INACTIVE_HOURS`, `AutoRulesDto`; Task 6 `api.settings.autoRules`, `qk.autoRules`; `Section`, `block`, `hint`, `okText`, `btnPrimary`, `useSend`, `Loading`, `ErrorText` (`components/settings/common.tsx`); `checkbox`, `field`, `fieldLabel` (`components/ui.ts`).
 - Produces: `AutoRulesSettings` at `/configuracoes/regras` (admin only).
 
 - [ ] **Step 1: Write the failing test**
@@ -3563,7 +3632,12 @@ import { useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CLOSE_INACTIVE_HOURS, RETURN_TO_QUEUE_MINUTES, type AutoRulesDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
-import { ErrorText, Loading, Section, btnPrimary, field, useSend } from '../../components/settings/common';
+import { checkbox, field, fieldLabel } from '../../components/ui';
+import { ErrorText, Loading, Section, block, btnPrimary, hint, okText, useSend } from '../../components/settings/common';
+
+// under a checkbox's text: the 18px box plus the 12px gap. Outside the <label>, so the label stays the rule's name.
+const checkHint = `${hint} pl-[30px]`;
+const numberField = `${field} max-w-40`;
 
 export function AutoRulesSettings() {
   const rules = useQuery({ queryKey: qk.autoRules, queryFn: api.settings.autoRules.get });
@@ -3587,19 +3661,26 @@ function AutoRulesForm({ rules }: { rules: AutoRulesDto }) {
 
   return (
     <Section title="Regras automáticas">
-      <form onSubmit={submit} className="space-y-6">
-        <fieldset className="space-y-2 rounded-lg border border-border p-4">
-          <label className="flex items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" checked={form.returnToQueue.enabled} onChange={(e) => setReturn({ enabled: e.target.checked })} />
-            Devolver à fila conversas paradas
-          </label>
-          <p className="text-xs text-muted">
-            Quando o contato espera resposta há mais tempo que o limite, a conversa perde o atendente e volta para “Sem atendente” no
-            mesmo setor. Quem assume a conversa ganha o prazo inteiro. Não vale para conversas privadas, em triagem ou com chatbot em
-            execução.
-          </p>
-          <label className="block text-sm font-medium">
-            Minutos sem resposta
+      <form onSubmit={submit} className="space-y-5">
+        <fieldset className={`${block} space-y-4`}>
+          <div>
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-bold">
+              <input
+                type="checkbox"
+                checked={form.returnToQueue.enabled}
+                onChange={(e) => setReturn({ enabled: e.target.checked })}
+                className={checkbox}
+              />
+              Devolver à fila conversas paradas
+            </label>
+            <p className={checkHint}>
+              Quando o contato espera resposta há mais tempo que o limite, a conversa perde o atendente e volta para “Sem
+              atendente” no mesmo setor. Quem assume a conversa ganha o prazo inteiro. Não vale para conversas privadas, em
+              triagem ou com chatbot em execução.
+            </p>
+          </div>
+          <label className="block">
+            <span className={fieldLabel}>Minutos sem resposta</span>
             <input
               type="number"
               required
@@ -3608,22 +3689,29 @@ function AutoRulesForm({ rules }: { rules: AutoRulesDto }) {
               max={RETURN_TO_QUEUE_MINUTES.max}
               value={form.returnToQueue.minutes}
               onChange={(e) => setReturn({ minutes: Number(e.target.value) })}
-              className={field}
+              className={numberField}
             />
           </label>
         </fieldset>
 
-        <fieldset className="space-y-2 rounded-lg border border-border p-4">
-          <label className="flex items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" checked={form.closeInactive.enabled} onChange={(e) => setClose({ enabled: e.target.checked })} />
-            Finalizar por inatividade
-          </label>
-          <p className="text-xs text-muted">
-            Quando o escritório falou por último e ninguém escreveu dentro do limite, a conversa é finalizada. Não vale para conversas
-            em triagem, com chatbot em execução ou com mensagem agendada pendente.
-          </p>
-          <label className="block text-sm font-medium">
-            Horas sem mensagens
+        <fieldset className={`${block} space-y-4`}>
+          <div>
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-bold">
+              <input
+                type="checkbox"
+                checked={form.closeInactive.enabled}
+                onChange={(e) => setClose({ enabled: e.target.checked })}
+                className={checkbox}
+              />
+              Finalizar por inatividade
+            </label>
+            <p className={checkHint}>
+              Quando o escritório falou por último e ninguém escreveu dentro do limite, a conversa é finalizada. Não vale para
+              conversas em triagem, com chatbot em execução ou com mensagem agendada pendente.
+            </p>
+          </div>
+          <label className="block">
+            <span className={fieldLabel}>Horas sem mensagens</span>
             <input
               type="number"
               required
@@ -3632,22 +3720,25 @@ function AutoRulesForm({ rules }: { rules: AutoRulesDto }) {
               max={CLOSE_INACTIVE_HOURS.max}
               value={form.closeInactive.hours}
               onChange={(e) => setClose({ hours: Number(e.target.value) })}
-              className={field}
+              className={numberField}
             />
           </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form.closeInactive.sendClosingMessage}
-              onChange={(e) => setClose({ sendClosingMessage: e.target.checked })}
-            />
-            Enviar a mensagem de encerramento
-          </label>
-          <p className="text-xs text-muted">Usa a mensagem de Configurações → Conversas.</p>
+          <div>
+            <label className="flex cursor-pointer items-center gap-3 text-sm font-semibold">
+              <input
+                type="checkbox"
+                checked={form.closeInactive.sendClosingMessage}
+                onChange={(e) => setClose({ sendClosingMessage: e.target.checked })}
+                className={checkbox}
+              />
+              Enviar a mensagem de encerramento
+            </label>
+            <p className={checkHint}>Usa a mensagem de Configurações → Conversas.</p>
+          </div>
         </fieldset>
 
         <ErrorText error={save.error} />
-        {save.isSuccess && <p className="text-sm text-success">Regras salvas.</p>}
+        {save.isSuccess && <p className={okText}>Regras salvas.</p>}
         <button type="submit" disabled={save.isPending} className={btnPrimary}>
           Salvar
         </button>
