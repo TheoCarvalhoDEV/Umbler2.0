@@ -62,12 +62,35 @@ describe('ChatListItem menu', () => {
     expect(items()).toEqual(['Fixar', 'Marcar como não lida', 'Excluir conversa']);
   });
 
-  it('shows the ticks before the preview when the last message was the office’s', () => {
+  it('starts the preview with "Você:" when the office spoke last, and flags a failed send', () => {
     renderItem({ lastOutStatus: 'read' });
-    expect(screen.getByLabelText('Você · lida')).toBeTruthy();
+    expect(screen.getByText('Você:', { exact: false })).toBeTruthy();
+    expect(screen.queryByLabelText('Falhou')).toBeNull();
+    cleanup();
+    renderItem({ lastOutStatus: 'failed' });
+    expect(screen.getByLabelText('Falhou')).toBeTruthy();
     cleanup();
     renderItem({ lastOutStatus: null });
-    expect(screen.queryByLabelText(/^Você/)).toBeNull();
+    expect(screen.queryByText('Você:', { exact: false })).toBeNull();
+  });
+
+  it('third line: the sector chip, then the owner, or "Sem atendente" on an open chat', () => {
+    render(
+      <ul>
+        <ChatListItem chat={CHAT} sectorName="Atendimento" owner={{ name: 'Juliana Prado', avatarUrl: null }} active={false}
+          onOpen={() => {}} onTogglePin={() => {}} onMarkUnread={() => {}} onOpenWith={() => {}} />
+      </ul>,
+    );
+    expect(screen.getByTitle('Setor: Atendimento')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Responsável: Juliana Prado' }).textContent).toBe('JJuliana');
+    cleanup();
+    render(
+      <ul>
+        <ChatListItem chat={CHAT} sectorName="Triagem" owner={null} active={false}
+          onOpen={() => {}} onTogglePin={() => {}} onMarkUnread={() => {}} onOpenWith={() => {}} />
+      </ul>,
+    );
+    expect(screen.getByText('Sem atendente')).toBeTruthy();
   });
 
   it('each item calls its handler', () => {
@@ -112,17 +135,16 @@ function renderWith(chat: Partial<ChatItem>, selection?: { selected: boolean; di
 const chipTitles = () => [...document.querySelectorAll('[title^="Etiqueta"]')].map((e) => e.getAttribute('title'));
 
 describe('ChatListItem tags and selection (spec 2026-10-20 §4, §5)', () => {
-  it('shows conversation tags first and filled, contact tags outlined, and skips unknown ids', () => {
+  it('shows conversation tags first, then contact tags, in the tag color, and skips unknown ids', () => {
     renderWith({ tagIds: ['t1', 'gone'], chatTagIds: ['t2'] });
     expect(chipTitles()).toEqual(['Etiqueta da conversa: Prazo', 'Etiqueta do contato: Cliente']);
-    expect(screen.getByTitle('Etiqueta da conversa: Prazo').className).toContain('text-white');
-    expect(screen.getByTitle('Etiqueta do contato: Cliente').className).not.toContain('text-white');
+    expect(screen.getByTitle('Etiqueta da conversa: Prazo').getAttribute('style')).toContain('color-mix');
   });
 
-  it('shows at most 4 chips and +N for the rest', () => {
+  it('shows at most 2 tag chips and +N for the rest', () => {
     renderWith({ tagIds: ['t1', 't3', 't4'], chatTagIds: ['t2', 't5', 't6'] });
-    expect(chipTitles()).toHaveLength(4);
-    expect(screen.getByText('+2')).toBeTruthy();
+    expect(chipTitles()).toHaveLength(2);
+    expect(screen.getByText('+4')).toBeTruthy();
   });
 
   it('in selection mode the row toggles the checkbox instead of opening, and the menu is gone', () => {
