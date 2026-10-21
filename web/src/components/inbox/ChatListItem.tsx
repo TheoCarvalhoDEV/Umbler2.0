@@ -1,8 +1,9 @@
-import { ChatCircleText, Check, Checks, Clock, DotsThreeVertical, LockSimple, PushPin, WarningCircle } from '@phosphor-icons/react';
+import { DotsThreeVertical, LockSimple, PushPin, WarningCircle } from '@phosphor-icons/react';
 import { BULK_MAX, tagColorHex, type ChatListItem as ChatItem, type TagDto } from '@talk/shared';
 import { contactLabel, listTime } from '../../lib/format';
 import { Avatar } from '../Avatar';
 import { badge, badgeTone, menu as menuBox, menuItem, unreadBadge } from '../ui';
+import { initials } from '../../lib/format';
 
 interface Props {
   chat: ChatItem;
@@ -24,42 +25,47 @@ interface Props {
   selection?: { selected: boolean; disabled: boolean; onToggle(): void };
 }
 
-/** Like WhatsApp: the last message was the office's, with its ticks. */
-function OutTick({ status }: { status: NonNullable<ChatItem['lastOutStatus']> }) {
-  const cls = 'shrink-0';
-  switch (status) {
-    case 'pending':
-      return <Clock size={14} aria-label="Você · enviando" className={cls} />;
-    case 'sent':
-      return <Check size={14} aria-label="Você · enviada" className={cls} />;
-    case 'delivered':
-      return <Checks size={14} aria-label="Você · entregue" className={cls} />;
-    case 'read':
-      return <Checks size={14} weight="bold" aria-label="Você · lida" className={`${cls} text-read`} />;
-    case 'failed':
-      return <WarningCircle size={14} weight="fill" aria-label="Você · falhou" className={`${cls} text-danger`} />;
-  }
-}
-
 const NO_TAGS: ReadonlyMap<string, TagDto> = new Map();
-const MAX_CHIPS = 4;
+// The card's third line has room for the sector, two tags and the owner; the rest becomes "+N".
+const MAX_CHIPS = 2;
 type Chip = { tag: TagDto; kind: 'chat' | 'contact' };
+const chipBase = 'inline-flex h-[22px] max-w-32 shrink-0 items-center rounded-full px-2.5 text-xs font-semibold';
 
-/** Spec 2026-10-20 §5: a conversation tag is filled and carries a speech bubble; a contact tag is only outlined. */
+/** A tag in its own color, as a soft filled pill (the tag color is user data, so it is mixed, never raw). */
 function TagChip({ tag, kind }: Chip) {
   const color = tagColorHex(tag.color);
   const what = kind === 'chat' ? 'Etiqueta da conversa' : 'Etiqueta do contato';
   return (
     <span
       title={`${what}: ${tag.name}`}
-      className={`flex max-w-28 items-center gap-0.5 rounded-full border px-1.5 py-px ${kind === 'chat' ? 'text-white' : ''}`}
-      style={kind === 'chat' ? { backgroundColor: color, borderColor: color } : { borderColor: color, color }}
+      className={chipBase}
+      style={{
+        backgroundColor: `color-mix(in srgb, ${color} 16%, transparent)`,
+        color: `color-mix(in srgb, ${color} 65%, var(--color-fg))`,
+      }}
     >
-      {kind === 'chat' && <ChatCircleText size={10} weight="fill" aria-hidden className="shrink-0" />}
       <span className="sr-only">{what}: </span>
       <span className="truncate">
         {tag.emoji ? `${tag.emoji} ` : ''}
         {tag.name}
+      </span>
+    </span>
+  );
+}
+
+/** The owner: their photo, or the initial on the rail's dark green, and the first name. */
+function OwnerChip({ owner }: { owner: { name: string; avatarUrl: string | null } }) {
+  return (
+    <span title={owner.name} role="img" aria-label={`Responsável: ${owner.name}`} className="flex min-w-0 items-center gap-1.5">
+      {owner.avatarUrl ? (
+        <img src={owner.avatarUrl} alt="" aria-hidden="true" className="size-5 shrink-0 rounded-full object-cover" />
+      ) : (
+        <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center rounded-full bg-rail text-[10px] font-bold text-white">
+          {initials(owner.name).slice(0, 1)}
+        </span>
+      )}
+      <span aria-hidden="true" className="truncate text-xs font-semibold text-fg">
+        {owner.name.split(' ')[0]}
       </span>
     </span>
   );
@@ -87,7 +93,7 @@ export function ChatListItem({
   const chips = [...chipsOf(chat.chatTagIds ?? [], 'chat'), ...chipsOf(chat.tagIds, 'contact')];
   const highlighted = active || !!selection?.selected;
   return (
-    <li className={`flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
+    <li className={`group/row flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
       {selection && (
         <label
           title={selection.disabled ? `Até ${BULK_MAX} conversas por vez` : undefined}
@@ -121,14 +127,20 @@ export function ChatListItem({
             <span className="truncate font-bold tabular-nums">{title}</span>
             {chat.private && <LockSimple size={14} weight="bold" aria-label="Conversa privada" className="shrink-0 text-private" />}
             {chat.pinned && <PushPin size={14} aria-label="Fixada" weight="fill" className="shrink-0 text-muted" />}
-            <span className="ml-auto shrink-0 pl-1 text-xs text-muted tabular-nums">
+            <span className={`ml-auto shrink-0 pl-1 text-xs tabular-nums ${unread ? 'font-bold text-primary' : 'text-muted'}`}>
               {chat.lastMessageAt ? listTime(chat.lastMessageAt) : ''}
             </span>
           </span>
           <span className="flex items-center gap-2">
             <span className={`flex min-w-0 flex-1 items-center gap-1 text-[13px] leading-[18px] ${unread ? 'font-semibold text-fg' : 'text-muted'}`}>
-              {chat.lastOutStatus && <OutTick status={chat.lastOutStatus} />}
-              <span className="truncate">{chat.lastMessagePreview ?? ''}</span>
+              {chat.lastOutStatus === 'failed' && (
+                <WarningCircle size={14} weight="fill" aria-label="Falhou" className="shrink-0 text-danger" />
+              )}
+              <span className="truncate">
+                {/* like WhatsApp: the office spoke last */}
+                {chat.lastOutStatus && <span className="font-semibold text-fg-2">Você: </span>}
+                {chat.lastMessagePreview ?? ''}
+              </span>
             </span>
             {unread && (
               <span aria-label={`Não lidas: ${chat.unread}`} className={`${unreadBadge} shrink-0`}>
@@ -136,42 +148,39 @@ export function ChatListItem({
               </span>
             )}
           </span>
-          <span className="flex min-h-[22px] min-w-0 items-center gap-1.5 text-xs leading-4 text-muted">
-            {channelName && <span className="truncate">{channelName}</span>}
-            {channelName && sectorName && <span aria-hidden>·</span>}
-            {sectorName && <span className="truncate">{sectorName}</span>}
-            {chat.history && <span className={`${badge} ${badgeTone.neutral}`}>Histórico do WhatsApp</span>}
-            {/* board: "Previdenciário · Juliana" */}
-            {(channelName || sectorName) && !chat.history && (owner || chat.state === 'open') && <span aria-hidden>·</span>}
-            {owner ? (
-              <span
-                title={owner.name}
-                role="img"
-                aria-label={`Responsável: ${owner.name}`}
-                className="flex min-w-0 items-center gap-1"
-              >
-                <Avatar name={owner.name} src={owner.avatarUrl} className="size-[18px] text-[8px]" />
-                <span aria-hidden className="truncate">{owner.name.split(' ')[0]}</span>
+          <span className="mt-1 flex min-h-[22px] min-w-0 flex-wrap items-center gap-1.5">
+            {channelName && <span className="truncate text-xs text-muted">{channelName}</span>}
+            {sectorName && (
+              <span title={`Setor: ${sectorName}`} className={`${chipBase} border border-primary/30 bg-primary-soft/40 text-accent-ink`}>
+                <span className="sr-only">Setor: </span>
+                <span className="truncate">{sectorName}</span>
               </span>
+            )}
+            {chat.history && <span className={`${badge} ${badgeTone.neutral}`}>Histórico do WhatsApp</span>}
+            {chips.slice(0, MAX_CHIPS).map((c) => (
+              <TagChip key={`${c.kind}:${c.tag.id}`} {...c} />
+            ))}
+            {chips.length > MAX_CHIPS && <span className="text-xs font-semibold text-muted">+{chips.length - MAX_CHIPS}</span>}
+            {owner ? (
+              <OwnerChip owner={owner} />
             ) : (
-              chat.state === 'open' && <span className={`${badge} ${badgeTone.warning}`}>Sem atendente</span>
+              chat.state === 'open' && (
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-warning">
+                  <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center rounded-full border border-dashed border-warning leading-none">
+                    –
+                  </span>
+                  Sem atendente
+                </span>
+              )
             )}
           </span>
-          {chips.length > 0 && (
-            <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1 text-[10px] font-medium">
-              {chips.slice(0, MAX_CHIPS).map((c) => (
-                <TagChip key={`${c.kind}:${c.tag.id}`} {...c} />
-              ))}
-              {chips.length > MAX_CHIPS && <span className="text-muted">+{chips.length - MAX_CHIPS}</span>}
-            </span>
-          )}
         </span>
       </button>
       {!selection && (
-        <details className="group relative shrink-0 pt-1 pr-1.5">
+        <details className="group/menu relative shrink-0 pt-1 pr-1.5">
           <summary
             aria-label="Opções da conversa"
-            className="grid size-8 cursor-pointer list-none place-items-center rounded-full text-muted transition-colors group-open:bg-panel group-open:text-fg hover:bg-panel hover:text-fg [&::-webkit-details-marker]:hidden"
+            className="grid size-8 cursor-pointer list-none place-items-center rounded-full text-muted opacity-0 transition group-hover/row:opacity-100 group-open/menu:bg-panel group-open/menu:text-fg group-open/menu:opacity-100 hover:bg-panel hover:text-fg focus-visible:opacity-100 pointer-coarse:opacity-100 [&::-webkit-details-marker]:hidden"
           >
             <DotsThreeVertical size={18} weight="bold" />
           </summary>

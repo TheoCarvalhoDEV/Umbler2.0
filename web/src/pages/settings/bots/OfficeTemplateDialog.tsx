@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { BotDto, OfficeTemplateDestination, OfficeTemplateInput, SectorDto } from '@talk/shared';
+import type { BotDto, BotTemplateKind, OfficeTemplateDestination, OfficeTemplateInput, SectorDto } from '@talk/shared';
 import { Actions, Modal } from '../../../components/conversation/ChatDialogs';
 import { Loading } from '../../../components/settings/common';
-import { blockTitle, field, fieldLabel, fieldSelect } from '../../../components/ui';
+import { blockTitle, field, fieldLabel, fieldSelect, radio } from '../../../components/ui';
 import { api, qk } from '../../../lib/api';
 
 type DestKey = keyof OfficeTemplateInput['destinations'];
@@ -15,6 +15,20 @@ const DESTS: Record<DestKey, { label: string; match: string[] }> = {
   processos: { label: 'Processos', match: ['processos', 'juridico'] },
 };
 const KEYS = Object.keys(DESTS) as DestKey[];
+
+const TEMPLATES: Record<BotTemplateKind, { name: string; about: string }> = {
+  office: {
+    name: 'Fluxo do escritório',
+    about:
+      'Recria o fluxo do escritório: horário de atendimento, boas-vindas, menu, comunicado, CPF e transferência. Textos e horários podem ser editados depois no editor. O chatbot é criado pausado.',
+  },
+  triagem: {
+    name: 'Triagem inteligente',
+    about:
+      'Horário de atendimento, boas-vindas e CPF só para quem ainda não tem. O cliente responde com o número ou escreve o assunto (boleto, processo, audiência…); se não entender, mostra o menu mais uma vez e depois passa para o Atendimento. A equipe recebe um resumo. É criado como rascunho e pausado: revise as palavras-chave e os textos no editor antes de publicar.',
+  },
+};
+const TEMPLATE_KINDS = Object.keys(TEMPLATES) as BotTemplateKind[];
 
 const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
@@ -29,7 +43,9 @@ export function OfficeTemplateDialog({ onCancel, onCreated }: { onCancel: () => 
   const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
   const users = useQuery({ queryKey: qk.users, queryFn: api.users.list });
-  const [name, setName] = useState('Fluxo do escritório');
+  const [kind, setKind] = useState<BotTemplateKind>('office');
+  const [typedName, setName] = useState<string | null>(null); // null = the chosen template's name
+  const name = typedName ?? TEMPLATES[kind].name;
   const [companyName, setCompanyName] = useState('');
   const [channelId, setChannelId] = useState('');
   const [picked, setPicked] = useState<Partial<Record<DestKey, Picked>>>({});
@@ -63,6 +79,7 @@ export function OfficeTemplateDialog({ onCancel, onCreated }: { onCancel: () => 
     }
     setError(null);
     create.mutate({
+      ...(kind === 'office' ? {} : { template: kind }), // absent = office, the server default
       ...(name.trim() ? { name: name.trim() } : {}),
       companyName: company,
       channelId: channel,
@@ -80,10 +97,18 @@ export function OfficeTemplateDialog({ onCancel, onCreated }: { onCancel: () => 
         <Loading error={channels.error ?? sectors.error ?? users.error} />
       ) : (
         <div className="space-y-4 text-sm">
-          <p className="text-[13px] text-muted">
-            Recria o fluxo do escritório: horário de atendimento, boas-vindas, menu, comunicado, CPF e transferência. Textos e
-            horários podem ser editados depois no editor. O chatbot é criado pausado.
-          </p>
+          <fieldset>
+            <legend className={`mb-2 ${blockTitle}`}>Modelo</legend>
+            <div className="flex flex-wrap gap-x-6 gap-y-2.5">
+              {TEMPLATE_KINDS.map((k) => (
+                <label key={k} className="flex cursor-pointer items-center gap-2">
+                  <input type="radio" name="bot-template" checked={kind === k} onChange={() => setKind(k)} className={radio} />
+                  {TEMPLATES[k].name}
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-[13px] text-muted">{TEMPLATES[kind].about}</p>
+          </fieldset>
           <label className="block">
             <span className={fieldLabel}>Nome do chatbot</span>
             <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} className={field} />

@@ -111,6 +111,7 @@ function renderEditor(initial: BotVersionDto = version) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
+  return router;
 }
 
 const blockCount = () => document.querySelectorAll('.react-flow__node').length;
@@ -215,6 +216,26 @@ it('activates the bot', async () => {
   expect(calls.find((c) => c.path === '/api/bots/b1/status')?.body).toEqual({ status: 'active' });
 });
 
+it('imports a chatbot file as a new bot and opens it, without touching the current flow', async () => {
+  routes['POST /api/bots/import'] = { body: { ...bot, id: 'b2', name: 'Cobrança (2)' } };
+  const router = renderEditor();
+  await screen.findByText('1 · Atendimento');
+  const input = screen.getByLabelText('Importar');
+  const pick = (content: string) => fireEvent.change(input, { target: { files: [new File([content], 'fluxo.json')] } });
+
+  pick('não é json');
+  expect((await screen.findByText('Arquivo inválido: não é um JSON.')).getAttribute('role')).toBe('alert');
+  pick(JSON.stringify({ name: 'Cobrança' }));
+  expect((await screen.findByText('Arquivo inválido: não é um chatbot exportado.')).getAttribute('role')).toBe('alert');
+  expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+
+  pick(JSON.stringify({ name: 'Cobrança', graph: oldGraph }));
+  await waitFor(() => expect(router.state.location.pathname).toBe('/configuracoes/chatbots/b2'));
+  expect(calls.filter((c) => c.method !== 'GET')).toEqual([
+    { method: 'POST', path: '/api/bots/import', body: { name: 'Cobrança', graph: oldGraph } },
+  ]);
+});
+
 it('views an old version read-only and restores it as a draft', async () => {
   renderEditor();
   fireEvent.click(await screen.findByRole('button', { name: 'Versões' }));
@@ -224,6 +245,7 @@ it('views an old version read-only and restores it as a draft', async () => {
   await waitFor(() => expect(block('old2')).not.toBeNull());
   expect(block('n2')).toBeNull();
   expect((screen.getByRole('button', { name: 'Salvar rascunho' }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByLabelText('Importar') as HTMLInputElement).disabled).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Voltar à edição' }));
   await waitFor(() => expect(block('n2')).not.toBeNull());
   fireEvent.click(screen.getAllByRole('button', { name: 'Restaurar como rascunho' })[1]!);
