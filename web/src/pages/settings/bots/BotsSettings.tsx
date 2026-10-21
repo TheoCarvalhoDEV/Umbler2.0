@@ -2,11 +2,11 @@ import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon, RobotIcon } from '@phosphor-icons/react';
-import type { BotDto, BotExport } from '@talk/shared';
+import type { BotDto } from '@talk/shared';
 import { Actions, Modal } from '../../../components/conversation/ChatDialogs';
 import { EmptyState, ListRow, Loading, PageHeader, RowMenu, btnPrimary, btnSecondary, useSend } from '../../../components/settings/common';
 import { badge, badgeTone, field, fieldLabel } from '../../../components/ui';
-import { api, ApiError, qk } from '../../../lib/api';
+import { api, ApiError, qk, readBotExport } from '../../../lib/api';
 import { confirmDialog } from '../../../lib/confirm';
 import { OfficeTemplateDialog } from './OfficeTemplateDialog';
 
@@ -35,21 +35,6 @@ function usedByNames(e: unknown): string[] {
   return Array.isArray(list) ? list.map((b) => String((b as { name?: unknown }).name ?? '')) : [];
 }
 
-/** Catches the wrong file only; the server validates the graph again (zod) and recomputes `valid`. */
-async function readExport(file: Blob): Promise<BotExport> {
-  let data: unknown;
-  try {
-    data = JSON.parse(await file.text());
-  } catch {
-    throw new Error('Arquivo inválido: não é um JSON.');
-  }
-  const d = data as Partial<BotExport> | null;
-  if (!d || typeof d.name !== 'string' || !d.graph || !Array.isArray(d.graph.nodes) || !Array.isArray(d.graph.edges)) {
-    throw new Error('Arquivo inválido: não é um chatbot exportado.');
-  }
-  return { name: d.name, graph: d.graph };
-}
-
 export function BotsSettings() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -76,7 +61,7 @@ export function BotsSettings() {
   function importFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ''; // lets the same file be picked again
-    if (file) save.mutate(async () => api.bots.importBot(await readExport(file)));
+    if (file) save.mutate(async () => api.bots.importBot(await readBotExport(file)));
   }
 
   function toggle(b: BotDto) {

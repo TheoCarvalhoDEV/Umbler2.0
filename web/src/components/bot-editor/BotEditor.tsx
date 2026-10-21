@@ -2,7 +2,7 @@ import '@xyflow/react/dist/style.css';
 import './flow.css';
 import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useBlocker } from 'react-router';
+import { useBlocker, useNavigate } from 'react-router';
 import {
   Background,
   BackgroundVariant,
@@ -32,7 +32,7 @@ import {
   type BotVersionDto,
   type GraphProblem,
 } from '@talk/shared';
-import { api, graphProblems, qk } from '../../lib/api';
+import { api, graphProblems, qk, readBotExport } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 import { btn } from '../settings/common';
 import { errorMessage } from '../conversation/model';
@@ -94,6 +94,7 @@ type Message = { kind: 'error' | 'notice'; text: string };
 
 function EditorCanvas({ bot, initial }: BotEditorProps) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const rf = useReactFlow<BlockFlowNode, Edge>();
   const wrapper = useRef<HTMLDivElement>(null);
   const { graph, canUndo, canRedo, set, undo, redo } = useGraphHistory(initial.graph);
@@ -276,6 +277,22 @@ function EditorCanvas({ bot, initial }: BotEditorProps) {
     }
   }
 
+  /** Creates a new draft bot from the file and opens it; this flow is left as it is (unsaved changes still ask before leaving). */
+  async function importFile(file: File) {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const created = await api.bots.importBot(await readBotExport(file));
+      void qc.invalidateQueries({ queryKey: qk.bots });
+      setMessage({ kind: 'notice', text: `Chatbot importado como "${created.name}".` }); // seen if the user stays here
+      navigate(`/configuracoes/chatbots/${created.id}`);
+    } catch (e) {
+      setMessage({ kind: 'error', text: errorMessage(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleStatus() {
     setBusy(true);
     setMessage(null);
@@ -308,6 +325,7 @@ function EditorCanvas({ bot, initial }: BotEditorProps) {
           dirty={dirty}
           readOnly={readOnly}
           exportUrl={api.bots.exportUrl(bot.id)}
+          onImport={(file) => void importFile(file)}
           paletteOpen={paletteOpen}
           onTogglePalette={() => setPaletteOpen((o) => !o)}
           versionsOpen={versionsOpen}
