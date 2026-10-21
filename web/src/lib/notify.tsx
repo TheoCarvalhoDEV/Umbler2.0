@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMatch, useNavigate } from 'react-router';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import { BellSimpleIcon, BellSimpleSlashIcon } from '@phosphor-icons/react';
-import type { BrowserNotificationMode, UserPreferences } from '@talk/shared';
+import type { BrowserNotificationMode, ChatDetail, ChatListItem, ContactRef, MessageDto, UserPreferences } from '@talk/shared';
+import { previewText } from '../components/conversation/model';
 import { menuItem } from '../components/ui';
+import { api, qk } from './api';
 import { preferencesOf } from './auth';
+import { contactLabel } from './format';
 import { onWsEvent } from './ws';
 
 function beep(): void {
@@ -38,14 +41,41 @@ export function messageAlerts(
 }
 
 /** A browser notification, when the browser allows it, that focuses the tab and runs `open` on click. */
-export function showBrowserNotification(title: string, body: string, tag: string, open: () => void): void {
+export function showBrowserNotification(title: string, body: string, tag: string, open: () => void, icon?: string): void {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-  const n = new Notification(title, { body, tag });
+  const n = new Notification(title, icon ? { body, tag, icon } : { body, tag });
   n.onclick = () => {
     window.focus();
     open();
     n.close();
   };
+}
+
+/** Who wrote: the chat in the cache (detail, then any loaded list page), else asked to the server; null if unknown. */
+export async function chatContact(qc: QueryClient, chatId: string): Promise<ContactRef | null> {
+  const detail = qc.getQueryData<ChatDetail>(qk.chat(chatId));
+  if (detail) return detail.contact;
+  for (const [, data] of qc.getQueriesData<InfiniteData<{ items: ChatListItem[] }>>({ queryKey: qk.chatLists })) {
+    const hit = data?.pages?.flatMap((p) => p.items).find((c) => c.id === chatId);
+    if (hit) return hit.contact;
+  }
+  try {
+    return (await api.chats.get(chatId)).contact;
+  } catch {
+    return null; // a chat the user can no longer see: the notification still goes, without the name
+  }
+}
+
+/** Like WhatsApp: the contact's name (or phone) as the title, the message as the body and the contact's photo. */
+export function messageNotification(
+  contact: ContactRef | null,
+  m: Pick<MessageDto, 'body' | 'kind'>,
+  origin: string,
+): { title: string; body: string; icon?: string } {
+  const body = previewText(m.body, m.kind).slice(0, 120);
+  if (!contact) return { title: 'Nova mensagem', body };
+  const icon = contact.avatarUrl ? new URL(contact.avatarUrl, origin).href : undefined;
+  return { title: contactLabel(contact), body, ...(icon ? { icon } : {}) };
 }
 
 /** Sound + browser notification for new contact messages, by the user's preferences. Mount once in the layout. */
@@ -60,11 +90,15 @@ export function useMessageNotifications(): void {
     () =>
       onWsEvent((e) => {
         if (e.type !== 'message.created' || e.message.direction !== 'in') return;
-        const { chatId, body } = e.message;
+        const { chatId } = e.message;
+        const message = e.message;
         const alerts = messageAlerts(preferencesOf(qc), { hidden: document.hidden, chatOnScreen: openRef.current === chatId });
         if (alerts.sound) beep();
         if (alerts.browser) {
-          showBrowserNotification('Nova mensagem', body ? body.slice(0, 120) : 'Mídia recebida', chatId, () => navigate(`/chats/${chatId}`));
+          void chatContact(qc, chatId).then((contact) => {
+            const n = messageNotification(contact, message, window.location.origin);
+            showBrowserNotification(n.title, n.body, chatId, () => navigate(`/chats/${chatId}`), n.icon);
+          });
         }
       }),
     [navigate, qc],
