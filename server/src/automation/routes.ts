@@ -4,7 +4,7 @@ import { APPOINTMENT_LIMITS, APPOINTMENT_TABS, SCHEDULE_TEXT_MAX, SCHEDULED_TABS
 import { reminderList } from '../catalog/settings.js';
 import { readParts } from '../chats/routes.js';
 import type { AppCtx } from '../ctx.js';
-import { createAppointment, listAppointments, listChatAppointments } from './appointments.js';
+import { cancelAppointment, createAppointment, listAppointments, listChatAppointments, updateAppointment } from './appointments.js';
 import { cancelScheduled, createScheduled, listChatScheduled, listScheduled, updateScheduled } from './scheduled.js';
 
 const idParams = z.object({ id: z.uuid() });
@@ -32,6 +32,10 @@ const appointmentBody = z
   })
   .refine((b) => (b.chatId === undefined) !== (b.contactId === undefined), 'Escolha o cliente');
 const appointmentQuery = z.object({ tab: z.enum(APPOINTMENT_TABS).default('upcoming') });
+/** Spec §3.3: title, time and note only (decision 3); null or "" clears the note. */
+const appointmentPatch = z
+  .object({ title: appointmentTitle.optional(), startsAt: sendAt.optional(), note: appointmentNote.nullable().optional() })
+  .refine((b) => b.title !== undefined || b.startsAt !== undefined || b.note !== undefined, 'Nada para alterar');
 
 /** Spec 2026-10-20 agendamentos §5. */
 export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): void {
@@ -67,4 +71,16 @@ export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): voi
   app.get('/api/chats/:id/appointments', async (req) => listChatAppointments(ctx, req.user, idParams.parse(req.params).id));
 
   app.get('/api/appointments', async (req) => listAppointments(ctx, req.user, appointmentQuery.parse(req.query).tab));
+
+  app.patch('/api/appointments/:id', async (req) => {
+    const { id } = idParams.parse(req.params);
+    const b = appointmentPatch.parse(req.body);
+    return updateAppointment(ctx, req.user, id, {
+      title: b.title,
+      startsAt: b.startsAt ? new Date(b.startsAt) : undefined,
+      note: b.note === undefined ? undefined : b.note || null,
+    });
+  });
+
+  app.post('/api/appointments/:id/cancel', async (req) => cancelAppointment(ctx, req.user, idParams.parse(req.params).id));
 }
