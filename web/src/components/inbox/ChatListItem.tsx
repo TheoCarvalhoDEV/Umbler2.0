@@ -25,6 +25,12 @@ interface Props {
   selection?: { selected: boolean; disabled: boolean; onToggle(): void };
 }
 
+/** The office's messages start with the WhatsApp signature ("*Setor - Nome:*" then a line break; the Umbler era used
+ * the same shape). The card shows what was said, so the signature line goes. Only for the office's own messages. */
+export function withoutSignature(preview: string): string {
+  return preview.replace(/^\*[^*\n]{1,80}:\*\s*/, '');
+}
+
 const NO_TAGS: ReadonlyMap<string, TagDto> = new Map();
 // The card's third line has room for the sector, two tags and the owner; the rest becomes "+N".
 const MAX_CHIPS = 2;
@@ -139,7 +145,7 @@ export function ChatListItem({
               <span className="truncate">
                 {/* like WhatsApp: the office spoke last */}
                 {chat.lastOutStatus && <span className="font-semibold text-fg-2">Você: </span>}
-                {chat.lastMessagePreview ?? ''}
+                {chat.lastOutStatus ? withoutSignature(chat.lastMessagePreview ?? '') : (chat.lastMessagePreview ?? '')}
               </span>
             </span>
             {unread && (
