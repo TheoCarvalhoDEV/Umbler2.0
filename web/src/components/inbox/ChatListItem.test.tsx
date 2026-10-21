@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ChatListItem as ChatItem, TagDto } from '@talk/shared';
-import { ChatListItem } from './ChatListItem';
+import { ChatListItem, withoutSignature } from './ChatListItem';
 
 const CHAT: ChatItem = {
   id: 'c1', contact: { id: 'k1', name: 'Maria', phone: '5565999990000', avatarUrl: null }, channelId: 'ch1',
@@ -165,5 +165,23 @@ describe('ChatListItem tags and selection (spec 2026-10-20 §4, §5)', () => {
     expect(box.closest('label')?.getAttribute('title')).toBe('Até 50 conversas por vez');
     fireEvent.click(screen.getByText('Maria'));
     expect(onToggle).not.toHaveBeenCalled();
+  });
+});
+
+describe('card preview without the signature', () => {
+  it("drops the leading WhatsApp signature of the office's messages only", () => {
+    expect(withoutSignature('*Atendente: Nayara.:*\nolá boa tarde')).toBe('olá boa tarde');
+    expect(withoutSignature('*Atendimento - Ana:* Segue o documento')).toBe('Segue o documento');
+    expect(withoutSignature('sem assinatura')).toBe('sem assinatura');
+    expect(withoutSignature('*negrito* no meio')).toBe('*negrito* no meio');
+  });
+
+  it('shows "Você:" and the text without the signature; a contact message is left as is', () => {
+    renderItem({ lastOutStatus: 'read', lastMessagePreview: '*Atendente: Nayara.:*\nolá boa tarde' });
+    expect(screen.getByText('olá boa tarde', { exact: false })).toBeTruthy();
+    expect(screen.queryByText('Atendente: Nayara', { exact: false })).toBeNull();
+    cleanup();
+    renderItem({ lastOutStatus: null, lastMessagePreview: '*Atendente: X.:* oi' });
+    expect(screen.getByText('*Atendente: X.:* oi')).toBeTruthy();
   });
 });
