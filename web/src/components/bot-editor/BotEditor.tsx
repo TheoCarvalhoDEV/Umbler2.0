@@ -291,7 +291,7 @@ function EditorCanvas({ bot, initial }: BotEditorProps) {
 
   return (
     <NodeActionsContext.Provider value={actions}>
-      <div className="flex h-dvh flex-col bg-surface text-fg">
+      <div className="flex h-dvh flex-col gap-3 bg-ground p-3 text-fg">
         <Toolbar
           name={editedBot.name}
           onRename={(name) => setPatch((p) => ({ ...p, name }))}
@@ -316,14 +316,14 @@ function EditorCanvas({ bot, initial }: BotEditorProps) {
         {message && (
           <p
             role={message.kind === 'error' ? 'alert' : 'status'}
-            className={`border-b border-border px-4 py-2 text-sm ${message.kind === 'error' ? 'text-danger' : 'text-success'}`}
+            className={`rounded-card px-4 py-2.5 text-sm font-semibold ${message.kind === 'error' ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success'}`}
           >
             {message.text}
           </p>
         )}
         {preview && (
-          <div className="flex flex-wrap items-center gap-2 border-b border-border bg-panel px-4 py-2 text-sm">
-            <span className="flex-1">Visualizando a versão {preview.number} (somente leitura).</span>
+          <div className="flex flex-wrap items-center gap-2 rounded-card bg-primary-soft px-4 py-2 text-sm">
+            <span className="flex-1 font-semibold text-accent-ink">Visualizando a versão {preview.number} (somente leitura).</span>
             <button type="button" className={btn} onClick={() => restore(preview.graph, preview.number)}>
               Restaurar como rascunho
             </button>
@@ -332,9 +332,9 @@ function EditorCanvas({ bot, initial }: BotEditorProps) {
             </button>
           </div>
         )}
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 gap-3">
           <Palette open={paletteOpen && !readOnly} onInsert={(type) => insert(type)} />
-          <div ref={wrapper} className="relative min-w-0 flex-1" onDragOver={onDragOver} onDrop={onDrop}>
+          <div ref={wrapper} className="relative min-w-0 flex-1 overflow-hidden rounded-card bg-sunken" onDragOver={onDragOver} onDrop={onDrop}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -359,7 +359,7 @@ function EditorCanvas({ bot, initial }: BotEditorProps) {
             </ReactFlow>
           </div>
           {(versionsOpen || shownProblems.length > 0) && (
-            <aside aria-label="Painel lateral" className="w-80 shrink-0 overflow-y-auto border-l border-border bg-panel">
+            <aside aria-label="Painel lateral" className="w-80 shrink-0 overflow-y-auto rounded-card bg-surface">
               <ProblemsList problems={shownProblems} onFocus={focusNode} labelOf={labelOf} />
               {versionsOpen && <VersionsPanel botId={bot.id} onRestore={restore} onView={setPreview} />}
             </aside>

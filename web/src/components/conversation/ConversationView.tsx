@@ -8,6 +8,7 @@ import { Composer } from './Composer';
 import { ConversationHeader } from './ConversationHeader';
 import { errorMessage, type TimelineFocus } from './model';
 import { Timeline } from './Timeline';
+import { card, fieldError } from '../ui';
 
 export interface ConversationViewProps {
   chatId: string;
@@ -44,16 +45,24 @@ function ClosedFooter({ chat, onOpenChat }: { chat: ChatDetail; onOpenChat: (cha
   }
 
   return (
-    <div className="border-t border-border bg-sunken px-6 py-4 text-center text-sm text-muted">
-      {chat.history ? 'Histórico importado do WhatsApp (só leitura)' : 'Conversa finalizada'} —{' '}
-      <button type="button" disabled={busy} onClick={() => void startNew()} className="font-medium text-fg underline disabled:opacity-50">
-        Nova conversa
-      </button>
-      {error && (
-        <p role="alert" className="mt-1 text-danger">
-          {error}
-        </p>
-      )}
+    // the bar sits where the composer floats on an open chat, in the same 26px pill
+    <div className="bg-sunken px-4 pt-3 pb-4">
+      <div className="rounded-[26px] bg-surface px-5 py-4 text-center text-sm text-muted shadow-float">
+        {chat.history ? 'Histórico importado do WhatsApp (só leitura)' : 'Conversa finalizada'} —{' '}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void startNew()}
+          className="font-bold text-link underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Nova conversa
+        </button>
+        {error && (
+          <p role="alert" className={fieldError}>
+            {error}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -93,14 +102,14 @@ function ConversationPane({
   });
 
   if (detail.isError) {
-    return <p className="grid h-full place-items-center text-sm text-muted">Esta conversa não está disponível para você.</p>;
+    return <p className={`${card} grid h-full min-w-0 flex-1 place-items-center text-sm text-muted`}>Esta conversa não está disponível para você.</p>;
   }
   if (!chat) {
-    return <p className="grid h-full place-items-center text-sm text-muted">Carregando conversa…</p>;
+    return <p className={`${card} grid h-full min-w-0 flex-1 place-items-center text-sm text-muted`}>Carregando conversa…</p>;
   }
 
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col">
+    <section className={`${card} flex h-full min-w-0 flex-1 flex-col overflow-hidden`}>
       <ConversationHeader
         chat={chat}
         contactPanelOpen={contactPanelOpen}

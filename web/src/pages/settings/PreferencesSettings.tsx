@@ -4,6 +4,7 @@ import { api, qk } from '../../lib/api';
 import { usePreferences } from '../../lib/auth';
 import { NotificationPermissionButton } from '../../lib/notify';
 import { ErrorText, Section } from '../../components/settings/common';
+import { checkbox, radio } from '../../components/ui';
 
 const MODES: Array<{ value: BrowserNotificationMode; label: string }> = [
   { value: 'always', label: 'Sempre' },
@@ -13,16 +14,16 @@ const MODES: Array<{ value: BrowserNotificationMode; label: string }> = [
 
 function Toggle(props: { label: string; hint: string; checked: boolean; onChange: (on: boolean) => void }) {
   return (
-    <label className="flex items-start gap-3">
+    <label className="flex cursor-pointer items-start gap-3 py-4 first:pt-0">
       <input
         type="checkbox"
         checked={props.checked}
         onChange={(e) => props.onChange(e.target.checked)}
-        className="mt-0.5 size-4 accent-primary"
+        className={`${checkbox} mt-px`}
       />
       <span>
-        <span className="block text-sm font-medium">{props.label}</span>
-        <span className="block text-xs text-muted">{props.hint}</span>
+        <span className="block text-sm font-bold">{props.label}</span>
+        <span className="mt-0.5 block text-[13px] leading-[18px] text-muted">{props.hint}</span>
       </span>
     </label>
   );
@@ -43,7 +44,7 @@ export function PreferencesSettings() {
 
   return (
     <Section title="Preferências">
-      <div className="space-y-6">
+      <div className="divide-y divide-border">
         <Toggle
           label="Enter envia a mensagem"
           hint="Desligado: Enter quebra a linha e Ctrl+Enter envia."
@@ -56,18 +57,18 @@ export function PreferencesSettings() {
           checked={prefs.sounds}
           onChange={(sounds) => save.mutate({ sounds })}
         />
-        <fieldset>
-          <legend className="text-sm font-medium">Notificações do navegador</legend>
-          <div className="mt-2 space-y-1.5">
+        <fieldset className="py-4">
+          <legend className="float-left w-full text-sm font-bold">Notificações do navegador</legend>
+          <div className="clear-both space-y-2.5 pt-3">
             {MODES.map((m) => (
-              <label key={m.value} className="flex items-center gap-2 text-sm">
+              <label key={m.value} className="flex cursor-pointer items-center gap-3 text-sm">
                 <input
                   type="radio"
                   name="browser-notifications"
                   value={m.value}
                   checked={prefs.browserNotifications === m.value}
                   onChange={() => save.mutate({ browserNotifications: m.value })}
-                  className="accent-primary"
+                  className={radio}
                 />
                 {m.label}
               </label>

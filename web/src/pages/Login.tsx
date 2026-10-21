@@ -1,9 +1,8 @@
 import type { FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router';
+import { LockSimpleIcon } from '@phosphor-icons/react';
+import { button, card, field, fieldLabel, pageTitle } from '../components/ui';
 import { useLogin, useMe, useSessionSync } from '../lib/auth';
-
-const inputClass =
-  'w-full rounded-lg border border-field bg-surface px-3 py-2.5 text-fg outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/30';
 
 export default function Login() {
   const me = useMe();
@@ -22,52 +21,44 @@ export default function Login() {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col bg-ground md:flex-row">
+    <main className="flex min-h-dvh flex-wrap gap-3 bg-ground p-3">
       {/* The rail colour in both themes: the gold logo is drawn for a dark background. */}
-      <section className="flex flex-col justify-between gap-10 bg-rail p-8 text-nav-on md:w-[46%] md:p-14">
-        <img src="/logo-mark.svg" alt="" className="size-16" />
-        <div className="max-w-md">
-          <p className="mb-3 text-xs font-semibold tracking-widest text-[#d9ae5a] uppercase">Atendimento</p>
-          <p className="text-3xl leading-tight font-semibold tracking-tight">Todas as conversas do escritório em um só lugar.</p>
-          <p className="mt-4 text-rail-fg">WhatsApp, setores, notas internas e chatbot, com o histórico de cada cliente à mão.</p>
+      <section className="flex max-w-full min-h-[300px] flex-[1_1_560px] flex-col justify-between gap-10 rounded-card bg-rail px-8 py-10 text-rail-fg md:px-12">
+        <img src="/logo-mark.svg" alt="" className="size-10" />
+        <div className="flex max-w-[460px] flex-col gap-3">
+          <p className="text-[13px] leading-[18px] font-semibold text-rail-badge">Atendimento</p>
+          <p className="text-[30px] leading-[38px] font-bold tracking-[-0.02em] text-nav-on">Todas as conversas do escritório em um só lugar.</p>
+          <p className="mt-1">WhatsApp, setores, notas internas e chatbot, com o histórico de cada cliente à mão.</p>
         </div>
-        <p className="text-xs text-rail-fg">Uso restrito à equipe. Dados de clientes protegidos pela LGPD.</p>
+        <p className="flex items-center gap-2 text-xs">
+          <LockSimpleIcon size={16} aria-hidden className="shrink-0" />
+          Uso restrito à equipe. Dados de clientes protegidos pela LGPD.
+        </p>
       </section>
-      <div className="flex flex-1 items-center justify-center px-6 py-12">
-        <form onSubmit={onSubmit} className="w-full max-w-sm space-y-5">
+      <div className={`${card} flex min-h-[560px] min-w-0 flex-[1_1_460px] items-center justify-center px-[22px] py-12`}>
+        <form onSubmit={onSubmit} className="flex w-[380px] max-w-full flex-col gap-5">
           <div>
-            <h1 className="text-[26px] font-semibold tracking-tight">Entrar</h1>
-            <p className="mt-1 text-sm text-muted">Use o e-mail cadastrado pelo administrador.</p>
+            <h1 className={pageTitle}>Entrar</h1>
+            <p className="mt-1 text-muted">Use o e-mail cadastrado pelo administrador.</p>
           </div>
-          <div className="space-y-1.5">
-            <label htmlFor="login-email" className="block text-sm font-medium">
+          <div>
+            <label htmlFor="login-email" className={fieldLabel}>
               E-mail
             </label>
-            <input id="login-email" name="email" type="email" required autoComplete="username" autoFocus className={inputClass} />
+            <input id="login-email" name="email" type="email" required autoComplete="username" autoFocus className={field} />
           </div>
-          <div className="space-y-1.5">
-            <label htmlFor="login-password" className="block text-sm font-medium">
+          <div>
+            <label htmlFor="login-password" className={fieldLabel}>
               Senha
             </label>
-            <input
-              id="login-password"
-              name="password"
-              type="password"
-              required
-              autoComplete="current-password"
-              className={inputClass}
-            />
+            <input id="login-password" name="password" type="password" required autoComplete="current-password" className={field} />
           </div>
           {login.error && (
-            <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+            <p role="alert" className="rounded-block bg-danger-soft px-3.5 py-2.5 text-sm font-semibold text-danger">
               {login.error.message}
             </p>
           )}
-          <button
-            type="submit"
-            disabled={login.isPending}
-            className="w-full rounded-lg bg-primary py-3 font-semibold text-white transition-colors hover:bg-primary-hover disabled:opacity-60"
-          >
+          <button type="submit" disabled={login.isPending} className={`${button('primary')} w-full`}>
             {login.isPending ? 'Entrando…' : 'Entrar'}
           </button>
         </form>

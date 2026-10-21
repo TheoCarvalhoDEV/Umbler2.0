@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { tagColorHex, type ChatDetail, type ContactDto } from '@talk/shared';
+import { Check } from '@phosphor-icons/react';
 import { api, qk } from '../../lib/api';
+import { fieldError } from '../ui';
 
 // ponytail: every tag is a toggle chip; add a search popover if the office passes ~40 tags.
 /** The catalog as toggle chips; `tagIds` are the pressed ones. Used for the contact and for the conversation. */
@@ -21,15 +23,19 @@ function TagToggles(props: { tagIds: string[]; pending: boolean; error: Error | 
             aria-pressed={on}
             disabled={props.pending}
             onClick={() => props.onChange(on ? props.tagIds.filter((id) => id !== t.id) : [...props.tagIds, t.id])}
-            className="rounded-full border border-border px-2.5 py-0.5 text-xs font-medium disabled:opacity-60"
-            style={on ? { backgroundColor: color, borderColor: color, color: '#fff' } : { borderColor: color, color }}
+            className={`inline-flex h-7 items-center gap-1.5 rounded-full pr-3 pl-2.5 text-xs font-bold transition-colors disabled:opacity-60 ${
+              on ? 'bg-primary-soft text-accent-ink' : 'bg-panel text-fg-2 hover:bg-border'
+            }`}
           >
+            {on && <Check size={14} weight="bold" aria-hidden />}
+            {/* the tag color is user data, shown as a dot */}
+            <span aria-hidden className="size-[7px] rounded-full" style={{ backgroundColor: color }} />
             {t.emoji ? `${t.emoji} ` : ''}
             {t.name}
           </button>
         );
       })}
-      {props.error && <p role="alert" className="w-full text-xs text-danger">{props.error.message}</p>}
+      {props.error && <p role="alert" className={`${fieldError} w-full`}>{props.error.message}</p>}
     </div>
   );
 }

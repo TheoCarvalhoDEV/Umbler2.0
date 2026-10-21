@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMatch, useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
+import { BellSimpleIcon, BellSimpleSlashIcon } from '@phosphor-icons/react';
 import type { BrowserNotificationMode, UserPreferences } from '@talk/shared';
+import { menuItem } from '../components/ui';
 import { preferencesOf } from './auth';
 import { onWsEvent } from './ws';
 
@@ -74,15 +76,28 @@ export function NotificationPermissionButton() {
   const supported = typeof Notification !== 'undefined';
   const [permission, setPermission] = useState<NotificationPermission>(supported ? Notification.permission : 'denied');
   if (!supported) return null;
-  if (permission === 'granted') return <p className="px-3 py-2 text-sm text-muted">Notificações ativadas</p>;
-  if (permission === 'denied') return <p className="px-3 py-2 text-sm text-muted">Notificações bloqueadas no navegador</p>;
+  const status = 'flex items-center gap-2.5 px-3 py-2 text-sm text-muted';
+  if (permission === 'granted') {
+    return (
+      <p className={status}>
+        <BellSimpleIcon size={18} aria-hidden /> Notificações ativadas
+      </p>
+    );
+  }
+  if (permission === 'denied') {
+    return (
+      <p className={status}>
+        <BellSimpleSlashIcon size={18} aria-hidden /> Notificações bloqueadas no navegador
+      </p>
+    );
+  }
   return (
     <button
       type="button"
       onClick={async () => setPermission(await Notification.requestPermission())}
-      className="block w-full px-3 py-2 text-left text-sm hover:bg-sidebar-hover"
+      className={menuItem}
     >
-      Ativar notificações
+      <BellSimpleIcon size={18} aria-hidden /> Ativar notificações
     </button>
   );
 }

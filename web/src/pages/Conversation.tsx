@@ -27,7 +27,7 @@ export default function ConversationPage() {
   const focusMessage = (messageId: string) => setFocus((f) => ({ chatId: id, messageId, seq: (f?.seq ?? 0) + 1 }));
   if (!id) return null;
   return (
-    <div className="flex h-full min-w-0">
+    <div className="flex h-full min-w-0 gap-3">
       <ConversationView
         chatId={id}
         contactPanelOpen={contactPanelOpen}

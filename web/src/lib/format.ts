@@ -26,11 +26,11 @@ export function formatPhone(phone: string | null | undefined): string {
 
 /** Avatar letters: first + last word initial. */
 export function initials(name: string | null | undefined): string {
-  const words = (name ?? '').trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return '?';
-  const first = words[0]![0]!;
-  const last = words.length > 1 ? words[words.length - 1]![0]! : '';
-  return (first + last).toUpperCase();
+  // First letter/digit of each word: a name like "🔑 Escritório" or "." has no usable first char (an emoji's
+  // first UTF-16 unit is half a surrogate pair and rendered as a blank avatar).
+  const letters = (name ?? '').split(/\s+/).flatMap((w) => w.match(/[\p{L}\p{N}]/u) ?? []);
+  if (letters.length === 0) return '?';
+  return (letters[0]! + (letters.length > 1 ? letters[letters.length - 1]! : '')).toUpperCase();
 }
 
 /** Contact display name: name, else the phone through formatPhone; a LID-only contact without a name is "Contato sem número". */

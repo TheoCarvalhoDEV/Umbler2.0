@@ -4,6 +4,7 @@ import {
   QUICK_REACTIONS, deleteBlock, editBlock, forwardBlock, isSingleEmoji, noteDeleteBlock, noteEditBlock, reactBlock,
   replyBlock, type ActionBlock, type MessageDto,
 } from '@talk/shared';
+import { field, fieldError, menu, menuItem } from '../ui';
 
 export type MenuAction = 'react' | 'reply' | 'forward' | 'copy' | 'download' | 'favorite' | 'edit' | 'delete' | 'deleteNote';
 /** hint set = the action applies but its time is over: shown disabled with the hint. */
@@ -127,7 +128,7 @@ export function MessageMenu(props: MessageMenuProps) {
         aria-haspopup="menu"
         aria-expanded={props.open}
         onClick={() => (props.open ? close() : props.onOpenChange(true))}
-        className="p-1 text-muted opacity-0 hover:text-fg focus:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100"
+        className="grid size-8 place-items-center rounded-full text-muted opacity-0 transition-colors hover:bg-panel hover:text-fg focus:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100"
       >
         <CaretDown size={16} />
       </button>
@@ -138,13 +139,13 @@ export function MessageMenu(props: MessageMenuProps) {
             ref={menuRef}
             role="menu"
             aria-label="Ações da mensagem"
-            className={`absolute z-20 w-60 rounded-md border border-border bg-panel py-1 text-sm text-fg shadow-lg ${
+            className={`${menu} absolute z-20 w-64 text-sm ${
               up ? 'bottom-full mb-1' : 'top-full mt-1'
             } ${props.alignRight ? 'right-0' : 'left-0'}`}
           >
             {reacting ? (
-              <div className="px-2 py-1">
-                <div className="flex gap-1">
+              <div className="p-1.5">
+                <div className="flex justify-between gap-1">
                   {QUICK_REACTIONS.map((e) => (
                     <button
                       key={e}
@@ -152,7 +153,7 @@ export function MessageMenu(props: MessageMenuProps) {
                       aria-label={`Reagir com ${e}`}
                       aria-pressed={props.officeReaction === e}
                       onClick={() => react(e)}
-                      className="rounded px-1 text-lg hover:bg-surface aria-pressed:bg-primary/25"
+                      className="grid size-8 place-items-center rounded-full text-lg transition-colors hover:bg-sidebar-hover aria-pressed:bg-primary-soft"
                     >
                       {e}
                     </button>
@@ -168,10 +169,10 @@ export function MessageMenu(props: MessageMenuProps) {
                     setOtherError(false);
                   }}
                   onKeyDown={onOtherKey}
-                  className="mt-2 w-full rounded border border-field bg-surface px-2 py-1 text-sm"
+                  className={`${field} mt-2`}
                 />
                 {otherError && (
-                  <p role="alert" className="mt-1 text-xs text-danger">
+                  <p role="alert" className={fieldError}>
                     Escolha um emoji
                   </p>
                 )}
@@ -184,10 +185,10 @@ export function MessageMenu(props: MessageMenuProps) {
                   role="menuitem"
                   disabled={it.hint !== null}
                   onClick={() => pick(it.action)}
-                  className="block w-full px-3 py-1.5 text-left hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+                  className={`${menuItem} flex-wrap gap-y-0.5 disabled:hover:bg-transparent`}
                 >
                   <span>{it.label}</span>
-                  {it.hint && <span className="block text-xs text-muted">{it.hint}</span>}
+                  {it.hint && <span className="w-full text-xs text-muted">{it.hint}</span>}
                 </button>
               ))
             )}

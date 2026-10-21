@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ContactDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
-import { FIELD_INPUT_TYPE, Field, inputClass } from './ContactForm';
+import { FIELD_INPUT_TYPE, Field } from './ContactForm';
+import { field, fieldError } from '../ui';
 
 /** Inline edit: each input saves on blur when its value changed. Always sends the full map. */
 export function CustomFieldsEditor({ contact }: { contact: ContactDto }) {
@@ -23,7 +24,7 @@ export function CustomFieldsEditor({ contact }: { contact: ContactDto }) {
               key={current}
               defaultValue={current}
               type={FIELD_INPUT_TYPE[f.kind]}
-              className={inputClass}
+              className={`${field} tabular-nums`}
               onBlur={(e) => {
                 const value = e.target.value.trim();
                 if (value !== current) save.mutate({ ...contact.fields, [f.id]: value });
@@ -32,7 +33,7 @@ export function CustomFieldsEditor({ contact }: { contact: ContactDto }) {
           </Field>
         );
       })}
-      {save.error && <p role="alert" className="text-xs text-danger">{save.error.message}</p>}
+      {save.error && <p role="alert" className={fieldError}>{save.error.message}</p>}
     </div>
   );
 }

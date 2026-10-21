@@ -1,9 +1,8 @@
-import { TrashIcon } from '@phosphor-icons/react';
+import { PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import type { SectorDto, TriageMenuDto } from '@talk/shared';
+import { button, field as cell, fieldSelect, iconButtonGhost } from '../ui';
 
 export type TriageOptionInput = TriageMenuDto['options'][number];
-
-const cell = 'w-full rounded border border-field px-2 py-1 text-sm';
 
 export function TriageOptionsEditor({
   options,
@@ -34,12 +33,12 @@ export function TriageOptionsEditor({
       {options.length === 0 ? (
         <p className="text-sm text-muted">Nenhuma opção. Clique em “Adicionar opção”.</p>
       ) : (
-        <table className="w-full text-sm">
+        <table className="w-full text-left text-sm">
           <thead>
-            <tr className="text-left text-muted">
-              <th className="w-16 pb-1 font-medium">Nº</th>
-              <th className="pb-1 font-medium">Texto da opção</th>
-              <th className="w-48 pb-1 font-medium">Setor</th>
+            <tr className="text-xs leading-4 text-muted">
+              <th className="w-20 pr-2 pb-1.5 font-semibold">Nº</th>
+              <th className="pr-2 pb-1.5 font-semibold">Texto da opção</th>
+              <th className="w-52 pr-2 pb-1.5 font-semibold">Setor</th>
               <th className="w-10" />
             </tr>
           </thead>
@@ -52,7 +51,7 @@ export function TriageOptionsEditor({
                     value={o.key}
                     maxLength={3}
                     onChange={(e) => update(i, { key: e.target.value.trim() })}
-                    className={cell}
+                    className={`${cell} text-center tabular-nums`}
                   />
                 </td>
                 <td className="py-1 pr-2">
@@ -69,7 +68,7 @@ export function TriageOptionsEditor({
                     aria-label={`Setor da opção ${i + 1}`}
                     value={o.sectorId}
                     onChange={(e) => pickSector(i, e.target.value)}
-                    className={cell}
+                    className={fieldSelect}
                   >
                     <option value="" disabled>
                       Escolha o setor…
@@ -87,9 +86,9 @@ export function TriageOptionsEditor({
                     aria-label={`Remover opção ${i + 1}`}
                     title="Remover"
                     onClick={() => onChange(options.filter((_, j) => j !== i))}
-                    className="rounded p-1 text-muted hover:bg-danger/15 hover:text-danger"
+                    className={iconButtonGhost}
                   >
-                    <TrashIcon size={16} />
+                    <TrashIcon size={18} />
                   </button>
                 </td>
               </tr>
@@ -97,7 +96,8 @@ export function TriageOptionsEditor({
           </tbody>
         </table>
       )}
-      <button type="button" onClick={add} className="mt-2 rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover">
+      <button type="button" onClick={add} className={`${button('secondary')} mt-3`}>
+        <PlusIcon size={16} weight="bold" aria-hidden />
         Adicionar opção
       </button>
     </div>

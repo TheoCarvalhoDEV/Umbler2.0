@@ -35,6 +35,17 @@ import {
   WhatsappLogoIcon,
   type Icon,
 } from '@phosphor-icons/react';
+import type { BlockCategory } from '@talk/shared';
+import { badgeTone } from '../ui';
+
+/** Fill and ink of a block's icon chip, by category (palette and canvas). */
+export const CATEGORY_TONE: Record<BlockCategory, string> = {
+  start: badgeTone.success,
+  condition: badgeTone.warning,
+  action: badgeTone.accent,
+  finish: badgeTone.danger,
+  utility: badgeTone.neutral,
+};
 
 // Keys are the `icon` names in BLOCK_CATALOG (Phosphor component names without the "Icon" suffix).
 const ICONS: Record<string, Icon> = {

@@ -1,5 +1,6 @@
 import { Paperclip } from '@phosphor-icons/react';
 import type { QuickAnswerDto } from '@talk/shared';
+import { menu, menuItem } from '../ui';
 
 const fold = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
@@ -21,7 +22,7 @@ export function QuickAnswerPicker({
     <div
       role="listbox"
       aria-label="Respostas rápidas"
-      className="absolute bottom-full left-0 right-0 z-10 mb-1 max-h-64 overflow-y-auto rounded-md border border-border bg-panel shadow-lg"
+      className={`${menu} absolute bottom-full left-0 right-0 z-10 mb-2 max-h-64 overflow-y-auto`}
     >
       {answers.length === 0 && <p className="px-3 py-2 text-sm text-muted">Nenhuma resposta rápida encontrada</p>}
       {answers.map((a, i) => (
@@ -32,11 +33,11 @@ export function QuickAnswerPicker({
           aria-selected={i === highlight}
           onMouseDown={(e) => e.preventDefault()} // keep focus in the textarea
           onClick={() => onPick(a)}
-          className={`block w-full px-3 py-2 text-left text-sm ${i === highlight ? 'bg-surface' : 'hover:bg-surface'}`}
+          className={`${menuItem} flex-wrap gap-x-1.5 gap-y-0.5 ${i === highlight ? 'bg-sidebar-active' : ''}`}
         >
-          <span className="font-medium text-fg">/{a.name}</span>
-          {a.hasAttachment && <Paperclip size={14} className="ml-1 inline text-muted" aria-label="com anexo" />}
-          <span className="block truncate text-xs text-muted">{a.body}</span>
+          <span className="font-semibold">/{a.name}</span>
+          {a.hasAttachment && <Paperclip size={14} className="text-muted" aria-label="com anexo" />}
+          <span className="w-full truncate text-xs text-muted">{a.body}</span>
         </button>
       ))}
     </div>

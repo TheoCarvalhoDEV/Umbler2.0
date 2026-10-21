@@ -30,8 +30,10 @@ function EditorLoader({ id }: { id: string }) {
   if (!isAdmin) return <Navigate to="/configuracoes/perfil" replace />;
   if (!bot.data || !version.data) {
     return (
-      <div className="grid h-dvh place-items-center bg-surface p-6">
-        <Loading error={bot.error ?? version.error} />
+      <div className="grid h-dvh place-items-center bg-ground p-3">
+        <div className="rounded-card bg-surface px-6 py-5">
+          <Loading error={bot.error ?? version.error} />
+        </div>
       </div>
     );
   }

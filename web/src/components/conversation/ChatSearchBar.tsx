@@ -4,6 +4,7 @@ import { CaretDown, CaretUp, MagnifyingGlass, X } from '@phosphor-icons/react';
 import { SEARCH_MAX_CHARS, SEARCH_MIN_CHARS } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { resultsLabel, shortDateTime } from './model';
+import { iconButtonGhost, searchInput, searchPill } from '../ui';
 
 export const SEARCH_DEBOUNCE_MS = 300;
 
@@ -62,45 +63,44 @@ export function ChatSearchBar({ chatId, onFocusMessage, onClose }: ChatSearchBar
     }
   }
 
-  const iconButton =
-    'flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-sidebar-hover hover:text-fg disabled:opacity-40';
-
   return (
-    <div className="border-b border-border bg-surface px-6 py-2">
-      <div role="search" className="flex items-center gap-2">
-        <MagnifyingGlass size={16} aria-hidden className="shrink-0 text-muted" />
-        <input
-          autoFocus
-          aria-label="Buscar mensagens"
-          placeholder="Buscar nesta conversa…"
-          maxLength={SEARCH_MAX_CHARS}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-muted"
-        />
-        {enabled && (
-          <span aria-live="polite" className="shrink-0 text-xs text-muted">
-            {search.isPending ? 'Buscando…' : search.isError ? 'Não foi possível buscar' : resultsLabel(hits.length)}
-          </span>
-        )}
-        {current && (
-          <span className="shrink-0 text-xs font-medium text-fg">
-            {index + 1}/{hits.length}
-          </span>
-        )}
-        <button type="button" aria-label="Resultado anterior" title="Resultado anterior (↑)" disabled={hits.length < 2} onClick={() => step(1)} className={iconButton}>
-          <CaretUp size={16} />
+    <div className="bg-surface px-[18px] pb-3">
+      <div role="search" className="flex items-center gap-1">
+        <label className={`${searchPill} min-w-0 flex-1`}>
+          <MagnifyingGlass size={16} aria-hidden className="shrink-0" />
+          <input
+            autoFocus
+            aria-label="Buscar mensagens"
+            placeholder="Buscar nesta conversa…"
+            maxLength={SEARCH_MAX_CHARS}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            className={searchInput}
+          />
+          {enabled && (
+            <span aria-live="polite" className="shrink-0 text-xs text-muted">
+              {search.isPending ? 'Buscando…' : search.isError ? 'Não foi possível buscar' : resultsLabel(hits.length)}
+            </span>
+          )}
+          {current && (
+            <span className="shrink-0 text-xs font-bold text-fg tabular-nums">
+              {index + 1}/{hits.length}
+            </span>
+          )}
+        </label>
+        <button type="button" aria-label="Resultado anterior" title="Resultado anterior (↑)" disabled={hits.length < 2} onClick={() => step(1)} className={iconButtonGhost}>
+          <CaretUp size={18} />
         </button>
-        <button type="button" aria-label="Próximo resultado" title="Próximo resultado (↓)" disabled={hits.length < 2} onClick={() => step(-1)} className={iconButton}>
-          <CaretDown size={16} />
+        <button type="button" aria-label="Próximo resultado" title="Próximo resultado (↓)" disabled={hits.length < 2} onClick={() => step(-1)} className={iconButtonGhost}>
+          <CaretDown size={18} />
         </button>
-        <button type="button" aria-label="Fechar busca" title="Fechar busca (Esc)" onClick={onClose} className={iconButton}>
-          <X size={16} />
+        <button type="button" aria-label="Fechar busca" title="Fechar busca (Esc)" onClick={onClose} className={iconButtonGhost}>
+          <X size={18} />
         </button>
       </div>
       {current && (
-        <p className="mt-1 truncate pl-6 text-xs text-muted">
+        <p className="mt-1.5 truncate px-3.5 text-xs text-muted tabular-nums">
           {shortDateTime(current.sentAt)} · {current.snippet}
         </p>
       )}
