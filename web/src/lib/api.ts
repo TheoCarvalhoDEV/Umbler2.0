@@ -1,5 +1,8 @@
 import type { InfiniteData } from '@tanstack/react-query';
 import type {
+  AppointmentDto,
+  AppointmentRemindersDto,
+  AppointmentTab,
   AutoRulesDto,
   BotAction,
   BotDto,
@@ -28,6 +31,7 @@ import type {
   OfficeTemplateInput,
   QuickAnswerDto,
   RecentStickerDto,
+  ReminderInput,
   SaveVersionInput,
   ScheduledMessageDto,
   ScheduledTab,
@@ -101,6 +105,12 @@ export interface StartChatInput { contactId?: string; phone?: string; name?: str
 export interface BulkTransferInput { chatIds: string[]; sectorId?: string; ownerId?: string | null }
 /** Spec 2026-10-20 agendamentos §3.1: `sendAt` is an ISO instant; at most one file, kept until it is sent. */
 export interface ScheduleInput { text: string; sendAt: string; signature: boolean; file?: Blob; fileName?: string }
+/** Spec 2026-10-21 compromissos §5.3: exactly one of chatId / contactId; startsAt is an ISO instant. */
+export interface AppointmentInput {
+  chatId?: string; contactId?: string; title: string; startsAt: string; note?: string; signature: boolean; reminders: ReminderInput[];
+}
+/** At least one field; note null clears it. */
+export interface AppointmentPatch { title?: string; startsAt?: string; note?: string | null }
 export interface SendTextInput { text: string; signature: boolean; replyToId?: string; botAction?: BotAction }
 export interface SendFileInput {
   file: Blob; fileName?: string; text?: string; signature: boolean; replyToId?: string; asVoice?: boolean; botAction?: BotAction;
@@ -299,6 +309,11 @@ export const api = Object.assign(call, {
       get: () => request<AutoRulesDto>('GET', '/api/settings/auto-rules'),
       put: (rules: AutoRulesDto) => request<AutoRulesDto>('PUT', '/api/settings/auto-rules', rules),
     },
+    /** Spec 2026-10-21 compromissos §4: every user reads them (the form starts with them); an admin saves them. */
+    appointmentReminders: {
+      get: () => request<AppointmentRemindersDto>('GET', '/api/settings/appointment-reminders'),
+      put: (value: AppointmentRemindersDto) => request<AppointmentRemindersDto>('PUT', '/api/settings/appointment-reminders', value),
+    },
   },
   scheduled: {
     /** The chat's pending ones (spec 2026-10-20 agendamentos §3.2). */
@@ -319,6 +334,15 @@ export const api = Object.assign(call, {
     update: (id: string, patch: { text?: string; sendAt?: string }) =>
       request<ScheduledMessageDto>('PATCH', `/api/scheduled-messages/${enc(id)}`, patch),
     cancel: (id: string) => request<ScheduledMessageDto>('POST', `/api/scheduled-messages/${enc(id)}/cancel`),
+  },
+  appointments: {
+    /** The contact's upcoming ones, in every chat of theirs the user sees (spec 2026-10-21 compromissos §3.4). */
+    listForChat: (chatId: string) => request<AppointmentDto[]>('GET', `/api/chats/${enc(chatId)}/appointments`),
+    /** Mine (an admin: everyone's), one tab at a time (§3.5). */
+    list: (tab: AppointmentTab) => request<AppointmentDto[]>('GET', `/api/appointments${qs({ tab })}`),
+    create: (input: AppointmentInput) => request<AppointmentDto>('POST', '/api/appointments', input),
+    update: (id: string, patch: AppointmentPatch) => request<AppointmentDto>('PATCH', `/api/appointments/${enc(id)}`, patch),
+    cancel: (id: string) => request<AppointmentDto>('POST', `/api/appointments/${enc(id)}/cancel`),
   },
   channels: {
     list: () => request<ChannelDto[]>('GET', '/api/channels'),
@@ -389,6 +413,11 @@ export const qk = {
   scheduled: ['chats', 'scheduled'] as const,
   chatScheduled: (chatId: string) => ['chats', 'scheduled', 'chat', chatId] as const,
   scheduledList: (tab: ScheduledTab) => ['chats', 'scheduled', 'list', tab] as const,
+  /** Every appointment list (prefix), under ['chats'] like the scheduled ones (spec 2026-10-21 compromissos). */
+  appointments: ['chats', 'appointments'] as const,
+  chatAppointments: (chatId: string) => ['chats', 'appointments', 'chat', chatId] as const,
+  appointmentList: (tab: AppointmentTab) => ['chats', 'appointments', 'list', tab] as const,
+  appointmentReminders: ['settings', 'appointment-reminders'] as const,
   channels: ['channels'] as const,
   bots: ['bots'] as const,
   bot: (id: string) => ['bots', 'detail', id] as const,

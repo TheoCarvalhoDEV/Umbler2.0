@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_AUTO_RULES } from '@talk/shared';
+import { DEFAULT_APPOINTMENT_REMINDERS, DEFAULT_AUTO_RULES } from '@talk/shared';
 import { api, ApiError, botRunningRuns, graphProblems, readBotExport, request } from './api';
 
 const json = (status: number, body?: unknown) =>
@@ -311,5 +311,30 @@ describe('api routes of the 2026-10-20 agendamentos delivery', () => {
     expect([...body.keys()]).toEqual(['text', 'sendAt', 'signature', 'file']);
     expect(body.get('signature')).toBe('false');
     expect((body.get('file') as File).name).toBe('peticao.pdf');
+  });
+});
+
+describe('api routes of the 2026-10-21 compromissos delivery', () => {
+  it('calls the appointment and default-reminder routes', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    const { reminders } = DEFAULT_APPOINTMENT_REMINDERS;
+    const input = { contactId: 'k1', title: 'Audiência', startsAt: '2026-10-21T18:00:00.000Z', signature: false, reminders };
+    await api.appointments.listForChat('c1');
+    await api.appointments.list('past');
+    await api.appointments.create(input);
+    await api.appointments.update('a1', { note: null });
+    await api.appointments.cancel('a1');
+    await api.settings.appointmentReminders.get();
+    await api.settings.appointmentReminders.put({ reminders });
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)} ${String(i?.body ?? '')}`)).toEqual([
+      'GET /api/chats/c1/appointments ',
+      'GET /api/appointments?tab=past ',
+      `POST /api/appointments ${JSON.stringify(input)}`,
+      'PATCH /api/appointments/a1 {"note":null}',
+      'POST /api/appointments/a1/cancel ',
+      'GET /api/settings/appointment-reminders ',
+      `PUT /api/settings/appointment-reminders ${JSON.stringify({ reminders })}`,
+    ]);
   });
 });

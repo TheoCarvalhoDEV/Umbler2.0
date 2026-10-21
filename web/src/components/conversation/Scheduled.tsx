@@ -149,6 +149,12 @@ export function ScheduledItem({ item, page = false }: { item: ScheduledMessageDt
           </button>
         </span>
       )}
+      {item.appointment && (
+        // spec 2026-10-21 compromissos §3.7: a reminder changes only through its appointment, so the mark takes Editar/Cancelar's place
+        <Link to="/agendamentos?aba=compromissos" className={`${badge} ${badgeTone.accent} hover:underline`}>
+          Lembrete · {item.appointment.title}
+        </Link>
+      )}
       {editing && (
         <ScheduleDialog
           title="Editar agendamento"
