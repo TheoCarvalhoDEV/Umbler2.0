@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, PencilSimpleLine, Robot, ShareFat, Star, WarningCircle,
+  CalendarCheck, Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, PencilSimpleLine, Robot, ShareFat, Star, WarningCircle,
 } from '@phosphor-icons/react';
 import type { Me, MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
@@ -341,6 +341,11 @@ export function MessageBubble({ m, onReply, chatOpen = false, highlighted = fals
         {m.forwarded && (
           <p data-tag="forwarded" className={`mb-1 flex items-center gap-1 text-xs italic ${meta}`}>
             <ShareFat size={12} aria-hidden /> Encaminhada
+          </p>
+        )}
+        {m.scheduled && (
+          <p data-tag="scheduled" className={`mb-1 flex items-center gap-1 text-xs italic ${meta}`}>
+            <CalendarCheck size={12} aria-hidden /> Agendada
           </p>
         )}
         {m.replyTo && (

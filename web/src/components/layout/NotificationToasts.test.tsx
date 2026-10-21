@@ -61,6 +61,7 @@ function setup(permission: NotificationPermission, mode: BrowserNotificationMode
         <Routes>
           <Route path="/chats" element={<p>Lista</p>} />
           <Route path="/chats/:id" element={<p>Conversa aberta</p>} />
+          <Route path="/agendamentos" element={<p>Página de agendamentos</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -99,6 +100,18 @@ describe('NotificationToasts', () => {
       vi.advanceTimersByTime(1);
     });
     expect(screen.queryByText('Nova conversa')).toBeNull();
+  });
+
+  it('a failed scheduled message says so and opens Agendamentos → Falharam (spec 2026-10-20 agendamentos §3.3)', () => {
+    setup('default');
+    emit({
+      type: 'notification',
+      notification: { ...NOTE, id: 'n2', kind: 'scheduled_failed', title: 'Mensagem agendada não enviada', text: 'Erro inesperado', botName: '' },
+    });
+    expect(screen.getByText('Mensagens agendadas')).toBeTruthy();
+    expect(screen.queryByText(/Chatbot/)).toBeNull();
+    fireEvent.click(screen.getByRole('link', { name: /Mensagem agendada não enviada/ }));
+    expect(screen.getByText('Página de agendamentos')).toBeTruthy();
   });
 
   it('ignores other WebSocket events', () => {

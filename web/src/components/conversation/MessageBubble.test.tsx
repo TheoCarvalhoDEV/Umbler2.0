@@ -386,3 +386,11 @@ describe('MessageBubble notes, favorites and focus (spec 2026-10-19 §3, §4, §
     expect(renderBubble(base).querySelector('[data-message-id="m1"]')?.hasAttribute('data-highlighted')).toBe(false);
   });
 });
+
+describe('MessageBubble scheduled mark (spec 2026-10-20 agendamentos §3.3)', () => {
+  it('a scheduled message says "Agendada"; any other does not', () => {
+    expect(renderBubble({ ...base, scheduled: true }).querySelector('[data-tag="scheduled"]')?.textContent).toContain('Agendada');
+    cleanup();
+    expect(renderBubble(base).querySelector('[data-tag="scheduled"]')).toBeNull();
+  });
+});
