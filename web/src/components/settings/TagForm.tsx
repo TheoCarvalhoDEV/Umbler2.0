@@ -1,7 +1,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { TAG_COLORS, tagColorHex, type TagDto } from '@talk/shared';
 import { button, field, fieldError, fieldLabel } from '../ui';
-import { block, btnPrimary } from './common';
+import { btnPrimary } from './common';
 
 export interface TagInput {
   name: string;
@@ -40,7 +40,7 @@ export function TagForm({
   }
 
   return (
-    <form onSubmit={submit} className={`${block} mb-5 space-y-5`}>
+    <form onSubmit={submit} className="space-y-5">
       <div className="flex gap-3">
         <div className="w-20">
           <label htmlFor={`${id}-emoji`} className={fieldLabel}>
@@ -84,7 +84,7 @@ export function TagForm({
               aria-label={c.label}
               title={c.label}
               onClick={() => setColor(c.hex)}
-              className={`size-7 rounded-full ${color === c.hex ? 'ring-2 ring-fg ring-offset-2 ring-offset-sunken' : ''}`}
+              className={`size-7 rounded-full ${color === c.hex ? 'ring-2 ring-fg ring-offset-2 ring-offset-surface' : ''}`}
               style={{ backgroundColor: c.hex }}
             />
           ))}

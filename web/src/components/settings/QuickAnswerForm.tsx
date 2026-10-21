@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import type { CustomFieldDto, QuickAnswerDto } from '@talk/shared';
 import { button, field, fieldArea, fieldError, fieldLabel, radio } from '../ui';
-import { block, btnPrimary } from './common';
+import { btnPrimary } from './common';
 
 export interface QuickAnswerInput {
   name: string;
@@ -80,7 +80,7 @@ export function QuickAnswerForm({
   ];
 
   return (
-    <form onSubmit={submit} className={`${block} mb-5 space-y-5`}>
+    <form onSubmit={submit} className="space-y-5">
       <div>
         <label htmlFor={`${id}-name`} className={fieldLabel}>
           Nome

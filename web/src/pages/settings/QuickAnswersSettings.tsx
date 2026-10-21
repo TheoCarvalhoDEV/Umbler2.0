@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { PaperclipIcon, PlusIcon } from '@phosphor-icons/react';
+import { LightningIcon, PaperclipIcon, PlusIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import type { QuickAnswerDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
+import { Modal } from '../../components/conversation/ChatDialogs';
 import { QuickAnswerForm, type QuickAnswerInput } from '../../components/settings/QuickAnswerForm';
 import { badge, badgeTone } from '../../components/ui';
-import { ErrorText, Loading, Section, btnDanger, btnPrimary, btnSecondary, listRow, send, useSend } from '../../components/settings/common';
+import { EmptyState, ErrorText, ListRow, Loading, PageHeader, RowMenu, btnPrimary, send, useSend } from '../../components/settings/common';
 import { confirmDialog } from '../../lib/confirm';
 
 export function QuickAnswersSettings() {
@@ -52,55 +53,65 @@ export function QuickAnswersSettings() {
   }
 
   return (
-    <Section
-      title="Respostas rápidas"
-      action={
-        <button type="button" onClick={() => open('new')} className={btnPrimary}>
-          <PlusIcon size={16} weight="bold" aria-hidden />
-          Nova resposta rápida
-        </button>
-      }
-    >
+    <>
+      <PageHeader
+        title="Respostas rápidas"
+        description="Textos prontos: digite / na conversa para escolher um."
+        action={
+          <button type="button" onClick={() => open('new')} className={btnPrimary}>
+            <PlusIcon size={16} weight="bold" aria-hidden />
+            Nova resposta rápida
+          </button>
+        }
+      />
       {target && (
-        <QuickAnswerForm
-          key={target === 'new' ? 'new' : target.id}
-          initial={target === 'new' ? undefined : target}
-          isAdmin={isAdmin}
-          fields={[...fields.data].sort((a, b) => a.position - b.position)}
-          pending={save.isPending}
-          error={save.error?.message ?? null}
-          onSubmit={submit}
-          onCancel={() => setEditing(null)}
-        />
+        <Modal title={target === 'new' ? 'Nova resposta rápida' : 'Editar resposta rápida'} onCancel={() => setEditing(null)}>
+          <QuickAnswerForm
+            key={target === 'new' ? 'new' : target.id}
+            initial={target === 'new' ? undefined : target}
+            isAdmin={isAdmin}
+            fields={[...fields.data].sort((a, b) => a.position - b.position)}
+            pending={save.isPending}
+            error={save.error?.message ?? null}
+            onSubmit={submit}
+            onCancel={() => setEditing(null)}
+          />
+        </Modal>
       )}
       {!target && <ErrorText error={save.error} />}
-      {sorted.length === 0 && <p className="text-sm text-muted">Nenhuma resposta rápida.</p>}
-      <ul>
-        {sorted.map((a) => (
-          <li key={a.id} className={listRow}>
-            <div className="flex min-w-0 flex-[1_1_240px] flex-col gap-1">
-              <p className="flex flex-wrap items-center gap-2 font-bold">
-                /{a.name}
-                {a.hasAttachment && <PaperclipIcon size={16} aria-label="Com anexo" className="text-fg-2" />}
-                <span className={`${badge} ${a.visibility === 'all' ? badgeTone.accent : badgeTone.neutral}`}>
-                  {a.visibility === 'all' ? 'Para todos' : a.ownerId === me.id ? 'Apenas para mim' : 'Particular de outro atendente'}
-                </span>
-              </p>
-              <p className="line-clamp-2 text-[13px] leading-[18px] whitespace-pre-line text-muted">{a.body}</p>
-            </div>
-            {canEdit(a) && (
-              <span className="flex items-center gap-2">
-                <button type="button" onClick={() => open(a)} className={btnSecondary}>
-                  Editar
-                </button>
-                <button type="button" onClick={() => remove(a)} className={btnDanger}>
-                  Excluir
-                </button>
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </Section>
+      {sorted.length === 0 ? (
+        <EmptyState icon={<LightningIcon size={28} />} title="Nenhuma resposta rápida" hint="Crie a primeira em “Nova resposta rápida”." />
+      ) : (
+        <ul className="mt-5">
+          {sorted.map((a) => (
+            <ListRow
+              key={a.id}
+              leading={<LightningIcon size={20} aria-hidden />}
+              title={`/${a.name}`}
+              badges={
+                <>
+                  {a.hasAttachment && <PaperclipIcon size={16} aria-label="Com anexo" className="shrink-0 text-fg-2" />}
+                  <span className={`${badge} ${a.visibility === 'all' ? badgeTone.accent : badgeTone.neutral}`}>
+                    {a.visibility === 'all' ? 'Para todos' : a.ownerId === me.id ? 'Apenas para mim' : 'Particular de outro atendente'}
+                  </span>
+                </>
+              }
+              subtitle={a.body}
+              actions={
+                canEdit(a) && (
+                  <RowMenu
+                    label={`Opções da resposta rápida /${a.name}`}
+                    items={[
+                      { label: 'Editar', onSelect: () => open(a) },
+                      { label: 'Excluir', onSelect: () => remove(a), danger: true },
+                    ]}
+                  />
+                )
+              }
+            />
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
