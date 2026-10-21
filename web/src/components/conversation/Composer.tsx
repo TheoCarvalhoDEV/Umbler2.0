@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowBendUpLeft, Lightning, Microphone, Paperclip, PaperPlaneRight, Robot, Smiley, Sticker, Trash, X } from '@phosphor-icons/react';
+import {
+  ArrowBendUpLeft, CalendarPlus, Lightning, Microphone, Paperclip, PaperPlaneRight, Robot, Smiley, Sticker, Trash, X,
+} from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, MessageDto, QuickAnswerDto } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
 import { preferencesOf } from '../../lib/auth';
@@ -10,6 +12,7 @@ import { BotPanel } from './BotPanel';
 import { BotRunningDialog } from './ChatDialogs';
 import { errorMessage, isSendKey, previewText } from './model';
 import { QuickAnswerPicker, filterQuickAnswers } from './QuickAnswerPicker';
+import { ScheduleDialog } from './Scheduled';
 import { StickerPanel } from './StickerPanel';
 import { useAudioRecorder } from './useAudioRecorder';
 
@@ -78,6 +81,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [botOpen, setBotOpen] = useState(false);
   const [stickerOpen, setStickerOpen] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
   const [pickerDismissed, setPickerDismissed] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [sending, setSending] = useState(false);
@@ -176,6 +180,24 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
       return;
     }
     if (!isNote && replyRef.current === sentReply) onClearReply();
+  }
+
+  /** Spec 2026-10-20 agendamentos §3.1: the composer's text (and file, and signature choice) go out later. */
+  function openSchedule() {
+    if (!text.trim()) {
+      setError('Digite a mensagem que será agendada');
+      return;
+    }
+    setError(null);
+    setScheduling(true);
+  }
+
+  async function schedule(value: string, sendAt: string) {
+    await api.scheduled.create(chatId, { text: value, sendAt, signature, file: file ?? undefined });
+    setScheduling(false);
+    setText('');
+    setFile(null);
+    void qc.invalidateQueries({ queryKey: qk.chatScheduled(chatId), exact: true });
   }
 
   async function toggleRecording() {
@@ -430,7 +452,12 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                   Assinatura
                 </label>
               )}
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-1.5">
+                {!isNote && (
+                  <ToolButton label="Agendar mensagem" onClick={openSchedule}>
+                    <CalendarPlus size={20} />
+                  </ToolButton>
+                )}
                 {!isNote && !canSend ? (
                   <button
                     type="button"
@@ -455,6 +482,18 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
               </div>
             </div>
           </>
+        )}
+
+        {scheduling && (
+          <ScheduleDialog
+            title="Agendar mensagem"
+            confirmLabel="Agendar"
+            initialText={text.trim()}
+            fileName={file?.name}
+            onCancel={() => setScheduling(false)}
+            /* a new schedule has no kept time, so sendAt is always set */
+            onConfirm={(value, sendAt) => schedule(value, sendAt!)}
+          />
         )}
 
         {botAsk && (

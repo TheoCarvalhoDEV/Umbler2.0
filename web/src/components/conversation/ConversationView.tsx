@@ -6,6 +6,7 @@ import { useWsEvent } from '../../lib/ws';
 import { ChatSearchBar } from './ChatSearchBar';
 import { Composer } from './Composer';
 import { ConversationHeader } from './ConversationHeader';
+import { ScheduledStrip } from './Scheduled';
 import { errorMessage, type TimelineFocus } from './model';
 import { Timeline } from './Timeline';
 import { card, fieldError } from '../ui';
@@ -99,6 +100,8 @@ function ConversationPane({
     if (ev.type !== 'chat.updated' || ev.chat.id !== chatId) return;
     void qc.invalidateQueries({ queryKey: qk.timeline(chatId) });
     void qc.invalidateQueries({ queryKey: qk.chatFavorites(chatId), exact: true });
+    // scheduling, editing, cancelling and each send or failure publish chat.updated (spec 2026-10-20 agendamentos §3.2)
+    void qc.invalidateQueries({ queryKey: qk.chatScheduled(chatId), exact: true });
   });
 
   if (detail.isError) {
@@ -122,6 +125,7 @@ function ConversationPane({
         <ChatSearchBar chatId={chatId} onFocusMessage={(id) => onFocusMessage?.(id)} onClose={() => setSearchOpen(false)} />
       )}
       <Timeline chatId={chatId} onReply={setReplyTo} chatOpen={chat.state === 'open'} focus={focus} />
+      <ScheduledStrip chatId={chatId} />
       {chat.state === 'open' ? (
         <Composer chatId={chatId} replyTo={replyTo} onClearReply={() => setReplyTo(null)} />
       ) : (
