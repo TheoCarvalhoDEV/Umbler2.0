@@ -5,8 +5,9 @@ import type { Role, SectorDto, UserDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { Avatar } from '../../components/Avatar';
-import { badge, badgeTone, button, checkbox, field, fieldLabel, fieldSelect } from '../../components/ui';
-import { ErrorText, Loading, Section, block, btnDanger, btnPrimary, btnSecondary, hint, send, useSend } from '../../components/settings/common';
+import { Modal } from '../../components/conversation/ChatDialogs';
+import { badge, badgeTone, checkbox, field, fieldLabel, fieldSelect } from '../../components/ui';
+import { ErrorText, ListRow, Loading, PageHeader, RowMenu, btnPrimary, btnSecondary, hint, send, useSend } from '../../components/settings/common';
 import { confirmDialog } from '../../lib/confirm';
 
 interface UserInput {
@@ -56,74 +57,70 @@ export function UsersSettings() {
     save.mutate(() => send(`/api/users/${u.id}`, 'PATCH', { active: !u.active }));
   }
 
+  // no empty state: the admin looking at it is always on the list
   return (
-    <Section
-      title="Atendentes"
-      action={
-        <button type="button" onClick={() => open('new')} className={btnPrimary}>
-          <PlusIcon size={16} weight="bold" aria-hidden />
-          Novo atendente
-        </button>
-      }
-    >
+    <>
+      <PageHeader
+        title="Atendentes"
+        description="Quem atende pelo sistema, com o papel e os setores de cada pessoa."
+        action={
+          <button type="button" onClick={() => open('new')} className={btnPrimary}>
+            <PlusIcon size={16} weight="bold" aria-hidden />
+            Novo atendente
+          </button>
+        }
+      />
       {target && (
-        <UserForm
-          key={target === 'new' ? 'new' : target.id}
-          initial={target === 'new' ? undefined : target}
-          sectors={sectorList}
-          pending={save.isPending}
-          error={save.error}
-          onSubmit={submit}
-          onCancel={() => setEditing(null)}
-        />
+        <Modal title={target === 'new' ? 'Novo atendente' : 'Editar atendente'} onCancel={() => setEditing(null)}>
+          <UserForm
+            key={target === 'new' ? 'new' : target.id}
+            initial={target === 'new' ? undefined : target}
+            sectors={sectorList}
+            pending={save.isPending}
+            error={save.error}
+            onSubmit={submit}
+            onCancel={() => setEditing(null)}
+          />
+        </Modal>
       )}
       {!target && <ErrorText error={save.error} />}
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="text-xs leading-4 text-muted">
-              <th scope="col" className="h-10 px-3 font-semibold">Nome</th>
-              <th scope="col" className="h-10 px-3 font-semibold">E-mail</th>
-              <th scope="col" className="h-10 px-3 font-semibold">Papel</th>
-              <th scope="col" className="h-10 px-3 font-semibold">Setores</th>
-              <th scope="col" className="h-10 px-3 font-semibold">Situação</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {users.data.map((u) => (
-              <tr key={u.id} className={`border-t border-border transition-colors hover:bg-sidebar-hover ${u.active ? '' : 'text-muted'}`}>
-                <td className="h-[60px] px-3 py-1">
-                  <span className="flex items-center gap-3">
-                    <Avatar name={u.name} src={u.avatarUrl} className="size-9 text-[13px]" />
-                    <span className="font-bold whitespace-nowrap">{u.name}</span>
+      <ul className="mt-5">
+        {users.data.map((u) => {
+          const sectorsText = u.sectorIds.map((id) => sectorName.get(id)).filter(Boolean).join(', ');
+          return (
+            <ListRow
+              key={u.id}
+              leading={<Avatar name={u.name} src={u.avatarUrl} className="size-10 text-sm" />}
+              title={u.name}
+              subtitle={sectorsText ? `${u.email} · ${sectorsText}` : u.email}
+              badges={
+                <>
+                  <span className={`${badge} ${u.role === 'admin' ? badgeTone.accent : badgeTone.neutral}`}>
+                    {u.role === 'admin' ? 'Administrador' : 'Atendente'}
                   </span>
-                </td>
-                <td className="px-3 py-1 text-[13px]">{u.email}</td>
-                <td className="px-3 py-1 text-[13px] whitespace-nowrap">{u.role === 'admin' ? 'Administrador' : 'Atendente'}</td>
-                <td className="px-3 py-1 text-[13px]">{u.sectorIds.map((id) => sectorName.get(id)).filter(Boolean).join(', ') || '—'}</td>
-                <td className="px-3 py-1">
-                  <span className={`${badge} ${u.active ? badgeTone.success : badgeTone.neutral}`}>{u.active ? 'Ativo' : 'Desativado'}</span>
-                </td>
-                <td className="px-3 py-1 text-right whitespace-nowrap">
-                  <span className="inline-flex gap-2">
-                    <button type="button" onClick={() => open(u)} className={btnSecondary}>
-                      Editar
-                    </button>
-                    {u.id !== me.id && (
-                      <button type="button" onClick={() => toggleActive(u)} disabled={save.isPending} className={u.active ? btnDanger : btnSecondary}>
-                        {u.active ? 'Desativar' : 'Reativar'}
-                      </button>
-                    )}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Section>
+                  {!u.active && <span className={`${badge} ${badgeTone.warning}`}>Inativo</span>}
+                </>
+              }
+              actions={
+                <RowMenu
+                  label={`Opções do atendente ${u.name}`}
+                  items={[
+                    { label: 'Editar', onSelect: () => open(u) },
+                    u.id !== me.id && {
+                      label: u.active ? 'Desativar' : 'Reativar',
+                      onSelect: () => void toggleActive(u),
+                      danger: u.active,
+                      disabled: save.isPending,
+                    },
+                  ]}
+                />
+              }
+            />
+          );
+        })}
+      </ul>
+    </>
   );
 }
 
@@ -159,8 +156,9 @@ function UserForm({
     onSubmit(v);
   }
 
+  // one column: the dialog is narrow
   return (
-    <form onSubmit={submit} className={`${block} mb-5 grid grid-cols-2 gap-4`}>
+    <form onSubmit={submit} className="space-y-4">
       <label className="block">
         <span className={fieldLabel}>Nome</span>
         <input required value={v.name} onChange={(e) => set({ name: e.target.value })} className={field} />
@@ -188,13 +186,13 @@ function UserForm({
           className={field}
         />
       </label>
-      <label className="col-span-2 block">
+      <label className="block">
         <span className={fieldLabel}>Assinatura (opcional)</span>
         <input value={v.signature} maxLength={60} onChange={(e) => set({ signature: e.target.value })} className={field} />
         <span className={hint}>Se ficar vazia, as mensagens saem como “Setor - Nome”.</span>
       </label>
-      <fieldset className="col-span-2">
-        <legend className="mb-2 text-[13px] leading-[18px] font-semibold">Setores</legend>
+      <fieldset>
+        <legend className={fieldLabel}>Setores</legend>
         <div className="flex flex-wrap gap-x-6 gap-y-2.5 text-sm">
           {sectors.map((s) => (
             <label key={s.id} className="flex cursor-pointer items-center gap-2">
@@ -203,20 +201,16 @@ function UserForm({
             </label>
           ))}
         </div>
-        <p className={hint}>
-          Administradores veem todas as conversas. Atendentes veem as dos seus setores e as que são deles.
-        </p>
+        <p className={hint}>Administradores veem todas as conversas. Atendentes veem as dos seus setores e as que são deles.</p>
       </fieldset>
-      <div className="col-span-2">
-        <ErrorText error={error} />
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className={button('ghost')}>
-            Cancelar
-          </button>
-          <button type="submit" disabled={pending} className={btnPrimary}>
-            Salvar
-          </button>
-        </div>
+      <ErrorText error={error} />
+      <div className="flex flex-wrap justify-end gap-2 pt-2">
+        <button type="button" onClick={onCancel} className={btnSecondary}>
+          Cancelar
+        </button>
+        <button type="submit" disabled={pending} className={btnPrimary}>
+          Salvar
+        </button>
       </div>
     </form>
   );

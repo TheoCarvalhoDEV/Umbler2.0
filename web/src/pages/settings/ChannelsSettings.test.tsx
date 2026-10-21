@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ChannelDto, HistoryImportDto } from '@talk/shared';
-import { confirmDialog } from '../../lib/confirm';
+import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { ChannelsSettings, importText } from './ChannelsSettings';
 
-vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
+vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true), promptDialog: vi.fn() }));
 
 const channel = (over: Partial<ChannelDto> = {}): ChannelDto => ({
   id: 'ch1', name: 'WhatsApp escritório', status: 'connected', phone: '5565999990000', historyPeriod: '3m',
@@ -50,6 +50,11 @@ function renderPage() {
 }
 
 const called = (method: string, path: string) => calls.filter((c) => c.method === method && c.path === path);
+// Excluir canal lives in the channel's ⋮ menu
+const clickRemove = async () => {
+  fireEvent.click(await screen.findByRole('button', { name: 'Opções do canal WhatsApp escritório' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Excluir canal' }));
+};
 
 describe('importText', () => {
   it('shows the running count, the result with the oldest date, and a failure', () => {
@@ -117,14 +122,26 @@ describe('Settings › Canais', () => {
     vi.mocked(confirmDialog).mockResolvedValueOnce(false);
     renderPage();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Excluir canal' }));
+    await clickRemove();
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(vi.mocked(confirmDialog).mock.calls[0]![0]).toMatchObject({ title: 'Excluir o canal “WhatsApp escritório”?', confirmLabel: 'Excluir canal' });
     expect(called('DELETE', '/api/channels/ch1')).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Excluir canal' }));
+    await clickRemove();
     await waitFor(() => expect(called('DELETE', '/api/channels/ch1')).toHaveLength(1));
     expect(await screen.findByText('Nenhum canal cadastrado.')).toBeTruthy();
+  });
+
+  it('Novo canal asks the name in a dialog and creates the channel', async () => {
+    routes['GET /api/channels'] = { body: [] };
+    routes['POST /api/channels'] = { body: channel({ status: 'disconnected' }) };
+    vi.mocked(promptDialog).mockResolvedValueOnce('WhatsApp escritório');
+    renderPage();
+    await screen.findByText('Nenhum canal cadastrado.');
+    fireEvent.click(screen.getByRole('button', { name: 'Novo canal' }));
+    await waitFor(() => expect(called('POST', '/api/channels')).toHaveLength(1));
+    expect(vi.mocked(promptDialog).mock.calls[0]![0]).toMatchObject({ title: 'Novo canal', maxLength: 60 });
+    expect(called('POST', '/api/channels')[0]!.body).toEqual({ name: 'WhatsApp escritório' });
   });
 
   it('shows the 409 when an import is already running', async () => {

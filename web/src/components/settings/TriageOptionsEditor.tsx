@@ -2,6 +2,9 @@ import { PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import type { SectorDto, TriageMenuDto } from '@talk/shared';
 import { button, field as cell, fieldSelect, iconButtonGhost } from '../ui';
 
+// Nº | texto | setor | remover. Narrow: the sector gets its own line (col-start-2 row-start-2 on the select).
+const rowGrid = 'grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[4.5rem_minmax(0,1fr)_13rem_2.5rem]';
+
 export type TriageOptionInput = TriageMenuDto['options'][number];
 
 export function TriageOptionsEditor({
@@ -33,68 +36,59 @@ export function TriageOptionsEditor({
       {options.length === 0 ? (
         <p className="text-sm text-muted">Nenhuma opção. Clique em “Adicionar opção”.</p>
       ) : (
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="text-xs leading-4 text-muted">
-              <th className="w-20 pr-2 pb-1.5 font-semibold">Nº</th>
-              <th className="pr-2 pb-1.5 font-semibold">Texto da opção</th>
-              <th className="w-52 pr-2 pb-1.5 font-semibold">Setor</th>
-              <th className="w-10" />
-            </tr>
-          </thead>
-          <tbody>
+        <div>
+          {/* wide: Nº, texto, setor and remover in one line; narrow: the sector drops under the text */}
+          <div aria-hidden className={`${rowGrid} mb-1.5 hidden text-xs leading-4 font-semibold text-muted sm:grid`}>
+            <span>Nº</span>
+            <span>Texto da opção</span>
+            <span>Setor</span>
+            <span />
+          </div>
+          <ul className="space-y-2">
             {options.map((o, i) => (
-              <tr key={i}>
-                <td className="py-1 pr-2">
-                  <input
-                    aria-label={`Número da opção ${i + 1}`}
-                    value={o.key}
-                    maxLength={3}
-                    onChange={(e) => update(i, { key: e.target.value.trim() })}
-                    className={`${cell} text-center tabular-nums`}
-                  />
-                </td>
-                <td className="py-1 pr-2">
-                  <input
-                    aria-label={`Texto da opção ${i + 1}`}
-                    value={o.label}
-                    maxLength={60}
-                    onChange={(e) => update(i, { label: e.target.value })}
-                    className={cell}
-                  />
-                </td>
-                <td className="py-1 pr-2">
-                  <select
-                    aria-label={`Setor da opção ${i + 1}`}
-                    value={o.sectorId}
-                    onChange={(e) => pickSector(i, e.target.value)}
-                    className={fieldSelect}
-                  >
-                    <option value="" disabled>
-                      Escolha o setor…
+              <li key={i} className={rowGrid}>
+                <input
+                  aria-label={`Número da opção ${i + 1}`}
+                  value={o.key}
+                  maxLength={3}
+                  onChange={(e) => update(i, { key: e.target.value.trim() })}
+                  className={`${cell} text-center tabular-nums`}
+                />
+                <input
+                  aria-label={`Texto da opção ${i + 1}`}
+                  value={o.label}
+                  maxLength={60}
+                  onChange={(e) => update(i, { label: e.target.value })}
+                  className={cell}
+                />
+                <select
+                  aria-label={`Setor da opção ${i + 1}`}
+                  value={o.sectorId}
+                  onChange={(e) => pickSector(i, e.target.value)}
+                  className={`${fieldSelect} col-span-2 col-start-2 row-start-2 sm:col-span-1 sm:col-start-auto sm:row-start-auto`}
+                >
+                  <option value="" disabled>
+                    Escolha o setor…
+                  </option>
+                  {sectors.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
                     </option>
-                    {sectors.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="py-1">
-                  <button
-                    type="button"
-                    aria-label={`Remover opção ${i + 1}`}
-                    title="Remover"
-                    onClick={() => onChange(options.filter((_, j) => j !== i))}
-                    className={iconButtonGhost}
-                  >
-                    <TrashIcon size={18} />
-                  </button>
-                </td>
-              </tr>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  aria-label={`Remover opção ${i + 1}`}
+                  title="Remover"
+                  onClick={() => onChange(options.filter((_, j) => j !== i))}
+                  className={`${iconButtonGhost} col-start-3 row-start-1 sm:col-start-auto sm:row-start-auto`}
+                >
+                  <TrashIcon size={18} />
+                </button>
+              </li>
             ))}
-          </tbody>
-        </table>
+          </ul>
+        </div>
       )}
       <button type="button" onClick={add} className={`${button('secondary')} mt-3`}>
         <PlusIcon size={16} weight="bold" aria-hidden />

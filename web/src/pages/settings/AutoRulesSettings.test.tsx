@@ -5,18 +5,23 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DEFAULT_AUTO_RULES } from '@talk/shared';
 import { AutoRulesSettings } from './AutoRulesSettings';
 
+let saved: unknown;
 const calls: Array<{ method: string; path: string; body: unknown }> = [];
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 
 beforeEach(() => {
   calls.length = 0;
+  saved = DEFAULT_AUTO_RULES;
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname;
     const method = init?.method ?? 'GET';
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
     calls.push({ method, path, body });
-    if (path === '/api/settings/auto-rules' && method === 'GET') return json(DEFAULT_AUTO_RULES);
-    if (path === '/api/settings/auto-rules' && method === 'PUT') return json(body);
+    if (path === '/api/settings/auto-rules' && method === 'GET') return json(saved);
+    if (path === '/api/settings/auto-rules' && method === 'PUT') {
+      saved = body; // like the server: the next GET answers with what was saved
+      return json(body);
+    }
     return json({ error: 'inesperado' }, 500);
   }));
 });
@@ -34,12 +39,15 @@ it('loads both rules off and saves both with their values (spec 2026-10-20 agend
     </QueryClientProvider>,
   );
 
-  const back = (await screen.findByLabelText('Devolver à fila conversas paradas')) as HTMLInputElement;
-  const close = screen.getByLabelText('Finalizar por inatividade') as HTMLInputElement;
+  await screen.findByRole('heading', { level: 1, name: 'Regras automáticas' });
+  const back = screen.getByRole('switch', { name: 'Devolver à fila conversas paradas' });
+  const close = screen.getByRole('switch', { name: 'Finalizar por inatividade' });
   const minutes = screen.getByLabelText('Minutos sem resposta') as HTMLInputElement;
   const hours = screen.getByLabelText('Horas sem mensagens') as HTMLInputElement;
-  const closing = screen.getByLabelText('Enviar a mensagem de encerramento') as HTMLInputElement;
-  expect([back.checked, close.checked, minutes.value, hours.value, closing.checked]).toEqual([false, false, '30', '24', true]);
+  const closing = screen.getByRole('switch', { name: 'Enviar a mensagem de encerramento' });
+  const on = (el: HTMLElement) => el.getAttribute('aria-checked') === 'true';
+  expect([on(back), on(close), minutes.value, hours.value, on(closing)]).toEqual([false, false, '30', '24', true]);
+  expect(screen.queryByRole('button', { name: 'Salvar' })).toBeNull();
   expect([minutes.min, minutes.max, hours.min, hours.max]).toEqual(['5', '1440', '1', '720']);
 
   fireEvent.click(back);
@@ -49,7 +57,7 @@ it('loads both rules off and saves both with their values (spec 2026-10-20 agend
   fireEvent.click(closing);
   fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
 
-  await screen.findByText('Regras salvas.');
+  await screen.findByText('Alterações salvas.');
   expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({
     returnToQueue: { enabled: true, minutes: 45 },
     closeInactive: { enabled: true, hours: 48, sendClosingMessage: false },

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { PlusIcon } from '@phosphor-icons/react';
+import { PlusIcon, TagIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { tagColorHex, type TagDto } from '@talk/shared';
-import { TagForm, tagChip, type TagInput } from '../../components/settings/TagForm';
-import { ErrorText, Loading, Section, btnDanger, btnPrimary, btnSecondary, listRow, send, useSend } from '../../components/settings/common';
+import { Modal } from '../../components/conversation/ChatDialogs';
+import { TagForm, type TagInput } from '../../components/settings/TagForm';
+import { EmptyState, ErrorText, ListRow, Loading, PageHeader, RowMenu, btnPrimary, send, useSend } from '../../components/settings/common';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 
@@ -36,47 +37,57 @@ export function TagsSettings() {
   }
 
   return (
-    <Section
-      title="Etiquetas"
-      action={
-        <button type="button" onClick={() => open('new')} className={btnPrimary}>
-          <PlusIcon size={16} weight="bold" aria-hidden />
-          Nova etiqueta
-        </button>
-      }
-    >
+    <>
+      <PageHeader
+        title="Etiquetas"
+        description="Marque os contatos com etiquetas coloridas para organizá-los."
+        action={
+          <button type="button" onClick={() => open('new')} className={btnPrimary}>
+            <PlusIcon size={16} weight="bold" aria-hidden />
+            Nova etiqueta
+          </button>
+        }
+      />
       {target && (
-        <TagForm
-          key={target === 'new' ? 'new' : target.id}
-          initial={target === 'new' ? undefined : target}
-          pending={save.isPending}
-          error={save.error?.message ?? null}
-          onSubmit={submit}
-          onCancel={() => setEditing(null)}
-        />
+        <Modal title={target === 'new' ? 'Nova etiqueta' : 'Editar etiqueta'} onCancel={() => setEditing(null)}>
+          <TagForm
+            key={target === 'new' ? 'new' : target.id}
+            initial={target === 'new' ? undefined : target}
+            pending={save.isPending}
+            error={save.error?.message ?? null}
+            onSubmit={submit}
+            onCancel={() => setEditing(null)}
+          />
+        </Modal>
       )}
       {!target && <ErrorText error={save.error} />}
-      {sorted.length === 0 && <p className="text-sm text-muted">Nenhuma etiqueta.</p>}
-      <ul>
-        {sorted.map((t) => (
-          <li key={t.id} className={listRow}>
-            <span className="min-w-0 flex-1">
-              <span className={tagChip}>
-                <span aria-hidden className="size-[7px] shrink-0 rounded-full" style={{ backgroundColor: tagColorHex(t.color) }} />
-                {t.emoji ? `${t.emoji} ${t.name}` : t.name}
-              </span>
-            </span>
-            <span className="flex items-center gap-2">
-              <button type="button" onClick={() => open(t)} className={btnSecondary}>
-                Editar
-              </button>
-              <button type="button" onClick={() => remove(t)} className={btnDanger}>
-                Excluir
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Section>
+      {sorted.length === 0 ? (
+        <EmptyState icon={<TagIcon size={28} />} title="Nenhuma etiqueta ainda" hint="Crie a primeira em “Nova etiqueta”." />
+      ) : (
+        <ul className="mt-5">
+          {sorted.map((t) => (
+            <ListRow
+              key={t.id}
+              // the chip is the tag's own color, with its emoji when it has one
+              leading={
+                <span aria-hidden className="grid size-full place-items-center text-lg" style={{ backgroundColor: tagColorHex(t.color) }}>
+                  {t.emoji}
+                </span>
+              }
+              title={t.name}
+              actions={
+                <RowMenu
+                  label={`Opções da etiqueta ${t.name}`}
+                  items={[
+                    { label: 'Editar', onSelect: () => open(t) },
+                    { label: 'Excluir', onSelect: () => remove(t), danger: true },
+                  ]}
+                />
+              }
+            />
+          ))}
+        </ul>
+      )}
+    </>
   );
 }

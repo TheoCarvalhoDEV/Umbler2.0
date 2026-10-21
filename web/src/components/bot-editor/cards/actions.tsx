@@ -395,7 +395,7 @@ export function CloseChatForm({ config, onChange, catalog }: FormProps<CloseChat
       {config.sendClosingMessage && (
         <VarText
           label="Mensagem de finalização"
-          hint="Em branco, usa a mensagem de Configurações › Conversas."
+          hint="Em branco, usa a mensagem de Ajustes › Conversas."
           value={config.closingText ?? ''}
           onChange={(closingText) => onChange({ ...config, closingText })}
           catalog={catalog}
