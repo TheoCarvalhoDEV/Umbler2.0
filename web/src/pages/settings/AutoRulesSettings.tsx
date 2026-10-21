@@ -1,13 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CLOSE_INACTIVE_HOURS, RETURN_TO_QUEUE_MINUTES, type AutoRulesDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
-import { checkbox, field, fieldLabel } from '../../components/ui';
-import { ErrorText, Loading, Section, block, btnPrimary, hint, okText, useSend } from '../../components/settings/common';
-
-// under a checkbox's text: the 18px box plus the 12px gap. Outside the <label>, so the label stays the rule's name.
-const checkHint = `${hint} pl-[30px]`;
-const numberField = `${field} max-w-40`;
+import { field } from '../../components/ui';
+import { Loading, PageHeader, SaveBar, SettingRow, SettingsSection, Switch, useSend } from '../../components/settings/common';
 
 export function AutoRulesSettings() {
   const rules = useQuery({ queryKey: qk.autoRules, queryFn: api.settings.autoRules.get });
@@ -18,7 +14,10 @@ export function AutoRulesSettings() {
 /** Spec 2026-10-20 agendamentos §4: both rules, off until an admin turns them on; the server checks the limits too. */
 function AutoRulesForm({ rules }: { rules: AutoRulesDto }) {
   const [form, setForm] = useState(rules);
+  const minutesId = useId();
+  const hoursId = useId();
   const save = useSend(qk.autoRules);
+  const dirty = JSON.stringify(form) !== JSON.stringify(rules);
   const setReturn = (patch: Partial<AutoRulesDto['returnToQueue']>) =>
     setForm((f) => ({ ...f, returnToQueue: { ...f.returnToQueue, ...patch } }));
   const setClose = (patch: Partial<AutoRulesDto['closeInactive']>) =>
@@ -29,90 +28,80 @@ function AutoRulesForm({ rules }: { rules: AutoRulesDto }) {
     save.mutate(() => api.settings.autoRules.put(form));
   }
 
+  function discard() {
+    setForm(rules);
+    save.reset();
+  }
+
   return (
-    <Section title="Regras automáticas">
-      <form onSubmit={submit} className="space-y-5">
-        <fieldset className={`${block} space-y-4`}>
-          <div>
-            <label className="flex cursor-pointer items-center gap-3 text-sm font-bold">
-              <input
-                type="checkbox"
-                checked={form.returnToQueue.enabled}
-                onChange={(e) => setReturn({ enabled: e.target.checked })}
-                className={checkbox}
-              />
-              Devolver à fila conversas paradas
-            </label>
-            <p className={checkHint}>
-              Quando o contato espera resposta há mais tempo que o limite, a conversa perde o atendente e volta para “Sem
-              atendente” no mesmo setor. Quem assume a conversa ganha o prazo inteiro. Não vale para conversas privadas, em
-              triagem ou com chatbot em execução.
-            </p>
-          </div>
-          <label className="block">
-            <span className={fieldLabel}>Minutos sem resposta</span>
-            <input
-              type="number"
-              required
-              step={1}
-              min={RETURN_TO_QUEUE_MINUTES.min}
-              max={RETURN_TO_QUEUE_MINUTES.max}
-              value={form.returnToQueue.minutes}
-              onChange={(e) => setReturn({ minutes: Number(e.target.value) })}
-              className={numberField}
-            />
-          </label>
-        </fieldset>
-
-        <fieldset className={`${block} space-y-4`}>
-          <div>
-            <label className="flex cursor-pointer items-center gap-3 text-sm font-bold">
-              <input
-                type="checkbox"
-                checked={form.closeInactive.enabled}
-                onChange={(e) => setClose({ enabled: e.target.checked })}
-                className={checkbox}
-              />
-              Finalizar por inatividade
-            </label>
-            <p className={checkHint}>
-              Quando o escritório falou por último e ninguém escreveu dentro do limite, a conversa é finalizada. Não vale para
-              conversas em triagem, com chatbot em execução ou com mensagem agendada pendente.
-            </p>
-          </div>
-          <label className="block">
-            <span className={fieldLabel}>Horas sem mensagens</span>
-            <input
-              type="number"
-              required
-              step={1}
-              min={CLOSE_INACTIVE_HOURS.min}
-              max={CLOSE_INACTIVE_HOURS.max}
-              value={form.closeInactive.hours}
-              onChange={(e) => setClose({ hours: Number(e.target.value) })}
-              className={numberField}
-            />
-          </label>
-          <div>
-            <label className="flex cursor-pointer items-center gap-3 text-sm font-semibold">
-              <input
-                type="checkbox"
+    <>
+      <PageHeader title="Regras automáticas" description="O sistema mexe nas conversas sozinho quando ninguém responde. As duas regras começam desligadas." />
+      <form onSubmit={submit}>
+        <SettingsSection title="Fila">
+          <SettingRow
+            label="Devolver à fila conversas paradas"
+            description="Quando o contato espera resposta há mais tempo que o limite, a conversa perde o atendente e volta para “Sem atendente” no mesmo setor. Quem assume a conversa ganha o prazo inteiro. Não vale para conversas privadas, em triagem ou com chatbot em execução."
+            control={<Switch label="Devolver à fila conversas paradas" checked={form.returnToQueue.enabled} onChange={(enabled) => setReturn({ enabled })} />}
+          />
+          <SettingRow
+            label="Minutos sem resposta"
+            htmlFor={minutesId}
+            control={
+              <div className="w-40 max-w-full">
+                <input
+                  id={minutesId}
+                  type="number"
+                  required
+                  step={1}
+                  min={RETURN_TO_QUEUE_MINUTES.min}
+                  max={RETURN_TO_QUEUE_MINUTES.max}
+                  value={form.returnToQueue.minutes}
+                  onChange={(e) => setReturn({ minutes: Number(e.target.value) })}
+                  className={field}
+                />
+              </div>
+            }
+          />
+        </SettingsSection>
+        <SettingsSection title="Encerramento">
+          <SettingRow
+            label="Finalizar por inatividade"
+            description="Quando o escritório falou por último e ninguém escreveu dentro do limite, a conversa é finalizada. Não vale para conversas em triagem, com chatbot em execução ou com mensagem agendada pendente."
+            control={<Switch label="Finalizar por inatividade" checked={form.closeInactive.enabled} onChange={(enabled) => setClose({ enabled })} />}
+          />
+          <SettingRow
+            label="Horas sem mensagens"
+            htmlFor={hoursId}
+            control={
+              <div className="w-40 max-w-full">
+                <input
+                  id={hoursId}
+                  type="number"
+                  required
+                  step={1}
+                  min={CLOSE_INACTIVE_HOURS.min}
+                  max={CLOSE_INACTIVE_HOURS.max}
+                  value={form.closeInactive.hours}
+                  onChange={(e) => setClose({ hours: Number(e.target.value) })}
+                  className={field}
+                />
+              </div>
+            }
+          />
+          <SettingRow
+            label="Enviar a mensagem de encerramento"
+            description="Usa a mensagem de Ajustes → Conversas."
+            control={
+              <Switch
+                label="Enviar a mensagem de encerramento"
                 checked={form.closeInactive.sendClosingMessage}
-                onChange={(e) => setClose({ sendClosingMessage: e.target.checked })}
-                className={checkbox}
+                onChange={(sendClosingMessage) => setClose({ sendClosingMessage })}
               />
-              Enviar a mensagem de encerramento
-            </label>
-            <p className={checkHint}>Usa a mensagem de Configurações → Conversas.</p>
-          </div>
-        </fieldset>
-
-        <ErrorText error={save.error} />
-        {save.isSuccess && <p className={okText}>Regras salvas.</p>}
-        <button type="submit" disabled={save.isPending} className={btnPrimary}>
-          Salvar
-        </button>
+            }
+          />
+        </SettingsSection>
+        <SaveBar dirty={dirty} saving={save.isPending} onDiscard={discard} error={save.error} saved={save.isSuccess} />
       </form>
-    </Section>
+    </>
   );
 }

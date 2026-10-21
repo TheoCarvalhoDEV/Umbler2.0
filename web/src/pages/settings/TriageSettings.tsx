@@ -1,10 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { SectorDto, SettingsDto, TriageMenuDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { TriageOptionsEditor } from '../../components/settings/TriageOptionsEditor';
-import { checkbox, fieldArea, fieldLabel } from '../../components/ui';
-import { ErrorText, Loading, Section, block, btnPrimary, hint, okText, send, useSend } from '../../components/settings/common';
+import { fieldArea } from '../../components/ui';
+import { Loading, PageHeader, SaveBar, SentBubble, SettingRow, SettingsSection, Switch, send, useSend } from '../../components/settings/common';
 
 export function TriageSettings() {
   const settings = useQuery({ queryKey: qk.settings, queryFn: api.settings.get });
@@ -23,9 +23,14 @@ function problem(menu: TriageMenuDto): string | null {
 
 function TriageForm({ settings, sectors }: { settings: SettingsDto; sectors: SectorDto[] }) {
   const [menu, setMenu] = useState<TriageMenuDto>(settings.triageMenu);
+  const welcomeId = useId();
+  const invalidId = useId();
   const save = useSend(qk.settings);
   const issue = problem(menu);
   const set = (patch: Partial<TriageMenuDto>) => setMenu((cur) => ({ ...cur, ...patch }));
+  // what is sent: the texts trimmed, as the server stores them. Compared with the saved menu, it tells whether there is anything to save.
+  const triageMenu = { ...menu, welcomeText: menu.welcomeText.trim(), invalidText: menu.invalidText.trim(), options: menu.options.map((o) => ({ ...o, label: o.label.trim() })) };
+  const dirty = JSON.stringify(triageMenu) !== JSON.stringify(settings.triageMenu);
   // same layout Task 11 sends to the contact
   const preview = [menu.welcomeText.trim(), menu.options.map((o) => `${o.key} - ${o.label}`).join('\n')]
     .filter(Boolean)
@@ -34,46 +39,59 @@ function TriageForm({ settings, sectors }: { settings: SettingsDto; sectors: Sec
   function submit(e: FormEvent) {
     e.preventDefault();
     if (issue) return;
-    const triageMenu = { ...menu, options: menu.options.map((o) => ({ ...o, label: o.label.trim() })) };
     save.mutate(() => send('/api/settings', 'PUT', { ...settings, triageMenu }));
   }
 
+  function discard() {
+    setMenu(settings.triageMenu);
+    save.reset();
+  }
+
   return (
-    <Section title="Triagem">
-      <form onSubmit={submit} className="space-y-5">
-        <label className="flex cursor-pointer items-center gap-3 text-sm font-bold">
-          <input type="checkbox" checked={menu.enabled} onChange={(e) => set({ enabled: e.target.checked })} className={checkbox} />
-          Enviar menu de triagem quando um contato começa uma conversa
-        </label>
-        <label className="block">
-          <span className={fieldLabel}>Mensagem de boas-vindas</span>
-          <textarea rows={3} value={menu.welcomeText} onChange={(e) => set({ welcomeText: e.target.value })} className={fieldArea} />
-        </label>
-        <div>
-          <span className="block text-[13px] leading-[18px] font-semibold">Opções</span>
-          <p className="mb-2 text-[13px] leading-[18px] text-muted">O contato responde com o número ou com o nome do setor.</p>
+    <>
+      <PageHeader title="Triagem" description="Um menu automático para o contato escolher o setor assim que começa uma conversa." />
+      <form onSubmit={submit}>
+        <SettingsSection title="Menu de entrada">
+          <SettingRow
+            label="Enviar menu de triagem"
+            description="Vale quando um contato começa uma conversa."
+            control={
+              <Switch
+                label="Enviar menu de triagem quando um contato começa uma conversa"
+                checked={menu.enabled}
+                onChange={(enabled) => set({ enabled })}
+              />
+            }
+          />
+          <SettingRow
+            wide
+            label="Mensagem de boas-vindas"
+            htmlFor={welcomeId}
+            description="Vai antes da lista de opções."
+            control={<textarea id={welcomeId} rows={3} value={menu.welcomeText} onChange={(e) => set({ welcomeText: e.target.value })} className={fieldArea} />}
+          />
+        </SettingsSection>
+        <SettingsSection title="Opções" description="O contato responde com o número ou com o nome do setor.">
           <TriageOptionsEditor options={menu.options} sectors={sectors} onChange={(options) => set({ options })} />
-        </div>
-        <label className="block">
-          <span className={fieldLabel}>Mensagem para resposta inválida</span>
-          <textarea rows={2} value={menu.invalidText} onChange={(e) => set({ invalidText: e.target.value })} className={fieldArea} />
-          <span className={hint}>
-            Enviada uma única vez. Depois disso, a conversa fica no setor padrão.
-          </span>
-        </label>
+        </SettingsSection>
+        <SettingsSection title="Resposta inválida">
+          <SettingRow
+            wide
+            label="Mensagem para resposta inválida"
+            htmlFor={invalidId}
+            description="Enviada uma única vez. Depois disso, a conversa fica no setor padrão."
+            control={<textarea id={invalidId} rows={2} value={menu.invalidText} onChange={(e) => set({ invalidText: e.target.value })} className={fieldArea} />}
+          />
+        </SettingsSection>
         {preview && (
-          <div>
-            <span className={fieldLabel}>Como o contato recebe</span>
-            <pre className={`${block} font-sans text-sm whitespace-pre-wrap`}>{preview}</pre>
-          </div>
+          <SettingsSection title="Como o contato recebe">
+            <SentBubble>
+              <p className="break-words whitespace-pre-wrap">{preview}</p>
+            </SentBubble>
+          </SettingsSection>
         )}
-        {issue && <p className="text-[13px] font-semibold text-danger">{issue}</p>}
-        <ErrorText error={save.error} />
-        {save.isSuccess && <p className={okText}>Triagem salva.</p>}
-        <button type="submit" disabled={!!issue || save.isPending} className={btnPrimary}>
-          Salvar
-        </button>
+        <SaveBar dirty={dirty} saving={save.isPending} onDiscard={discard} error={issue ? new Error(issue) : save.error} saved={save.isSuccess} disabled={!!issue} />
       </form>
-    </Section>
+    </>
   );
 }

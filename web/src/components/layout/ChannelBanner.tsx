@@ -34,7 +34,7 @@ export function ChannelBanner() {
           <span>
             Canal {c.name} desconectado: leia o QR code em{' '}
             <Link to="/configuracoes/canais" className="underline underline-offset-2">
-              Configurações › Canais
+              Ajustes › Canais
             </Link>
           </span>
         </p>

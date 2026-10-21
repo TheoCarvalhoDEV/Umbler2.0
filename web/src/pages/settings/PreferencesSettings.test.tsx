@@ -46,14 +46,14 @@ it('saves each change at once, only the field that changed (spec 2026-10-19 §6)
     </QueryClientProvider>,
   );
 
-  const enter = screen.getByRole('checkbox', { name: /Enter envia a mensagem/ }) as HTMLInputElement;
-  expect(enter.checked).toBe(true);
+  const enter = screen.getByRole('switch', { name: 'Enter envia a mensagem' });
+  expect(enter.getAttribute('aria-checked')).toBe('true');
   expect((screen.getByRole('radio', { name: 'Só quando a aba está em segundo plano' }) as HTMLInputElement).checked).toBe(true);
 
   fireEvent.click(enter);
-  await waitFor(() => expect(enter.checked).toBe(false));
+  await waitFor(() => expect(enter.getAttribute('aria-checked')).toBe('false'));
   fireEvent.click(screen.getByRole('radio', { name: 'Nunca' }));
-  fireEvent.click(screen.getByRole('checkbox', { name: /Sons/ }));
+  fireEvent.click(screen.getByRole('switch', { name: 'Sons' }));
 
   await waitFor(() =>
     expect(calls.map((c) => c.body)).toEqual([{ enterSends: false }, { browserNotifications: 'never' }, { sounds: false }]),

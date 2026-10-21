@@ -1,52 +1,36 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CameraIcon } from '@phosphor-icons/react';
 import type { Me } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { Avatar } from '../../components/Avatar';
-import { blockTitle, field, fieldLabel } from '../../components/ui';
-import { ErrorText, Section, block, btnPrimary, btnSecondary, hint, okText, send, useSend } from '../../components/settings/common';
+import { badge, badgeTone, button, fieldLabel } from '../../components/ui';
+import { ErrorText, PageHeader, SaveBar, SentBubble, SettingRow, SettingsSection, field, hint, send, useSend } from '../../components/settings/common';
 
 export function ProfileSettings() {
   const me = useCurrentUser();
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
-  const sectorNames =
-    (sectors.data ?? [])
-      .filter((s) => me.sectorIds.includes(s.id))
-      .map((s) => s.name)
-      .join(', ') || '—';
+  const sectorNames = (sectors.data ?? []).filter((s) => me.sectorIds.includes(s.id)).map((s) => s.name);
 
   return (
-    <Section title="Perfil">
-      <PhotoEditor me={me} />
-      <dl className={`${block} mb-5 grid grid-cols-[10rem_1fr] gap-x-4 gap-y-2.5 text-sm`}>
-        <dt className="text-muted">E-mail</dt>
-        <dd>{me.email}</dd>
-        <dt className="text-muted">Papel</dt>
-        <dd>{me.role === 'admin' ? 'Administrador' : 'Atendente'}</dd>
-        <dt className="text-muted">Setores</dt>
-        <dd>{sectorNames}</dd>
-        {me.role !== 'admin' && (
-          <>
-            <dt className="text-muted">Nome</dt>
-            <dd>{me.name}</dd>
-            <dt className="text-muted">Assinatura</dt>
-            <dd>{me.signature || `Setor da conversa - ${me.name}`}</dd>
-          </>
-        )}
-      </dl>
+    <>
+      <PageHeader title="Perfil" description="Sua foto, seu nome e como você assina as mensagens." />
+      <Identity me={me} sectorNames={sectorNames} />
       {me.role === 'admin' ? (
         <ProfileForm me={me} />
       ) : (
         // ponytail: no self-service route in the REST contract; agents ask an admin (known limitation)
-        <p className="text-sm text-muted">Para alterar nome, assinatura ou senha, peça a um administrador.</p>
+        <SettingsSection title="Seus dados" description="Para alterar nome, assinatura ou senha, peça a um administrador.">
+          <SignaturePreview label={me.signature || `Setor da conversa - ${me.name}`} />
+        </SettingsSection>
       )}
-    </Section>
+    </>
   );
 }
 
-/** Own picture: upload (JPEG/PNG/WebP up to 2 MB, checked by the server) or remove. */
-function PhotoEditor({ me }: { me: Me }) {
+/** Picture (upload JPEG/PNG/WebP up to 2 MB, checked by the server, or remove), name, e-mail, role and sectors. */
+function Identity({ me, sectorNames }: { me: Me; sectorNames: string[] }) {
   const qc = useQueryClient();
   const save = useMutation({
     mutationFn: (file: File | null) => (file ? api.auth.setAvatar(file) : api.auth.removeAvatar()),
@@ -59,28 +43,66 @@ function PhotoEditor({ me }: { me: Me }) {
   });
 
   return (
-    <div className="mb-5 flex flex-wrap items-center gap-3">
-      <Avatar name={me.name} src={me.avatarUrl} className="size-16 text-xl" />
-      <label className={`${btnSecondary} cursor-pointer has-[:disabled]:opacity-50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary`}>
-        Trocar foto
-        <input
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          disabled={save.isPending}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = ''; // picking the same file again still fires change
-            if (file) save.mutate(file);
-          }}
-          className="sr-only"
-        />
-      </label>
-      {me.avatarUrl && (
-        <button type="button" onClick={() => save.mutate(null)} disabled={save.isPending} className={btnSecondary}>
-          Remover foto
-        </button>
-      )}
-      <ErrorText error={save.error} />
+    <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-3">
+      <div className="flex flex-col items-center gap-1.5">
+        <div className="relative">
+          <Avatar name={me.name} src={me.avatarUrl} className="size-20 text-2xl" />
+          <label
+            title="Trocar foto"
+            className="absolute -right-1 -bottom-1 grid size-8 cursor-pointer place-items-center rounded-full bg-primary text-on-primary ring-[3px] ring-surface transition-colors hover:bg-primary-hover has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary"
+          >
+            <CameraIcon size={18} aria-hidden />
+            <input
+              type="file"
+              aria-label="Trocar foto"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={save.isPending}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = ''; // picking the same file again still fires change
+                if (file) save.mutate(file);
+              }}
+              className="sr-only"
+            />
+          </label>
+        </div>
+        {me.avatarUrl && (
+          <button
+            type="button"
+            onClick={() => save.mutate(null)}
+            disabled={save.isPending}
+            className="rounded-full px-2 text-xs font-bold text-danger hover:underline disabled:opacity-50"
+          >
+            Remover foto
+          </button>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-lg font-bold">{me.name}</p>
+        <p className="truncate text-sm text-muted">{me.email}</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <span className={`${badge} ${badgeTone.accent}`}>{me.role === 'admin' ? 'Administrador' : 'Atendente'}</span>
+          {sectorNames.map((name) => (
+            <span key={name} className={`${badge} ${badgeTone.neutral}`}>
+              {name}
+            </span>
+          ))}
+        </div>
+      </div>
+      <ErrorText error={save.error} className="basis-full" />
+    </div>
+  );
+}
+
+/** The signature as WhatsApp shows it: "*label:*" (bold) on top of the message, in a sent bubble. */
+function SignaturePreview({ label }: { label: string }) {
+  return (
+    <div className="mt-4">
+      <p className={fieldLabel}>Como o cliente vê</p>
+      <SentBubble>
+        <p className="font-bold break-words">{label}:</p>
+        <p>Olá! Tudo bem?</p>
+      </SentBubble>
     </div>
   );
 }
@@ -89,12 +111,26 @@ function ProfileForm({ me }: { me: Me }) {
   const save = useSend(qk.users, qk.me);
   const [name, setName] = useState(me.name);
   const [signature, setSignature] = useState(me.signature ?? '');
+  const [changingPassword, setChangingPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const mismatch = password !== confirm;
+  const dirty = name.trim() !== me.name || signature.trim() !== (me.signature ?? '') || !!password || !!confirm;
 
-  function submit(e: FormEvent) {
-    e.preventDefault();
+  function closePassword() {
+    setChangingPassword(false);
+    setPassword('');
+    setConfirm('');
+  }
+
+  function discard() {
+    setName(me.name);
+    setSignature(me.signature ?? '');
+    closePassword();
+    save.reset();
+  }
+
+  function submit() {
     if (mismatch || !name.trim()) return;
     const body = { name: name.trim(), signature: signature.trim() || null, ...(password ? { password } : {}) };
     save.mutate(() => send(`/api/users/${me.id}`, 'PATCH', body), {
@@ -106,38 +142,66 @@ function ProfileForm({ me }: { me: Me }) {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-5">
-      <label className="block">
-        <span className={fieldLabel}>Nome</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} className={field} />
-      </label>
-      <label className="block">
-        <span className={fieldLabel}>Assinatura</span>
-        <input value={signature} maxLength={60} onChange={(e) => setSignature(e.target.value)} className={field} />
-        <span className={hint}>
-          Prévia no WhatsApp: <b className="font-bold text-fg-2">*{signature.trim() || `Setor da conversa - ${name.trim()}`}:*</b>. Se ficar vazia, usa “Setor - Nome”.
-        </span>
-      </label>
-      <fieldset className={block}>
-        <legend className={`${blockTitle} float-left mb-4 w-full`}>Trocar senha (opcional)</legend>
-        <div className="clear-both space-y-4">
-          <label className="block">
-            <span className={fieldLabel}>Nova senha</span>
-            <input type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit();
+      }}
+    >
+      <SettingsSection title="Seus dados">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block max-w-[360px]">
+            <span className={fieldLabel}>Nome</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} className={field} />
           </label>
-          <label className="block">
-            <span className={fieldLabel}>Repita a nova senha</span>
-            <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={field} />
-          </label>
-          {password && mismatch && <p className="text-[13px] font-semibold text-danger">As senhas não conferem.</p>}
-          <p className="text-[13px] leading-[18px] text-muted">Ao trocar a senha, você sai de todos os aparelhos e entra de novo.</p>
+          <div className="max-w-[360px]">
+            <label className="block">
+              <span className={fieldLabel}>Assinatura</span>
+              <input value={signature} maxLength={60} onChange={(e) => setSignature(e.target.value)} className={field} />
+            </label>
+            <p className={hint}>Se ficar vazia, usa “Setor - Nome”.</p>
+          </div>
         </div>
-      </fieldset>
-      <ErrorText error={save.error} />
-      {save.isSuccess && !password && <p className={okText}>Perfil salvo.</p>}
-      <button type="submit" disabled={save.isPending || mismatch || !name.trim()} className={btnPrimary}>
-        Salvar
-      </button>
+        <SignaturePreview label={signature.trim() || `Setor da conversa - ${name.trim()}`} />
+      </SettingsSection>
+      <SettingsSection title="Senha">
+        <SettingRow
+          label="Senha"
+          description="Pelo menos 8 caracteres."
+          control={
+            <button
+              type="button"
+              aria-expanded={changingPassword}
+              onClick={changingPassword ? closePassword : () => setChangingPassword(true)}
+              className={button(changingPassword ? 'ghost' : 'secondary')}
+            >
+              {changingPassword ? 'Cancelar' : 'Trocar senha'}
+            </button>
+          }
+        />
+        {changingPassword && (
+          <div className="grid gap-4 pt-2 sm:grid-cols-2">
+            <label className="block max-w-[360px]">
+              <span className={fieldLabel}>Nova senha</span>
+              <input type="password" autoComplete="new-password" minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className={field} />
+            </label>
+            <label className="block max-w-[360px]">
+              <span className={fieldLabel}>Repita a nova senha</span>
+              <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={field} />
+            </label>
+            {password && mismatch && <p className="text-[13px] font-semibold text-danger sm:col-span-2">As senhas não conferem.</p>}
+            <p className="text-[13px] leading-[18px] text-muted sm:col-span-2">Ao trocar a senha, você sai de todos os aparelhos e entra de novo.</p>
+          </div>
+        )}
+      </SettingsSection>
+      <SaveBar
+        dirty={dirty}
+        saving={save.isPending}
+        onDiscard={discard}
+        error={save.error}
+        saved={save.isSuccess}
+        disabled={mismatch || !name.trim()}
+      />
     </form>
   );
 }
