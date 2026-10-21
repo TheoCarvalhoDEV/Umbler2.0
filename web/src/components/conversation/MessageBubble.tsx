@@ -7,6 +7,7 @@ import type { Me, MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 import { Avatar } from '../Avatar';
+import { AudioPlayer } from './AudioPlayer';
 import { button, fieldArea } from '../ui';
 import { applyWsEvent } from '../../lib/ws';
 import { EditHistoryDialog, ForwardDialog, MediaViewer } from './MessageDialogs';
@@ -133,7 +134,7 @@ function MediaView({ m }: { m: MessageDto }) {
     case 'audio':
       return (
         <div className={`flex items-center gap-1 ${beforeCaption}`}>
-          <audio controls preload="none" src={url} className="max-w-full" />
+          <AudioPlayer src={url} insetClass={insetOf(m)} />
           <SaveLink url={url} name={name} className={saveButton} />
         </div>
       );
