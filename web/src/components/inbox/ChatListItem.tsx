@@ -93,7 +93,7 @@ export function ChatListItem({
   const chips = [...chipsOf(chat.chatTagIds ?? [], 'chat'), ...chipsOf(chat.tagIds, 'contact')];
   const highlighted = active || !!selection?.selected;
   return (
-    <li className={`group/row flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
+    <li className={`group/row relative flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
       {selection && (
         <label
           title={selection.disabled ? `Até ${BULK_MAX} conversas por vez` : undefined}
@@ -119,7 +119,7 @@ export function ChatListItem({
             : onOpen
         }
         aria-current={active ? 'true' : undefined}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-item py-2.5 pr-1 pl-2.5 text-left"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-item py-2.5 pr-3 pl-2.5 text-left"
       >
         <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-[46px] text-sm" />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -177,7 +177,7 @@ export function ChatListItem({
         </span>
       </button>
       {!selection && (
-        <details className="group/menu relative shrink-0 pt-1 pr-1.5">
+        <details className="group/menu absolute right-1.5 bottom-1.5 z-10">
           <summary
             aria-label="Opções da conversa"
             className="grid size-8 cursor-pointer list-none place-items-center rounded-full text-muted opacity-0 transition group-hover/row:opacity-100 group-open/menu:bg-panel group-open/menu:text-fg group-open/menu:opacity-100 hover:bg-panel hover:text-fg focus-visible:opacity-100 pointer-coarse:opacity-100 [&::-webkit-details-marker]:hidden"
