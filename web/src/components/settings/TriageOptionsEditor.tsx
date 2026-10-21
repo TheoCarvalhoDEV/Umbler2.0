@@ -3,7 +3,7 @@ import type { SectorDto, TriageMenuDto } from '@talk/shared';
 import { button, field as cell, fieldSelect, iconButtonGhost } from '../ui';
 
 // Nº | texto | setor | remover. Narrow: the sector gets its own line (col-start-2 row-start-2 on the select).
-const rowGrid = 'grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[4.5rem_minmax(0,1fr)_13rem_auto]';
+const rowGrid = 'grid grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[4.5rem_minmax(0,1fr)_13rem_2.5rem]';
 
 export type TriageOptionInput = TriageMenuDto['options'][number];
 

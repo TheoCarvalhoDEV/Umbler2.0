@@ -28,8 +28,8 @@ function TriageForm({ settings, sectors }: { settings: SettingsDto; sectors: Sec
   const save = useSend(qk.settings);
   const issue = problem(menu);
   const set = (patch: Partial<TriageMenuDto>) => setMenu((cur) => ({ ...cur, ...patch }));
-  // what is sent: the option texts trimmed. Compared with the saved menu, it tells whether there is anything to save.
-  const triageMenu = { ...menu, options: menu.options.map((o) => ({ ...o, label: o.label.trim() })) };
+  // what is sent: the texts trimmed, as the server stores them. Compared with the saved menu, it tells whether there is anything to save.
+  const triageMenu = { ...menu, welcomeText: menu.welcomeText.trim(), invalidText: menu.invalidText.trim(), options: menu.options.map((o) => ({ ...o, label: o.label.trim() })) };
   const dirty = JSON.stringify(triageMenu) !== JSON.stringify(settings.triageMenu);
   // same layout Task 11 sends to the contact
   const preview = [menu.welcomeText.trim(), menu.options.map((o) => `${o.key} - ${o.label}`).join('\n')]

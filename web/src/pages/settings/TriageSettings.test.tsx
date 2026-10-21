@@ -34,7 +34,8 @@ beforeEach(() => {
     if (path === '/api/sectors') return json(sectors);
     if (path === '/api/settings' && method === 'GET') return json(settings);
     if (path === '/api/settings' && method === 'PUT') {
-      settings = body as SettingsDto; // like the server: the next GET answers with what was saved
+      const m = (body as SettingsDto).triageMenu; // like the server: welcomeText/invalidText are stored trimmed, and the next GET answers with what was saved
+      settings = { ...(body as SettingsDto), triageMenu: { ...m, welcomeText: m.welcomeText.trim(), invalidText: m.invalidText.trim() } };
       return json(settings);
     }
     return json({ error: 'inesperado' }, 500);
@@ -92,4 +93,18 @@ it('blocks Salvar and says why while the menu is incomplete; Descartar undoes th
   fireEvent.click(screen.getByRole('button', { name: 'Descartar' }));
   expect(screen.getAllByLabelText(/^Texto da opção/)).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Salvar' })).toBeNull();
+});
+
+it('confirms the save when the texts have trailing whitespace the server trims', async () => {
+  renderTriage();
+  const welcome = await screen.findByLabelText('Mensagem de boas-vindas');
+
+  fireEvent.change(welcome, { target: { value: 'Olá! Escolha o setor:\n ' } });
+  fireEvent.change(screen.getByLabelText('Mensagem para resposta inválida'), { target: { value: 'Tente de novo. ' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+
+  await screen.findByText('Alterações salvas.');
+  expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ ...initial, triageMenu: { ...initial.triageMenu, welcomeText: 'Olá! Escolha o setor:', invalidText: 'Tente de novo.' } });
+  expect(screen.queryByRole('button', { name: 'Salvar' })).toBeNull();
+  expect(screen.queryByText('Alterações não salvas.')).toBeNull();
 });
