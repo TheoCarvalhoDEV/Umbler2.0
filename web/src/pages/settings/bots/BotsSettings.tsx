@@ -165,7 +165,7 @@ export function BotsSettings() {
               key={b.id}
               leading={<RobotIcon size={20} aria-hidden />}
               title={
-                <Link to={editorPath(b.id)} className="hover:underline">
+                <Link to={editorPath(b.id)} className="rounded-sm hover:underline focus-visible:-outline-offset-2">
                   {b.name}
                 </Link>
               }
