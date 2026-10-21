@@ -74,7 +74,7 @@ export function TagForm({
         <span id={`${id}-colors`} className={fieldLabel}>
           Cor de fundo
         </span>
-        <div role="radiogroup" aria-labelledby={`${id}-colors`} className="grid w-fit grid-cols-10 gap-2.5">
+        <div role="radiogroup" aria-labelledby={`${id}-colors`} className="flex flex-wrap gap-2.5">
           {TAG_COLORS.map((c) => (
             <button
               key={c.name}
