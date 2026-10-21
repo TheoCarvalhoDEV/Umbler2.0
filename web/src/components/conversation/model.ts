@@ -163,6 +163,12 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
       return `Mensagem agendada cancelada${by}`;
     case 'returned_to_queue':
       return `Devolvida à fila: sem resposta há ${Number(e.data.minutes ?? 0)} min`;
+    case 'appointment_scheduled': {
+      const when = typeof e.data.startsAt === 'string' ? ` para ${formatOfficeDateTime(e.data.startsAt)}` : '';
+      return `Compromisso “${String(e.data.title ?? '')}” ${e.data.edited === true ? 'remarcado' : 'marcado'}${by}${when}`;
+    }
+    case 'appointment_canceled':
+      return `Compromisso “${String(e.data.title ?? '')}” cancelado${by}`;
   }
 }
 
