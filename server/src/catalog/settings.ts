@@ -2,7 +2,8 @@ import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  CLOSE_INACTIVE_HOURS, DEFAULT_AUTO_RULES, RETURN_TO_QUEUE_MINUTES, type AutoRulesDto, type BotRunningBehavior, type SettingsDto,
+  APPOINTMENT_LIMITS, CLOSE_INACTIVE_HOURS, DEFAULT_AUTO_RULES, REMINDER_UNITS, RETURN_TO_QUEUE_MINUTES, SCHEDULE_TEXT_MAX,
+  type AutoRulesDto, type BotRunningBehavior, type SettingsDto,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -56,6 +57,19 @@ export async function getAutoRules(db: Db | Tx): Promise<AutoRulesDto> {
   const parsed = AutoRulesBody.safeParse(row?.value);
   return parsed.success ? parsed.data : DEFAULT_AUTO_RULES;
 }
+
+/**
+ * Spec 2026-10-21 compromissos §3.2: 1 to 5 reminders, 1–30 days or 1–48 hours before, 1–4096 characters each. The create
+ * route and the default reminders (§4) read the same list; the placeholder and same-time rules are remindersProblem.
+ */
+export const reminderList = z
+  .array(
+    z
+      .object({ amount: z.number().int(), unit: z.enum(REMINDER_UNITS), text: z.string().trim().min(1).max(SCHEDULE_TEXT_MAX) })
+      .refine((r) => r.amount >= APPOINTMENT_LIMITS[r.unit].min && r.amount <= APPOINTMENT_LIMITS[r.unit].max),
+  )
+  .min(1)
+  .max(APPOINTMENT_LIMITS.remindersMax);
 
 async function readSettings(db: Db): Promise<SettingsDto> {
   const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'closing_message'));

@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { SCHEDULE_TEXT_MAX, SCHEDULED_TABS } from '@talk/shared';
+import { APPOINTMENT_LIMITS, APPOINTMENT_TABS, SCHEDULE_TEXT_MAX, SCHEDULED_TABS } from '@talk/shared';
+import { reminderList } from '../catalog/settings.js';
 import { readParts } from '../chats/routes.js';
 import type { AppCtx } from '../ctx.js';
+import { createAppointment, listAppointments, listChatAppointments } from './appointments.js';
 import { cancelScheduled, createScheduled, listChatScheduled, listScheduled, updateScheduled } from './scheduled.js';
 
 const idParams = z.object({ id: z.uuid() });
@@ -15,6 +17,21 @@ const patchBody = z
   .object({ text: text.optional(), sendAt: sendAt.optional() })
   .refine((b) => b.text !== undefined || b.sendAt !== undefined, 'Nada para alterar');
 const listQuery = z.object({ status: z.enum(SCHEDULED_TABS).default('pending') });
+const appointmentTitle = z.string().trim().min(1).max(APPOINTMENT_LIMITS.titleMax);
+const appointmentNote = z.string().trim().max(APPOINTMENT_LIMITS.noteMax);
+/** Spec 2026-10-21 compromissos §5.3: exactly one of chatId / contactId. */
+const appointmentBody = z
+  .object({
+    chatId: z.uuid().optional(),
+    contactId: z.uuid().optional(),
+    title: appointmentTitle,
+    startsAt: sendAt, // the same ISO instant with an offset
+    note: appointmentNote.optional(),
+    signature: z.boolean().default(true), // "Enviar com minha assinatura" (§3.1)
+    reminders: reminderList,
+  })
+  .refine((b) => (b.chatId === undefined) !== (b.contactId === undefined), 'Escolha o cliente');
+const appointmentQuery = z.object({ tab: z.enum(APPOINTMENT_TABS).default('upcoming') });
 
 /** Spec 2026-10-20 agendamentos §5. */
 export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): void {
@@ -40,4 +57,14 @@ export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): voi
   });
 
   app.post('/api/scheduled-messages/:id/cancel', async (req) => cancelScheduled(ctx, req.user, idParams.parse(req.params).id));
+
+  // Spec 2026-10-21 compromissos §5.3.
+  app.post('/api/appointments', async (req) => {
+    const b = appointmentBody.parse(req.body);
+    return createAppointment(ctx, req.user, { ...b, startsAt: new Date(b.startsAt), note: b.note || null });
+  });
+
+  app.get('/api/chats/:id/appointments', async (req) => listChatAppointments(ctx, req.user, idParams.parse(req.params).id));
+
+  app.get('/api/appointments', async (req) => listAppointments(ctx, req.user, appointmentQuery.parse(req.query).tab));
 }

@@ -21,7 +21,8 @@ const LIST_LIMIT = 100;
 
 export interface ScheduleInput { text: string; sendAt: Date; signature: boolean; file?: { buffer: Buffer; mime: string; name: string } }
 
-const canManage = (user: AuthUser, row: { authorId: string }) => row.authorId === user.id || user.role === 'admin';
+/** The author or any admin (spec 2026-10-20 agendamentos §3.2); appointments use the same rule (spec 2026-10-21 compromissos §3.3). */
+export const canManage = (user: AuthUser, row: { authorId: string }) => row.authorId === user.id || user.role === 'admin';
 
 /** The rows `where` picks, with the chat's contact, the author's name and the chat the sent message went to. */
 async function scheduledDtos(db: Db, user: AuthUser, where: SQL | undefined, order: SQL[]): Promise<ScheduledMessageDto[]> {
