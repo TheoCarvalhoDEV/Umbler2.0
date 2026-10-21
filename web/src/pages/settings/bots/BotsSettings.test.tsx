@@ -242,4 +242,32 @@ describe('Settings › Chatbots', () => {
       },
     });
   });
+
+  it('offers the two templates and sends the chosen one', async () => {
+    routes['POST /api/bots/from-template'] = { body: bot({ id: 'b10', status: 'paused', publishedVersionId: null }) };
+    renderAt('/configuracoes/chatbots');
+    fireEvent.click(await screen.findByRole('button', { name: 'Criar a partir do modelo' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Criar a partir do modelo' });
+    const office = (await within(dialog).findByRole('radio', { name: 'Fluxo do escritório' })) as HTMLInputElement;
+    expect(office.checked).toBe(true);
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Triagem inteligente' }));
+    expect((within(dialog).getByLabelText('Nome do chatbot') as HTMLInputElement).value).toBe('Triagem inteligente');
+    expect(dialog.textContent).toContain('rascunho');
+    fireEvent.change(within(dialog).getByLabelText('Nome do escritório'), { target: { value: 'JVO Advogados' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Criar' }));
+
+    await screen.findByText('editor b10');
+    expect(called('POST', '/api/bots/from-template')[0]?.body).toEqual({
+      template: 'triagem',
+      name: 'Triagem inteligente',
+      companyName: 'JVO Advogados',
+      channelId: 'ch1',
+      destinations: {
+        atendimento: { sectorId: 's-at', userId: null },
+        financeiro: { sectorId: 's-fin', userId: null },
+        processos: { sectorId: 's-jur', userId: null },
+      },
+    });
+  });
 });

@@ -350,8 +350,11 @@ export interface ManualBotDto { id: string; title: string }               // tit
 export interface BotExport { name: string; graph: BotGraph }               // export file and import body
 export type BotMediaDto = BotAttachment;
 export interface OfficeTemplateDestination { sectorId: string; userId?: string | null }
+/** office = 'Fluxo do escritório' (created published), triagem = 'Triagem inteligente' (created as a draft). */
+export type BotTemplateKind = 'office' | 'triagem';
 export interface OfficeTemplateInput {
-  name?: string;                     // default 'Fluxo do escritório' (made unique)
+  template?: BotTemplateKind;        // default 'office'
+  name?: string;                     // default: the template's name (made unique)
   companyName: string;               // replaces {{empresa}} in the welcome text at creation
   channelId: string;
   destinations: { atendimento: OfficeTemplateDestination; financeiro: OfficeTemplateDestination; processos: OfficeTemplateDestination };

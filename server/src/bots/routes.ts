@@ -34,7 +34,8 @@ const EdgeSchema = z.object({
 export const GraphSchema = z.object({ nodes: z.array(NodeSchema).max(500), edges: z.array(EdgeSchema).max(2000) });
 export const Name = z.string().trim().min(1).max(80);
 const TemplateDest = z.object({ sectorId: z.uuid(), userId: z.uuid().nullable().optional() });
-const TemplateBody = z.object({ name: Name.optional(), companyName: z.string().trim().min(1).max(80), channelId: z.uuid(),
+const TemplateBody = z.object({ template: z.enum(['office', 'triagem']).optional(), name: Name.optional(),
+  companyName: z.string().trim().min(1).max(80), channelId: z.uuid(),
   destinations: z.object({ atendimento: TemplateDest, financeiro: TemplateDest, processos: TemplateDest }) });
 const CreateBody = z.object({ name: Name, description: z.string().trim().max(500).optional() });
 const PatchBody = z
