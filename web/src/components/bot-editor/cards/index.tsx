@@ -95,17 +95,17 @@ export function BlockConfigCard({ node, catalog, bot, problems, onChange, onBotC
   const input: FormInput = { config, onChange: (c) => onChange(c as Record<string, unknown>), catalog, bot, onBotChange };
   return (
     // nodrag/nowheel: typing or scrolling inside a React Flow node must not drag the node or zoom the canvas
-    <div className="nodrag nowheel space-y-2 text-sm">
+    <div className="nodrag nowheel space-y-3 text-sm">
       <p className="text-xs text-muted">{catalogEntry(node.type).description}</p>
       {problems.length > 0 && (
-        <ul role="alert" className="space-y-0.5 text-xs text-danger">
+        <ul role="alert" className="space-y-0.5 text-xs font-semibold text-danger">
           {problems.map((m, i) => (
             <li key={i}>{m}</li>
           ))}
         </ul>
       )}
       {/* key: local state (keywords text, bot draft, upload) belongs to one node */}
-      <div key={node.id} className="space-y-2">
+      <div key={node.id} className="space-y-3">
         {FORMS[node.type](input)}
       </div>
     </div>

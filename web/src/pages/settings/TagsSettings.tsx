@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { PlusIcon } from '@phosphor-icons/react';
 import { useQuery } from '@tanstack/react-query';
 import { tagColorHex, type TagDto } from '@talk/shared';
-import { TagForm, type TagInput } from '../../components/settings/TagForm';
-import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
+import { TagForm, tagChip, type TagInput } from '../../components/settings/TagForm';
+import { ErrorText, Loading, Section, btnDanger, btnPrimary, btnSecondary, listRow, send, useSend } from '../../components/settings/common';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 
@@ -39,6 +40,7 @@ export function TagsSettings() {
       title="Etiquetas"
       action={
         <button type="button" onClick={() => open('new')} className={btnPrimary}>
+          <PlusIcon size={16} weight="bold" aria-hidden />
           Nova etiqueta
         </button>
       }
@@ -55,20 +57,23 @@ export function TagsSettings() {
       )}
       {!target && <ErrorText error={save.error} />}
       {sorted.length === 0 && <p className="text-sm text-muted">Nenhuma etiqueta.</p>}
-      <ul className="divide-y divide-border rounded border border-border">
+      <ul>
         {sorted.map((t) => (
-          <li key={t.id} className="flex items-center gap-2 px-3 py-2">
-            <span className="flex-1">
-              <span className="inline-block rounded-full px-3 py-0.5 text-sm font-medium text-white" style={{ backgroundColor: tagColorHex(t.color) }}>
+          <li key={t.id} className={listRow}>
+            <span className="min-w-0 flex-1">
+              <span className={tagChip}>
+                <span aria-hidden className="size-[7px] shrink-0 rounded-full" style={{ backgroundColor: tagColorHex(t.color) }} />
                 {t.emoji ? `${t.emoji} ${t.name}` : t.name}
               </span>
             </span>
-            <button type="button" onClick={() => open(t)} className={btn}>
-              Editar
-            </button>
-            <button type="button" onClick={() => remove(t)} className={btn}>
-              Excluir
-            </button>
+            <span className="flex items-center gap-2">
+              <button type="button" onClick={() => open(t)} className={btnSecondary}>
+                Editar
+              </button>
+              <button type="button" onClick={() => remove(t)} className={btnDanger}>
+                Excluir
+              </button>
+            </span>
           </li>
         ))}
       </ul>

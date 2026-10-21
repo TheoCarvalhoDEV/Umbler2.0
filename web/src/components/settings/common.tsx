@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { request } from '../../lib/api';
+import { button, field as fieldBox, fieldHint, pageTitle } from '../ui';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; // GET: the Canais page polls the channel QR
 
@@ -18,15 +19,26 @@ export function useSend(...refresh: QueryKey[]) {
   });
 }
 
-export const btn = 'rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium hover:bg-sidebar-hover disabled:opacity-50';
-export const btnPrimary = 'rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover disabled:opacity-50';
-export const field = 'mt-1 w-full rounded-lg border border-field bg-surface px-3 py-2 text-sm';
+export const btn = button('secondary', 'sm'); // dense toolbars (bot editor)
+export const btnSecondary = button('secondary');
+export const btnPrimary = button('primary');
+export const btnDanger = button('danger');
+export const field = `mt-1.5 ${fieldBox}`;
 
-export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+/** Sunken block inside the page card: inline forms, QR code, read-only data. */
+export const block = 'rounded-block bg-sunken p-4';
+/** A row of a settings list: thin divider between rows, none after the last. */
+export const listRow = 'flex flex-wrap items-center gap-3 border-b border-border px-1 py-3 last:border-b-0';
+/** Help text under a control. */
+export const hint = fieldHint;
+export const okText = 'text-[13px] font-semibold text-success';
+
+/** wide: for a table that needs more than the board's 800px (Chatbots). */
+export function Section({ title, action, wide, children }: { title: string; action?: ReactNode; wide?: boolean; children: ReactNode }) {
   return (
-    <section className="max-w-3xl">
-      <header className="mb-6 flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+    <section className={wide ? 'max-w-5xl' : 'max-w-[800px]'}>
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-4">
+        <h1 className={pageTitle}>{title}</h1>
         {action}
       </header>
       {children}
@@ -34,10 +46,10 @@ export function Section({ title, action, children }: { title: string; action?: R
   );
 }
 
-export function ErrorText({ error }: { error: unknown }) {
+export function ErrorText({ error, className = '' }: { error: unknown; className?: string }) {
   if (!error) return null;
   return (
-    <p role="alert" className="my-2 text-sm text-danger">
+    <p role="alert" className={`my-2 text-[13px] font-semibold text-danger ${className}`}>
       {error instanceof Error ? error.message : 'Não foi possível concluir. Tente de novo.'}
     </p>
   );

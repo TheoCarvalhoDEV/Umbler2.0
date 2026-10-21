@@ -1,17 +1,19 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
+import { PlusIcon } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ChannelDto, HistoryImportDto, HistoryPeriod } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 import { formatPhone } from '../../lib/format';
-import { ErrorText, Loading, Section, btn, btnPrimary, send, useSend } from '../../components/settings/common';
+import { badge, badgeTone, field, fieldLabel, fieldSelect } from '../../components/ui';
+import { ErrorText, Loading, Section, block, btnDanger, btnPrimary, btnSecondary, send, useSend } from '../../components/settings/common';
 
 const QR_POLL_MS = 5_000;
 
 const STATUS: Record<ChannelDto['status'], { label: string; className: string }> = {
-  connected: { label: 'Conectado', className: 'bg-success/20 text-success' },
-  connecting: { label: 'Conectando', className: 'bg-primary/20 text-link' },
-  disconnected: { label: 'Desconectado', className: 'bg-danger/20 text-danger' },
+  connected: { label: 'Conectado', className: badgeTone.success },
+  connecting: { label: 'Conectando', className: badgeTone.accent },
+  disconnected: { label: 'Desconectado', className: badgeTone.warning },
 };
 
 /** History spec §3: the three periods (the phone sends about 3.5 months whatever is picked). */
@@ -46,6 +48,7 @@ export function ChannelsSettings() {
   const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
   const create = useSend(qk.channels);
   const [name, setName] = useState('');
+  const nameId = useId();
   const [qr, setQr] = useState<Record<string, string>>({});
   const [periods, setPeriods] = useState<Record<string, HistoryPeriod>>({});
   const periodOf = (c: ChannelDto): HistoryPeriod => periods[c.id] ?? c.historyPeriod ?? '3m';
@@ -118,18 +121,25 @@ export function ChannelsSettings() {
 
   return (
     <Section title="Canais">
-      <form onSubmit={submit} className="mb-6 flex gap-2">
-        <input
-          aria-label="Nome do novo canal"
-          placeholder="Nome do canal (ex.: WhatsApp do escritório)"
-          value={name}
-          maxLength={60}
-          onChange={(e) => setName(e.target.value)}
-          className="flex-1 rounded border border-border px-2 py-1.5 text-sm"
-        />
-        <button type="submit" disabled={!name.trim() || create.isPending} className={btnPrimary}>
-          Novo canal
-        </button>
+      <form onSubmit={submit} className={`${block} mb-5`}>
+        <label htmlFor={nameId} className={fieldLabel}>
+          Nome do novo canal
+        </label>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <input
+            id={nameId}
+            aria-label="Nome do novo canal"
+            placeholder="Nome do canal (ex.: WhatsApp do escritório)"
+            value={name}
+            maxLength={60}
+            onChange={(e) => setName(e.target.value)}
+            className={`${field} min-w-0 flex-[1_1_240px]`}
+          />
+          <button type="submit" disabled={!name.trim() || create.isPending} className={btnPrimary}>
+            <PlusIcon size={16} weight="bold" aria-hidden />
+            Novo canal
+          </button>
+        </div>
       </form>
       <ErrorText error={create.error} />
       <ErrorText error={connect.error} />
@@ -137,29 +147,29 @@ export function ChannelsSettings() {
       <ErrorText error={remove.error} />
 
       {channels.data.length === 0 && <p className="text-sm text-muted">Nenhum canal cadastrado.</p>}
-      <ul className="space-y-3">
+      <ul>
         {channels.data.map((c) => {
           const code = qr[c.id];
           const running = c.historyImport?.state === 'running';
           return (
-            <li key={c.id} className="rounded border border-border p-4">
+            <li key={c.id} className="border-b border-border px-1 py-5 first:pt-0 last:border-b-0">
               <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-medium">{c.name}</p>
-                  <p className="text-sm text-muted">{c.phone ? formatPhone(c.phone) : 'Nenhum número conectado'}</p>
+                <div className="min-w-0">
+                  <p className="font-bold">{c.name}</p>
+                  <p className="text-[13px] leading-[18px] text-muted tabular-nums">{c.phone ? formatPhone(c.phone) : 'Nenhum número conectado'}</p>
                 </div>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS[c.status].className}`}>
+                <span className={`${badge} ${STATUS[c.status].className}`}>
                   {STATUS[c.status].label}
                 </span>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-sm text-muted">Período do histórico</span>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-[13px] font-semibold">Período do histórico</span>
                 <select
                   aria-label="Período do histórico"
                   value={periodOf(c)}
                   onChange={(e) => setPeriods((cur) => ({ ...cur, [c.id]: e.target.value as HistoryPeriod }))}
-                  className="rounded border border-field px-2 py-1 text-sm"
+                  className={`${fieldSelect} max-w-40`}
                 >
                   {PERIODS.map(([value, label]) => (
                     <option key={value} value={value}>
@@ -172,7 +182,7 @@ export function ChannelsSettings() {
                     type="button"
                     disabled={connect.isPending}
                     onClick={() => connect.mutate({ id: c.id, period: periodOf(c) })}
-                    className={btn}
+                    className={btnSecondary}
                   >
                     Gerar novo QR / Reconectar
                   </button>
@@ -181,7 +191,7 @@ export function ChannelsSettings() {
                   type="button"
                   disabled={importHistory.isPending || running}
                   onClick={() => importHistory.mutate({ id: c.id, period: periodOf(c) })}
-                  className={btn}
+                  className={btnSecondary}
                 >
                   Importar histórico
                 </button>
@@ -189,25 +199,25 @@ export function ChannelsSettings() {
                   type="button"
                   disabled={remove.isPending}
                   onClick={() => void confirmRemove(c)}
-                  className={`${btn} ml-auto text-danger`}
+                  className={`${btnDanger} ml-auto`}
                 >
                   Excluir canal
                 </button>
               </div>
-              <p className="mt-1 text-xs text-muted">
+              <p className="mt-2 text-[13px] leading-[18px] text-muted">
                 O WhatsApp envia cerca de 3,5 meses de histórico; com “12 meses” ou “Tudo” vem só o que o celular mandar.
               </p>
               {c.historyImport && (
-                <p role="status" className="mt-2 text-sm">
+                <p role="status" className="mt-2 text-[13px] leading-[18px] font-semibold">
                   {importText(c.historyImport)}
                 </p>
               )}
 
-              {c.status === 'connecting' && !code && <p className="mt-4 text-sm text-muted">Gerando QR code…</p>}
+              {c.status === 'connecting' && !code && <p className={`${block} mt-4 text-sm text-muted`}>Gerando QR code…</p>}
               {code && c.status !== 'connected' && (
-                <div className="mt-4 flex flex-wrap gap-4">
-                  <img src={asImageSrc(code)} alt={`QR Code do canal ${c.name}`} className="h-64 w-64 rounded border border-border bg-panel p-2" />
-                  <ol className="max-w-xs list-decimal space-y-1 pl-5 text-sm">
+                <div className={`${block} mt-4 flex flex-wrap items-start gap-5`}>
+                  <img src={asImageSrc(code)} alt={`QR Code do canal ${c.name}`} className="size-64 shrink-0 rounded-block bg-surface p-2" />
+                  <ol className="max-w-xs list-decimal space-y-2 pl-5 text-sm text-fg-2 marker:font-bold marker:text-muted">
                     <li>Abra o WhatsApp no celular do escritório.</li>
                     <li>Toque em Mais opções › Aparelhos conectados › Conectar um aparelho.</li>
                     <li>Aponte a câmera para este código.</li>

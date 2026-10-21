@@ -37,14 +37,16 @@ export function NotificationToasts() {
           key={n.id}
           to={`/chats/${n.chatId}`}
           onClick={() => dismiss(n.id)}
-          className="block rounded-lg border border-border bg-panel p-3 text-fg shadow-xl hover:bg-sidebar-hover"
+          className="flex gap-3 rounded-item bg-surface p-3.5 text-fg shadow-pop hover:bg-sidebar-hover"
         >
-          <p className="flex items-center gap-1.5 text-sm font-semibold">
-            <BellRingingIcon size={16} weight="fill" aria-hidden className="shrink-0 text-primary" />
-            {titleOf(n)}
-          </p>
-          {n.text && <p className="mt-1 text-sm break-words whitespace-pre-wrap">{n.text}</p>}
-          <p className="mt-1 text-xs text-muted">Chatbot {n.botName}</p>
+          <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-primary-soft text-accent-ink">
+            <BellRingingIcon size={16} />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <p className="font-bold">{titleOf(n)}</p>
+            {n.text && <p className="break-words whitespace-pre-wrap">{n.text}</p>}
+            <p className="mt-0.5 text-xs text-muted">Chatbot {n.botName}</p>
+          </div>
         </Link>
       ))}
     </div>

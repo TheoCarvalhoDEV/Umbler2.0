@@ -4,6 +4,7 @@ import { PushPin, Trash } from '@phosphor-icons/react';
 import type { ContactNoteDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
+import { button, fieldArea, fieldError, iconButtonGhost } from '../ui';
 
 export function NotesList({ contactId }: { contactId: string }) {
   const qc = useQueryClient();
@@ -38,34 +39,32 @@ export function NotesList({ contactId }: { contactId: string }) {
 
   return (
     <div className="space-y-3">
-      <form onSubmit={submit} className="space-y-2">
+      <form onSubmit={submit} className="space-y-2.5">
         <textarea
           aria-label="Nova observação"
           rows={2}
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Escreva uma observação"
-          className="w-full resize-y rounded-md border border-border px-3 py-2 text-sm focus:border-primary focus:outline-none"
+          className={`${fieldArea} resize-y`}
         />
         <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={!text.trim() || add.isPending}
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-          >
+          {/* secondary: Nova conversa is the panel's one primary action */}
+          <button type="submit" disabled={!text.trim() || add.isPending} className={button('secondary')}>
             Adicionar
           </button>
         </div>
       </form>
       {(add.error || pin.error || remove.error) && (
-        <p role="alert" className="text-xs text-danger">{(add.error ?? pin.error ?? remove.error)?.message}</p>
+        <p role="alert" className={fieldError}>{(add.error ?? pin.error ?? remove.error)?.message}</p>
       )}
       <ul className="space-y-2">
         {sorted.map((n) => (
-          <li key={n.id} className={`rounded-md border p-3 text-sm ${n.pinned ? 'border-primary bg-primary/10' : 'border-border'}`}>
-            <p className="whitespace-pre-wrap break-words">{n.body}</p>
-            <div className="mt-2 flex items-center gap-2 text-xs text-muted">
-              <span className="flex-1">
+          // Pinned = the sent-bubble pairing (fill, fg, meta), as on the board.
+          <li key={n.id} className={`rounded-item pt-3 pr-2 pb-1 pl-3.5 ${n.pinned ? 'bg-bubble-out' : 'bg-sunken'}`}>
+            <p className="pr-1.5 whitespace-pre-wrap break-words">{n.body}</p>
+            <div className={`mt-0.5 flex items-center text-xs ${n.pinned ? 'text-bubble-meta' : 'text-muted'}`}>
+              <span className="min-w-0 flex-1">
                 {n.authorName ?? 'Sistema'} · {new Date(n.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
               </span>
               <button
@@ -73,9 +72,9 @@ export function NotesList({ contactId }: { contactId: string }) {
                 aria-label={n.pinned ? 'Desafixar observação' : 'Fixar observação'}
                 aria-pressed={n.pinned}
                 onClick={() => pin.mutate(n)}
-                className="rounded p-1 hover:bg-sidebar-hover"
+                className={iconButtonGhost}
               >
-                <PushPin size={14} weight={n.pinned ? 'fill' : 'regular'} />
+                <PushPin size={16} weight={n.pinned ? 'fill' : 'regular'} />
               </button>
               <button
                 type="button"
@@ -83,9 +82,9 @@ export function NotesList({ contactId }: { contactId: string }) {
                 onClick={async () => {
                   if (await confirmDialog({ title: 'Excluir esta observação?', confirmLabel: 'Excluir' })) remove.mutate(n.id);
                 }}
-                className="rounded p-1 hover:bg-sidebar-hover"
+                className={iconButtonGhost}
               >
-                <Trash size={14} />
+                <Trash size={16} />
               </button>
             </div>
           </li>

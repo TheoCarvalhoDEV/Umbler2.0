@@ -1,89 +1,174 @@
 @import "tailwindcss";
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/plus-jakarta-sans";
 
-/* "Tinta e latão": ink-navy interface, the JV logo's brass as the only accent, blue for actions.
+/* "Mensageiro": every area is a rounded card on a green-grey ground, a dark green rail, teal for actions.
    Dark theme here; the light theme below redefines the same tokens. Every text pairing is >= 4.5:1,
-   field borders >= 3:1. sidebar-hover / sidebar-active are the generic hover and selected fills. */
+   field borders >= 3:1. Older names are kept with new meanings: panel = quiet fill (search, secondary
+   buttons, chips), sidebar-hover = row hover, sidebar-active = selected row, border = thin divider. */
 @theme {
-  --color-ground: #0b0d12; /* app background, behind columns */
-  --color-sunken: #0f1218; /* conversation timeline */
-  --color-surface: #13161d;
-  --color-panel: #1c2029; /* menus, chips, quiet fills */
-  --color-sidebar-hover: #1a1e27;
-  --color-sidebar-active: #1a2244;
-  --color-border: #252a35;
+  --color-ground: #0b1210; /* app background, behind the cards */
+  --color-sunken: #101816; /* conversation timeline, blocks inside a card */
+  --color-surface: #141e1b; /* cards */
+  --color-panel: #1f2c28; /* search pill, secondary buttons, inactive tabs, chips */
+  --color-sidebar-hover: #1a2723;
+  --color-sidebar-active: #173a33;
+  --color-border: #22302c; /* decorative dividers only */
   /* Form control borders: --color-border is too faint to outline an input; this one is 3:1. */
-  --color-field: #6b7385;
-  --color-fg: #e7e9ef;
-  --color-muted: #9ba2b2;
-  /* White text on primary needs 4.5:1. Primary is too dark to read as text, so blue text uses --color-link. */
-  --color-primary: #4a67ee;
-  --color-primary-hover: #3d59de;
-  --color-primary-soft: #1a2244;
-  --color-link: #a3b4ff;
-  --color-brass: #d9ae5a;
-  --color-brass-soft: #2a2314;
+  --color-field: #6e807a;
+  --color-fg: #e6eeeb;
+  --color-fg-2: #c3d0cb; /* text on panel, icons */
+  --color-muted: #9aaba5;
+  /* Dark theme primary is light, so text on it is dark: always pair bg-primary with text-on-primary. */
+  --color-primary: #2ec4a6;
+  --color-primary-hover: #5fd4bc;
+  --color-on-primary: #04201b;
+  --color-primary-soft: #134a41;
+  --color-accent-ink: #7fe0c8; /* text on primary-soft; author name on a sent bubble */
+  --color-link: #5fd4bc;
+  /* Active tab pill and other "on" chips. */
+  --color-chip-on: #cfe3de;
+  --color-chip-on-fg: #12332e;
+  --color-brass: #f2c94c; /* favourites, highlight ring ("Padrão" uses primary-soft / accent-ink) */
+  --color-brass-soft: #33290c;
   /* Light enough to read as text on dark surfaces; solid red fills with white text use --color-danger-strong. */
-  --color-danger: #f2777d;
-  --color-danger-strong: #c9363b;
-  --color-danger-soft: #33181a;
-  --color-success: #4cbf85;
-  --color-success-soft: #14291f;
-  --color-bubble-in: #1a1e27;
-  --color-bubble-out: #1e2848;
-  --color-note: #2a2412; /* internal note fill */
-  --color-note-line: #6e5821;
-  --color-note-fg: #f1de9e;
-  --color-private: #d9ae5a; /* "Privada" badge */
-  --color-read: #5db8f2; /* read ticks */
-  /* The left menu stays ink-navy in both themes: the gold logo is drawn for a dark background. */
-  --color-rail: #07090d;
-  --color-rail-fg: #8f97aa;
-  --color-rail-active: #171c2b;
+  --color-danger: #f38b82;
+  --color-danger-strong: #b42318;
+  --color-danger-soft: #3b1c1b;
+  --color-warning: #f2a65a;
+  --color-warning-soft: #3a2713;
+  --color-success: #5cc98f;
+  --color-success-soft: #132f20;
+  --color-online: #34d399;
+  --color-bubble-in: #1b2724;
+  --color-bubble-out: #134a41;
+  --color-bubble-meta: #a9cfc6; /* time and ticks on a sent bubble */
+  --color-day: #22302c; /* "Hoje" pill, neutral avatar */
+  --color-note: #33290c; /* internal note fill */
+  --color-note-line: #5a4a16;
+  --color-note-fg: #f5e6b8;
+  --color-note-label: #f2c94c;
+  --color-private: #f2c94c; /* "Privada" badge */
+  --color-read: #7cb8ff; /* read ticks */
+  /* The rail stays dark green in both themes. */
+  --color-rail: #12332e;
+  --color-rail-fg: #cfe3de;
+  --color-rail-active: #1f4d46;
+  --color-rail-badge: #7fe0c8;
+  --color-rail-badge-fg: #0b2622;
   --color-nav-on: #ffffff;
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Mono", monospace;
+  /* Avatar tints, picked from the name (components/Avatar.tsx). */
+  --color-tint-1: #3d2218;
+  --color-tint-1-fg: #f5b49a;
+  --color-tint-2: #1e2a4a;
+  --color-tint-2-fg: #afc4ff;
+  --color-tint-3: #123a33;
+  --color-tint-3-fg: #7fe0c8;
+  --color-tint-4: #2e2342;
+  --color-tint-4-fg: #cdb4f5;
+  --color-tint-5: #3a3110;
+  --color-tint-5-fg: #f2d27a;
+  --radius-card: 18px; /* an area: list, conversation, panel, page, dialog */
+  --radius-item: 14px; /* a row in a list */
+  --radius-block: 12px; /* a block inside a card, a form field, a menu */
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 }
 
 :root {
   color-scheme: dark;
+  --app-shadow-float: 0 2px 8px rgb(0 0 0 / 0.45);
+  --app-shadow-pop: 0 12px 32px rgb(0 0 0 / 0.55);
+  --app-scrim: rgb(0 0 0 / 0.6);
+  --app-shadow-bubble: 0 1px 2px rgb(0 0 0 / 0.3);
+  /* Images can't read tokens: the select chevron is fg-2, the check mark on-primary (keep in sync). */
+  --app-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c3d0cb' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --app-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2304201b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
 }
 
 /* Light theme: same tokens, new values. lib/theme.ts sets data-theme (system preference by default). */
 :root[data-theme='light'] {
   color-scheme: light;
-  --color-ground: #f3f4f7;
-  --color-sunken: #f6f7f9;
+  --app-shadow-float: 0 2px 8px rgb(20 32 29 / 0.08);
+  --app-shadow-pop: 0 12px 32px rgb(20 32 29 / 0.16);
+  --app-scrim: rgb(20 32 29 / 0.45);
+  --app-shadow-bubble: 0 1px 2px rgb(20 32 29 / 0.06);
+  --app-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232d3b37' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --app-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  --color-ground: #e9eeec;
+  --color-sunken: #f7f9f8;
   --color-surface: #ffffff;
-  --color-panel: #eef0f4;
-  --color-sidebar-hover: #f1f3f7;
-  --color-sidebar-active: #e9edfb;
-  --color-border: #e2e5eb;
-  --color-field: #8a91a1;
-  --color-fg: #151922;
-  --color-muted: #5a6172;
-  --color-primary: #2b47c6;
-  --color-primary-hover: #2239a8;
-  --color-primary-soft: #e9edfb;
-  --color-link: #2239a8;
-  --color-brass: #9a6b1f;
-  --color-brass-soft: #f7eedc;
-  --color-danger: #b3261e;
-  --color-danger-strong: #b3261e;
-  --color-danger-soft: #fbe9e7;
-  --color-success: #1d7a4e;
-  --color-success-soft: #e3f3ea;
+  --color-panel: #f1f4f3;
+  --color-sidebar-hover: #f3f7f5;
+  --color-sidebar-active: #e6f4f0;
+  --color-border: #e6ece9;
+  --color-field: #7c8b86;
+  --color-fg: #14201d;
+  --color-fg-2: #2d3b37;
+  --color-muted: #4f5f5a;
+  --color-primary: #0f766e;
+  --color-primary-hover: #0b5a54;
+  --color-on-primary: #ffffff;
+  --color-primary-soft: #d5f0e9;
+  --color-accent-ink: #0b5a54;
+  --color-link: #0b5a54;
+  --color-chip-on: #12332e;
+  --color-chip-on-fg: #ffffff;
+  --color-brass: #7a5a00;
+  --color-brass-soft: #fff4d6;
+  --color-danger: #b42318;
+  --color-danger-strong: #b42318;
+  --color-danger-soft: #fdeceb;
+  --color-warning: #8a4b06;
+  --color-warning-soft: #fdf1e3;
+  --color-success: #146c3a;
+  --color-success-soft: #e6f4ec;
+  --color-online: #10b981;
   --color-bubble-in: #ffffff;
-  --color-bubble-out: #e4eafd;
-  --color-note: #fff6d6;
-  --color-note-line: #e6c766;
-  --color-note-fg: #5c4505;
-  --color-private: #9a6b1f;
-  --color-read: #0b6ba8;
-  --color-rail: #0f1729;
-  --color-rail-fg: #a9b1c4;
-  --color-rail-active: #1f2a47;
+  --color-bubble-out: #d5f0e9;
+  --color-bubble-meta: #2d4a44;
+  --color-day: #e3eae7;
+  --color-note: #fff4d6;
+  --color-note-line: #f0d78c;
+  --color-note-fg: #3b2f0a;
+  --color-note-label: #7a5a00;
+  --color-private: #7a5a00;
+  --color-read: #1f5fbf;
+  --color-tint-1: #fce3d9;
+  --color-tint-1-fg: #8a2e0e;
+  --color-tint-2: #e2e9fb;
+  --color-tint-2-fg: #1e3a8a;
+  --color-tint-3: #d5f0e9;
+  --color-tint-3-fg: #0b5a54;
+  --color-tint-4: #ede4fb;
+  --color-tint-4-fg: #5b2a86;
+  --color-tint-5: #fff0c7;
+  --color-tint-5-fg: #6b4e00;
+}
+
+/* Theme-aware shadows: @theme shadows are inlined at build time, so these read runtime variables. */
+@utility shadow-float {
+  box-shadow: var(--app-shadow-float);
+}
+@utility shadow-pop {
+  box-shadow: var(--app-shadow-pop);
+}
+@utility shadow-bubble {
+  box-shadow: var(--app-shadow-bubble);
+}
+/* <select> chevron (ui.ts fieldSelect) and checkbox tick (ui.ts checkbox). */
+@utility select-chevron {
+  background-image: var(--app-select-chevron);
+  background-position: right 14px center;
+  background-size: 18px;
+  background-repeat: no-repeat;
+}
+@utility check-mark {
+  background-image: var(--app-check);
+  background-position: center;
+  background-size: 14px;
+  background-repeat: no-repeat;
+}
+@utility bg-scrim {
+  background-color: var(--app-scrim);
 }
 
 html,
@@ -97,6 +182,8 @@ body {
   background-color: var(--color-ground);
   color: var(--color-fg);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -105,5 +192,12 @@ body {
   :focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
+  }
+  ::placeholder {
+    color: var(--color-muted);
+    opacity: 1;
+  }
+  dialog::backdrop {
+    background-color: var(--app-scrim);
   }
 }

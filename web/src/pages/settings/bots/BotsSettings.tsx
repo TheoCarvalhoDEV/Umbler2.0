@@ -1,8 +1,10 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { PlusIcon } from '@phosphor-icons/react';
 import type { BotDto, BotExport } from '@talk/shared';
-import { Loading, Section, btn, btnPrimary, field, useSend } from '../../../components/settings/common';
+import { Loading, Section, btn, useSend } from '../../../components/settings/common';
+import { badge, badgeTone, button, field, fieldLabel } from '../../../components/ui';
 import { api, ApiError, qk } from '../../../lib/api';
 import { confirmDialog } from '../../../lib/confirm';
 import { OfficeTemplateDialog } from './OfficeTemplateDialog';
@@ -88,13 +90,14 @@ export function BotsSettings() {
   return (
     <Section
       title="Chatbots"
+      wide
       action={
         <div className="flex flex-wrap justify-end gap-2">
-          <label className={`${btn} cursor-pointer`}>
+          <label className={`${button()} cursor-pointer focus-within:ring-2 focus-within:ring-primary`}>
             Importar
             <input type="file" accept=".json,application/json" onChange={importFile} className="sr-only" />
           </label>
-          <button type="button" onClick={() => setTemplate(true)} className={btn}>
+          <button type="button" onClick={() => setTemplate(true)} className={button()}>
             Criar a partir do modelo
           </button>
           <button
@@ -104,8 +107,9 @@ export function BotsSettings() {
               setName('');
               setCreating(true);
             }}
-            className={btnPrimary}
+            className={button(creating ? 'secondary' : 'primary')}
           >
+            <PlusIcon size={16} aria-hidden />
             Novo chatbot
           </button>
         </div>
@@ -122,21 +126,21 @@ export function BotsSettings() {
         />
       )}
       {creating && (
-        <form onSubmit={create} className="mb-4 flex items-end gap-2 rounded border border-border p-3">
-          <label className="flex-1 text-sm">
-            Nome do chatbot
+        <form onSubmit={create} className="mb-5 flex flex-wrap items-end gap-2.5 rounded-block bg-sunken p-4">
+          <label className="min-w-0 flex-[1_1_240px]">
+            <span className={fieldLabel}>Nome do chatbot</span>
             <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus className={field} />
           </label>
-          <button type="submit" disabled={save.isPending || !name.trim()} className={btnPrimary}>
+          <button type="submit" disabled={save.isPending || !name.trim()} className={button('primary')}>
             Criar
           </button>
-          <button type="button" onClick={() => setCreating(false)} className={btn}>
+          <button type="button" onClick={() => setCreating(false)} className={button('ghost')}>
             Cancelar
           </button>
         </form>
       )}
       {save.error && (
-        <div role="alert" className="my-2 text-sm text-danger">
+        <div role="alert" className="mb-4 rounded-block bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">
           <p>{save.error.message}</p>
           {used.length > 0 && <p>Usado por: {used.join(', ')}</p>}
         </div>
@@ -144,37 +148,39 @@ export function BotsSettings() {
       {bots.data.length === 0 ? (
         <p className="text-sm text-muted">Nenhum chatbot. Crie um novo, importe um arquivo ou comece pelo modelo do escritório.</p>
       ) : (
-        <div className="overflow-x-auto rounded border border-border">
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-muted">
-              <tr>
-                <th className="px-3 py-2 font-medium">Nome</th>
-                <th className="px-3 py-2 font-medium">Canais</th>
-                <th className="px-3 py-2 font-medium">Situação</th>
-                <th className="px-3 py-2 font-medium">Execuções</th>
-                <th className="px-3 py-2 font-medium">Atualizado em</th>
-                <th className="px-3 py-2">
+              <tr className="border-b border-border">
+                <th className="h-10 px-3 font-semibold">Nome</th>
+                <th className="h-10 px-3 font-semibold">Canais</th>
+                <th className="h-10 px-3 font-semibold">Situação</th>
+                <th className="h-10 px-3 font-semibold">Execuções</th>
+                <th className="h-10 px-3 font-semibold">Atualizado em</th>
+                <th className="h-10 px-3">
                   <span className="sr-only">Ações</span>
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {bots.data.map((b) => (
-                <tr key={b.id} className="align-top">
-                  <td className="px-3 py-2">
-                    <Link to={editorPath(b.id)} className="font-medium hover:underline">
+                <tr key={b.id} className="transition-colors hover:bg-sidebar-hover">
+                  <td className="px-3 py-3">
+                    <Link to={editorPath(b.id)} className="font-bold hover:underline">
                       {b.name}
                     </Link>
-                    {b.description && <span className="block text-xs text-muted">{b.description}</span>}
+                    {b.description && <span className="block text-[13px] text-muted">{b.description}</span>}
                   </td>
-                  <td className="px-3 py-2">{channelsLabel(b, channelNames)}</td>
-                  <td className="px-3 py-2">{statusLabel(b)}</td>
-                  <td className="px-3 py-2">{runsLabel(b)}</td>
-                  <td className="whitespace-nowrap px-3 py-2">
+                  <td className="px-3 py-3">{channelsLabel(b, channelNames)}</td>
+                  <td className="px-3 py-3">
+                    <span className={`${badge} ${b.status === 'active' ? badgeTone.success : badgeTone.neutral}`}>{statusLabel(b)}</span>
+                  </td>
+                  <td className="px-3 py-3 tabular-nums">{runsLabel(b)}</td>
+                  <td className="px-3 py-3 whitespace-nowrap text-muted tabular-nums">
                     {new Date(b.updatedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap justify-end gap-1">
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap justify-end gap-1.5">
                       <Link to={editorPath(b.id)} className={btn}>
                         Editar
                       </Link>
@@ -198,7 +204,7 @@ export function BotsSettings() {
                       <a href={api.bots.exportUrl(b.id)} download className={btn}>
                         Exportar
                       </a>
-                      <button type="button" disabled={save.isPending} onClick={() => remove(b)} className={btn}>
+                      <button type="button" disabled={save.isPending} onClick={() => remove(b)} className={button('danger', 'sm')}>
                         Excluir
                       </button>
                     </div>

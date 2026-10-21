@@ -1,5 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import type { CustomFieldDto, QuickAnswerDto } from '@talk/shared';
+import { button, field, fieldArea, fieldError, fieldLabel, radio } from '../ui';
+import { block, btnPrimary } from './common';
 
 export interface QuickAnswerInput {
   name: string;
@@ -22,8 +24,6 @@ export const FIXED_VARIABLES = [
 export function insertAtCursor(text: string, start: number, end: number, snippet: string): { text: string; caret: number } {
   return { text: text.slice(0, start) + snippet + text.slice(end), caret: start + snippet.length };
 }
-
-const field = 'mt-1 w-full rounded border border-field px-2 py-1.5 text-sm';
 
 export function QuickAnswerForm({
   initial,
@@ -80,9 +80,9 @@ export function QuickAnswerForm({
   ];
 
   return (
-    <form onSubmit={submit} className="mb-6 space-y-4 rounded border border-border p-4">
+    <form onSubmit={submit} className={`${block} mb-5 space-y-5`}>
       <div>
-        <label htmlFor={`${id}-name`} className="block text-sm font-medium">
+        <label htmlFor={`${id}-name`} className={fieldLabel}>
           Nome
         </label>
         <input id={`${id}-name`} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} className={field} />
@@ -90,14 +90,14 @@ export function QuickAnswerForm({
 
       {isAdmin && (
         <fieldset>
-          <legend className="text-sm font-medium">Visibilidade</legend>
-          <div className="mt-1 flex gap-4 text-sm">
-            <label className="flex items-center gap-1">
-              <input type="radio" name={`${id}-vis`} checked={visibility === 'all'} onChange={() => setVisibility('all')} />
+          <legend className="mb-2 text-[13px] leading-[18px] font-semibold">Visibilidade</legend>
+          <div className="flex flex-wrap gap-x-6 gap-y-2.5 text-sm">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input type="radio" name={`${id}-vis`} checked={visibility === 'all'} onChange={() => setVisibility('all')} className={radio} />
               Para todos
             </label>
-            <label className="flex items-center gap-1">
-              <input type="radio" name={`${id}-vis`} checked={visibility === 'owner'} onChange={() => setVisibility('owner')} />
+            <label className="flex cursor-pointer items-center gap-2">
+              <input type="radio" name={`${id}-vis`} checked={visibility === 'owner'} onChange={() => setVisibility('owner')} className={radio} />
               Apenas para mim
             </label>
           </div>
@@ -105,7 +105,7 @@ export function QuickAnswerForm({
       )}
 
       <div>
-        <label htmlFor={`${id}-body`} className="block text-sm font-medium">
+        <label htmlFor={`${id}-body`} className={fieldLabel}>
           Mensagem
         </label>
         <textarea
@@ -114,13 +114,13 @@ export function QuickAnswerForm({
           rows={6}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          className={field}
+          className={fieldArea}
         />
-        <div className="mt-2">
-          <p className="text-xs text-muted">
+        <div className="mt-3">
+          <p className="text-[13px] leading-[18px] text-muted">
             Inserir variável (trocada pelos dados do atendente e do contato quando a resposta é escolhida com / na conversa):
           </p>
-          <div className="mt-1 flex flex-wrap gap-1">
+          <div className="mt-2 flex flex-wrap gap-1.5">
             {variables.map(([variable, label]) => (
               <button
                 key={variable}
@@ -129,7 +129,7 @@ export function QuickAnswerForm({
                 // keep the textarea focused so its selection is not lost
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => insert(variable)}
-                className="rounded-full border border-border px-2 py-0.5 text-xs hover:bg-sidebar-hover"
+                className={button('secondary', 'sm')}
               >
                 {label}
               </button>
@@ -139,11 +139,11 @@ export function QuickAnswerForm({
       </div>
 
       <div>
-        <label htmlFor={`${id}-file`} className="block text-sm font-medium">
+        <label htmlFor={`${id}-file`} className={fieldLabel}>
           Anexo (opcional)
         </label>
         {initial?.hasAttachment && (
-          <p className="text-xs text-muted">
+          <p className="mb-2 text-[13px] leading-[18px] text-muted">
             Esta resposta já tem um anexo:{' '}
             <a href={`/api/quick-answers/${initial.id}/attachment`} target="_blank" rel="noreferrer" className="text-link underline">
               abrir
@@ -151,24 +151,25 @@ export function QuickAnswerForm({
             . Escolha outro arquivo para substituir.
           </p>
         )}
-        <input id={`${id}-file`} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="mt-1 text-sm" />
+        <input
+          id={`${id}-file`}
+          type="file"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="block max-w-full text-sm text-muted file:mr-3 file:h-10 file:cursor-pointer file:rounded-full file:border-0 file:bg-panel file:px-4 file:text-[13px] file:font-bold file:text-fg hover:file:bg-border"
+        />
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className={fieldError}>
           {error}
         </p>
       )}
 
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover">
+        <button type="button" onClick={onCancel} className={button('ghost')}>
           Cancelar
         </button>
-        <button
-          type="submit"
-          disabled={!name.trim() || !body.trim() || pending}
-          className="rounded bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
-        >
+        <button type="submit" disabled={!name.trim() || !body.trim() || pending} className={btnPrimary}>
           Salvar
         </button>
       </div>

@@ -2,6 +2,7 @@ import { ChatCircleText, Check, Checks, Clock, DotsThreeVertical, LockSimple, Pu
 import { BULK_MAX, tagColorHex, type ChatListItem as ChatItem, type TagDto } from '@talk/shared';
 import { contactLabel, listTime } from '../../lib/format';
 import { Avatar } from '../Avatar';
+import { badge, badgeTone, menu as menuBox, menuItem, unreadBadge } from '../ui';
 
 interface Props {
   chat: ChatItem;
@@ -86,11 +87,11 @@ export function ChatListItem({
   const chips = [...chipsOf(chat.chatTagIds ?? [], 'chat'), ...chipsOf(chat.tagIds, 'contact')];
   const highlighted = active || !!selection?.selected;
   return (
-    <li className={`flex items-stretch rounded-xl ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
+    <li className={`flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
       {selection && (
         <label
           title={selection.disabled ? `Até ${BULK_MAX} conversas por vez` : undefined}
-          className="flex shrink-0 cursor-pointer items-center pl-3"
+          className="flex shrink-0 cursor-pointer items-center self-stretch pl-3"
         >
           <input
             type="checkbox"
@@ -112,48 +113,48 @@ export function ChatListItem({
             : onOpen
         }
         aria-current={active ? 'true' : undefined}
-        className="flex min-w-0 flex-1 gap-3 rounded-xl py-3 pl-3 text-left"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-item py-2.5 pr-1 pl-2.5 text-left"
       >
-        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-10 shrink-0 text-sm bg-panel" />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1">
-            <span className={`truncate ${unread || active ? 'font-semibold' : 'font-medium'}`}>{title}</span>
-            {chat.private && <LockSimple aria-label="Conversa privada" className="shrink-0 text-private" />}
-            {chat.pinned && <PushPin aria-label="Fixada" weight="fill" className="shrink-0 text-muted" />}
-            <span className={`ml-auto shrink-0 font-mono text-[11px] ${unread ? 'font-semibold text-link' : 'text-muted'}`}>
+        <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-[46px] text-sm" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate font-bold tabular-nums">{title}</span>
+            {chat.private && <LockSimple size={14} weight="bold" aria-label="Conversa privada" className="shrink-0 text-private" />}
+            {chat.pinned && <PushPin size={14} aria-label="Fixada" weight="fill" className="shrink-0 text-muted" />}
+            <span className="ml-auto shrink-0 pl-1 text-xs text-muted tabular-nums">
               {chat.lastMessageAt ? listTime(chat.lastMessageAt) : ''}
             </span>
           </span>
           <span className="flex items-center gap-2">
-            <span className={`flex min-w-0 items-center gap-1 text-sm ${unread ? 'text-fg' : 'text-muted'}`}>
+            <span className={`flex min-w-0 flex-1 items-center gap-1 text-[13px] leading-[18px] ${unread ? 'font-semibold text-fg' : 'text-muted'}`}>
               {chat.lastOutStatus && <OutTick status={chat.lastOutStatus} />}
               <span className="truncate">{chat.lastMessagePreview ?? ''}</span>
             </span>
             {unread && (
-              <span
-                aria-label={`Não lidas: ${chat.unread}`}
-                className="ml-auto min-w-5 shrink-0 rounded-full bg-primary px-1.5 text-center text-[11px] font-bold text-white"
-              >
+              <span aria-label={`Não lidas: ${chat.unread}`} className={`${unreadBadge} shrink-0`}>
                 {chat.unread}
               </span>
             )}
           </span>
-          <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px]">
-            {channelName && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">{channelName}</span>}
-            {sectorName && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">{sectorName}</span>}
-            {chat.history && <span className="rounded-md bg-panel px-2 py-0.5 font-medium text-muted">Histórico do WhatsApp</span>}
+          <span className="flex min-h-[22px] min-w-0 items-center gap-1.5 text-xs leading-4 text-muted">
+            {channelName && <span className="truncate">{channelName}</span>}
+            {channelName && sectorName && <span aria-hidden>·</span>}
+            {sectorName && <span className="truncate">{sectorName}</span>}
+            {chat.history && <span className={`${badge} ${badgeTone.neutral}`}>Histórico do WhatsApp</span>}
+            {/* board: "Previdenciário · Juliana" */}
+            {(channelName || sectorName) && !chat.history && (owner || chat.state === 'open') && <span aria-hidden>·</span>}
             {owner ? (
               <span
                 title={owner.name}
                 role="img"
                 aria-label={`Responsável: ${owner.name}`}
-                className="flex min-w-0 items-center gap-1 rounded-full border border-border py-px pr-2 pl-px text-muted"
+                className="flex min-w-0 items-center gap-1"
               >
-                <Avatar name={owner.name} src={owner.avatarUrl} className="size-4 shrink-0 text-[8px] bg-primary text-white" />
+                <Avatar name={owner.name} src={owner.avatarUrl} className="size-[18px] text-[8px]" />
                 <span aria-hidden className="truncate">{owner.name.split(' ')[0]}</span>
               </span>
             ) : (
-              chat.state === 'open' && <span className="rounded-full bg-brass-soft px-2 py-0.5 font-semibold text-brass">Sem atendente</span>
+              chat.state === 'open' && <span className={`${badge} ${badgeTone.warning}`}>Sem atendente</span>
             )}
           </span>
           {chips.length > 0 && (
@@ -167,11 +168,14 @@ export function ChatListItem({
         </span>
       </button>
       {!selection && (
-        <details className="relative">
-          <summary aria-label="Opções da conversa" className="cursor-pointer list-none rounded-lg px-1.5 py-3 text-muted hover:text-fg">
-            <DotsThreeVertical size={18} />
+        <details className="group relative shrink-0 pt-1 pr-1.5">
+          <summary
+            aria-label="Opções da conversa"
+            className="grid size-8 cursor-pointer list-none place-items-center rounded-full text-muted transition-colors group-open:bg-panel group-open:text-fg hover:bg-panel hover:text-fg [&::-webkit-details-marker]:hidden"
+          >
+            <DotsThreeVertical size={18} weight="bold" />
           </summary>
-          <div className="absolute right-1 z-10 mt-1 rounded-lg border border-border bg-surface py-1 shadow-lg">
+          <div className={`${menuBox} absolute right-1.5 z-10 mt-1 min-w-44`}>
             {menu.map(
               (item) =>
                 item && (
@@ -182,7 +186,7 @@ export function ChatListItem({
                       e.currentTarget.closest('details')?.removeAttribute('open');
                       item.run();
                     }}
-                    className={`block w-full whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-sidebar-hover ${item.danger ? 'text-danger' : ''}`}
+                    className={`${menuItem} whitespace-nowrap ${item.danger ? 'text-danger' : ''}`}
                   >
                     {item.label}
                   </button>

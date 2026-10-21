@@ -36,6 +36,7 @@ import {
   channelItems,
   clampInt,
   control,
+  controlArea,
   entries,
   fieldItems,
   needsRight,
@@ -45,6 +46,7 @@ import {
   userItems,
   type FormProps,
 } from './fields';
+import { checkbox } from '../../ui';
 
 const WORKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
 export const UNIT_LABELS: Record<TimeUnit, string> = { seconds: 'segundos', minutes: 'minutos', hours: 'horas', days: 'dias' };
@@ -68,32 +70,36 @@ export function HoursForm({ config, onChange }: FormProps<HoursConfig>) {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <TimezoneInput value={config.timezone} onChange={(timezone) => onChange({ ...config, timezone })} />
       {intervals.map((it, i) => (
-        <div key={i} className="rounded border border-border p-2">
-          <div className="flex items-center gap-1">
+        <div key={i} className="rounded-block bg-sunken p-3">
+          <div className="flex items-center gap-2">
             <input type="time" aria-label={`Intervalo ${i + 1}: início`} value={it.from} onChange={(e) => set(i, { from: e.target.value })} className={control} />
             <span className="text-xs text-muted">até</span>
             <input type="time" aria-label={`Intervalo ${i + 1}: fim`} value={it.to} onChange={(e) => set(i, { to: e.target.value })} className={control} />
-            <RemoveButton
-              label={`Remover intervalo ${i + 1}`}
-              disabled={intervals.length === 1}
-              onClick={() => setIntervals(intervals.filter((_, j) => j !== i))}
-            />
           </div>
-          <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+          {/* the remove button sits on the days row so the two time inputs keep room for their value */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
             {WEEKDAYS.map((d) => (
-              <label key={d} className="flex items-center gap-0.5 text-xs">
+              <label key={d} className="flex items-center gap-1 text-xs font-semibold">
                 <input
                   type="checkbox"
                   aria-label={`Intervalo ${i + 1}: ${WEEKDAY_LABELS[d]}`}
                   checked={(it.days ?? WEEKDAYS).includes(d)}
                   onChange={() => toggleDay(i, d)}
+                  className={checkbox}
                 />
                 {WEEKDAY_LABELS[d].slice(0, 3)}
               </label>
             ))}
+            <span className="ml-auto">
+              <RemoveButton
+                label={`Remover intervalo ${i + 1}`}
+                disabled={intervals.length === 1}
+                onClick={() => setIntervals(intervals.filter((_, j) => j !== i))}
+              />
+            </span>
           </div>
         </div>
       ))}
@@ -104,7 +110,7 @@ export function HoursForm({ config, onChange }: FormProps<HoursConfig>) {
       >
         Adicionar intervalo
       </button>
-      <p className="text-xs text-muted">O horário final não entra: 08:00 até 12:00 vale até 11:59.</p>
+      <p className="text-[13px] leading-[18px] text-muted">O horário final não entra: 08:00 até 12:00 vale até 11:59.</p>
     </div>
   );
 }
@@ -115,7 +121,7 @@ export function WaitIntervalForm({ config, onChange, catalog }: FormProps<WaitIn
     onChange(mode === 'variable' ? { ...rest, mode, variable: variable ?? '' } : { ...rest, mode });
   }
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select
         label="Esperar"
         value={config.mode}
@@ -156,10 +162,10 @@ export function MultiConditionForm({ config, onChange, catalog }: FormProps<Mult
   const setCase = (i: number, patch: Partial<MultiConditionConfig['cases'][number]>) =>
     onChange({ ...config, cases: cases.map((c, j) => (j === i ? { ...c, ...patch } : c)) });
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {cases.map((c, i) => (
-        <div key={i} className="space-y-1 rounded border border-border p-2">
-          <div className="flex items-center gap-1">
+        <div key={i} className="space-y-2 border-t border-border pt-3 first:border-t-0 first:pt-0">
+          <div className="flex items-center gap-2">
             <input aria-label={`Caso ${i + 1}: nome`} value={c.label} maxLength={40} onChange={(e) => setCase(i, { label: e.target.value })} className={control} />
             <RemoveButton
               label={`Remover caso ${i + 1}`}
@@ -178,7 +184,7 @@ export function MultiConditionForm({ config, onChange, catalog }: FormProps<Mult
       >
         Adicionar caso
       </button>
-      <p className="text-xs text-muted">Segue o primeiro caso verdadeiro; se nenhum for, sai por “Senão”.</p>
+      <p className="text-[13px] leading-[18px] text-muted">Segue o primeiro caso verdadeiro; se nenhum for, sai por “Senão”.</p>
     </div>
   );
 }
@@ -193,9 +199,9 @@ export function DistributeForm({ config, onChange }: FormProps<DistributeConfig>
   const set = (i: number, patch: Partial<DistributeConfig['branches'][number]>) =>
     onChange({ ...config, branches: branches.map((b, j) => (j === i ? { ...b, ...patch } : b)) });
   return (
-    <div className="space-y-1">
+    <div className="space-y-3">
       {branches.map((b, i) => (
-        <div key={i} className="flex items-center gap-1">
+        <div key={i} className="flex items-center gap-2">
           <input aria-label={`Caminho ${i + 1}: nome`} value={b.label} maxLength={40} onChange={(e) => set(i, { label: e.target.value })} className={control} />
           <input
             type="number"
@@ -204,9 +210,9 @@ export function DistributeForm({ config, onChange }: FormProps<DistributeConfig>
             step={1}
             value={b.weight}
             onChange={(e) => set(i, { weight: clampInt(e.target.value, 1) })}
-            className={`${control} w-16 shrink-0`}
+            className={`${control} basis-16 shrink-0`}
           />
-          <span className="w-10 shrink-0 text-right text-xs text-muted">{Math.round((b.weight / total) * 100)}%</span>
+          <span className="w-10 shrink-0 text-right text-xs font-semibold text-muted tabular-nums">{Math.round((b.weight / total) * 100)}%</span>
           <RemoveButton
             label={`Remover caminho ${i + 1}`}
             disabled={branches.length <= 2}
@@ -228,7 +234,7 @@ export function DistributeForm({ config, onChange }: FormProps<DistributeConfig>
 
 export function ContactFieldForm({ config, onChange, catalog }: FormProps<ContactFieldConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select
         label="Campo"
         value={config.fieldId}
@@ -255,7 +261,7 @@ const TAG_MODES: Record<TagsConfig['mode'], string> = {
 
 export function TagsForm({ config, onChange, catalog }: FormProps<TagsConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select label="Regra" value={config.mode} options={entries(TAG_MODES)} onChange={(mode) => mode && onChange({ ...config, mode })} />
       <CheckList label="Etiquetas" items={tagItems(catalog)} selected={config.tagIds} onChange={(tagIds) => onChange({ ...config, tagIds })} />
     </div>
@@ -280,7 +286,7 @@ const AGENT_MODES: Record<ChatAgentConfig['mode'], string> = {
 
 export function ChatAgentForm({ config, onChange, catalog }: FormProps<ChatAgentConfig>) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Select label="A conversa está" value={config.mode} options={entries(AGENT_MODES)} onChange={(mode) => mode && onChange({ ...config, mode })} />
       {config.mode === 'specific' && (
         <CheckList label="Atendentes" items={userItems(catalog)} selected={config.userIds} onChange={(userIds) => onChange({ ...config, userIds })} />
@@ -293,7 +299,7 @@ export function MessageContainsForm({ config, onChange }: FormProps<MessageConta
   // keep the text as typed (blank lines included) so Enter works; store only the non-empty trimmed lines
   const [text, setText] = useState(() => (config.keywords ?? []).join('\n'));
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <Field label="Palavras ou frases" hint="Uma por linha. Maiúsculas e acentos não importam.">
         <textarea
           aria-label="Palavras ou frases"
@@ -303,7 +309,7 @@ export function MessageContainsForm({ config, onChange }: FormProps<MessageConta
             setText(e.target.value);
             onChange({ ...config, keywords: e.target.value.split('\n').map((k) => k.trim()).filter(Boolean) });
           }}
-          className={control}
+          className={controlArea}
         />
       </Field>
       <Select

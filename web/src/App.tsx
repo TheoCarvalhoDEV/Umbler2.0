@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react';
 import { Navigate, type RouteObject } from 'react-router';
+import { ChatCircleDotsIcon } from '@phosphor-icons/react';
 import AppLayout from './components/layout/AppLayout';
+import { card } from './components/ui';
 import { RequireAuth } from './lib/auth';
 import { ContactNewPage } from './pages/ContactNew';
 import { ContactsPage } from './pages/Contacts';
@@ -13,7 +15,19 @@ import { SettingsPage } from './pages/settings/SettingsPage';
 const BotEditorPage = lazy(() => import('./pages/settings/bots/BotEditorPage').then((m) => ({ default: m.BotEditorPage })));
 
 function NotFound() {
-  return <div className="flex h-full items-center justify-center text-muted">Página não encontrada.</div>;
+  return <div className={`${card} grid h-full place-items-center p-6 text-muted`}>Página não encontrada.</div>;
+}
+
+/** The conversation area before a chat is picked: a card like the conversation it stands in for. */
+function NoChatSelected() {
+  return (
+    <div className={`${card} flex h-full flex-col items-center justify-center gap-3 p-6`}>
+      <span aria-hidden className="grid size-14 place-items-center rounded-full bg-primary-soft text-accent-ink">
+        <ChatCircleDotsIcon size={28} />
+      </span>
+      <p className="text-sm text-muted">Selecione uma conversa</p>
+    </div>
+  );
 }
 
 export const routes: RouteObject[] = [
@@ -41,7 +55,7 @@ export const routes: RouteObject[] = [
         path: 'chats',
         element: <Inbox />,
         children: [
-          { index: true, element: <p className="grid h-full place-items-center text-sm text-muted">Selecione uma conversa</p> },
+          { index: true, element: <NoChatSelected /> },
           { path: ':id', element: <ConversationPage /> },
         ],
       },

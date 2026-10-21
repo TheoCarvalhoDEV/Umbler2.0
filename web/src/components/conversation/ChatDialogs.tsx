@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { ArrowsLeftRight, Check } from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, ChatDetail, SectorDto, UserDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
+import { button, checkbox, dialog, dialogTitle, fieldLabel, fieldSelect } from '../ui';
 
 // Native <dialog>: showModal() gives focus trapping, Esc and the backdrop for free.
 export function Modal({ title, onCancel, children }: { title: string; onCancel: () => void; children: ReactNode }) {
@@ -17,40 +19,42 @@ export function Modal({ title, onCancel, children }: { title: string; onCancel: 
         e.preventDefault(); // Esc: let React unmount it
         onCancel();
       }}
-      className="m-auto w-[min(28rem,calc(100%-2rem))] rounded-lg bg-panel p-5 text-fg shadow-xl backdrop:bg-black/50"
+      className={dialog}
     >
-      <h3 className="mb-4 text-base font-semibold">{title}</h3>
+      <h3 className={`${dialogTitle} mb-4`}>{title}</h3>
       {children}
     </dialog>
   );
 }
 
-export function Actions(props: { busy: boolean; error: string | null; confirmLabel: string; onCancel: () => void; onConfirm: () => void }) {
+export function Actions(props: {
+  busy: boolean;
+  error: string | null;
+  confirmLabel: string;
+  /** Optional 16px icon before the confirm label (the boards draw Transferir and Finalizar with one). */
+  confirmIcon?: ReactNode;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
   return (
     <>
       {props.error && (
-        <p role="alert" className="mt-3 text-sm text-danger">
+        <p role="alert" className="mt-4 text-[13px] font-semibold text-danger">
           {props.error}
         </p>
       )}
-      <div className="mt-5 flex justify-end gap-2">
-        <button type="button" onClick={props.onCancel} className="rounded px-3 py-2 text-sm hover:bg-surface">
+      <div className="mt-6 flex flex-wrap justify-end gap-2">
+        <button type="button" onClick={props.onCancel} className={button('secondary')}>
           Cancelar
         </button>
-        <button
-          type="button"
-          disabled={props.busy}
-          onClick={props.onConfirm}
-          className="rounded bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-        >
+        <button type="button" disabled={props.busy} onClick={props.onConfirm} className={button('primary')}>
+          {props.confirmIcon}
           {props.confirmLabel}
         </button>
       </div>
     </>
   );
 }
-
-const field = 'mt-1 block w-full rounded border border-field bg-surface px-2 py-1.5 text-sm text-fg';
 
 export function TransferDialog(props: {
   /** Only the starting sector is read; the bulk bar passes the default sector. */
@@ -69,15 +73,15 @@ export function TransferDialog(props: {
   const agents = props.users.filter((u) => u.active && u.sectorIds.includes(sectorId));
   return (
     <Modal title={props.title ?? 'Transferir conversa'} onCancel={props.onCancel}>
-      <label className="mb-3 block text-sm">
-        Setor
+      <label className="block">
+        <span className={fieldLabel}>Setor</span>
         <select
           value={sectorId}
           onChange={(e) => {
             setSectorId(e.target.value);
             setOwnerId(''); // the agent list depends on the sector
           }}
-          className={field}
+          className={fieldSelect}
         >
           {props.sectors.map((s) => (
             <option key={s.id} value={s.id}>
@@ -86,9 +90,9 @@ export function TransferDialog(props: {
           ))}
         </select>
       </label>
-      <label className="block text-sm">
-        Atendente
-        <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} className={field}>
+      <label className="mt-4 block">
+        <span className={fieldLabel}>Atendente</span>
+        <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} className={fieldSelect}>
           <option value="">Sem atendente (fila do setor)</option>
           {agents.map((u) => (
             <option key={u.id} value={u.id}>
@@ -101,6 +105,7 @@ export function TransferDialog(props: {
         busy={props.busy}
         error={props.error}
         confirmLabel="Transferir"
+        confirmIcon={<ArrowsLeftRight size={16} aria-hidden />}
         onCancel={props.onCancel}
         onConfirm={() => props.onConfirm({ sectorId, ownerId: ownerId || null })}
       />
@@ -121,26 +126,27 @@ export function CloseDialog(props: {
   const send = closing !== '' && (choice ?? true);
   return (
     <Modal title={props.title ?? 'Finalizar conversa'} onCancel={props.onCancel}>
-      <label className="flex items-start gap-2 text-sm">
+      <label className="flex items-start gap-2 text-[13px] leading-[18px] font-semibold">
         <input
           type="checkbox"
           checked={send}
           disabled={!closing}
           onChange={(e) => setChoice(e.target.checked)}
-          className="mt-0.5"
+          className={checkbox}
         />
         <span>
           Enviar mensagem de encerramento
           {!closing && settings.isSuccess && (
-            <span className="block text-xs text-muted">Nenhuma mensagem de encerramento configurada.</span>
+            <span className="mt-0.5 block text-xs font-normal text-muted">Nenhuma mensagem de encerramento configurada.</span>
           )}
         </span>
       </label>
-      {closing && <p className="mt-2 whitespace-pre-wrap rounded bg-surface p-2 text-xs text-muted">{closing}</p>}
+      {closing && <p className="mt-3 whitespace-pre-wrap rounded-block bg-sunken px-3.5 py-3 text-[13px] leading-[18px] text-muted">{closing}</p>}
       <Actions
         busy={props.busy || settings.isPending}
         error={props.error}
         confirmLabel="Finalizar"
+        confirmIcon={<Check size={16} aria-hidden />}
         onCancel={props.onCancel}
         onConfirm={() => props.onConfirm(send)}
       />
@@ -166,26 +172,18 @@ export function BotRunningDialog({
   const labels = BOT_RUNNING_LABELS[action];
   return (
     <Modal title="O chatbot está rodando" onCancel={() => onChoose(null)}>
-      <p className="text-sm">
+      <p>
         Em execução nesta conversa: <strong>{runs.map((r) => r.botName).join(', ')}</strong>.
       </p>
-      <p className="mt-2 text-sm text-muted">Parar o chatbot evita que ele continue respondendo o contato.</p>
-      <div className="mt-5 flex flex-wrap justify-end gap-2">
-        <button type="button" onClick={() => onChoose(null)} className="rounded px-3 py-2 text-sm hover:bg-surface">
+      <p className="mt-2 text-[13px] leading-[18px] text-muted">Parar o chatbot evita que ele continue respondendo o contato.</p>
+      <div className="mt-6 flex flex-wrap justify-end gap-2">
+        <button type="button" onClick={() => onChoose(null)} className={button('ghost')}>
           Cancelar
         </button>
-        <button
-          type="button"
-          onClick={() => onChoose('keep')}
-          className="rounded border border-border px-3 py-2 text-sm hover:bg-surface"
-        >
+        <button type="button" onClick={() => onChoose('keep')} className={button('secondary')}>
           {labels.keep}
         </button>
-        <button
-          type="button"
-          onClick={() => onChoose('stop')}
-          className="rounded bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-        >
+        <button type="button" onClick={() => onChoose('stop')} className={button('primary')}>
           {labels.stop}
         </button>
       </div>

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { BotDto, OfficeTemplateDestination, OfficeTemplateInput, SectorDto } from '@talk/shared';
 import { Actions, Modal } from '../../../components/conversation/ChatDialogs';
-import { Loading, field } from '../../../components/settings/common';
+import { Loading } from '../../../components/settings/common';
+import { blockTitle, field, fieldLabel, fieldSelect } from '../../../components/ui';
 import { api, qk } from '../../../lib/api';
 
 type DestKey = keyof OfficeTemplateInput['destinations'];
@@ -14,7 +15,6 @@ const DESTS: Record<DestKey, { label: string; match: string[] }> = {
   processos: { label: 'Processos', match: ['processos', 'juridico'] },
 };
 const KEYS = Object.keys(DESTS) as DestKey[];
-const input = `${field} bg-surface text-fg`;
 
 const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
@@ -79,28 +79,28 @@ export function OfficeTemplateDialog({ onCancel, onCreated }: { onCancel: () => 
       {!ready ? (
         <Loading error={channels.error ?? sectors.error ?? users.error} />
       ) : (
-        <div className="space-y-3 text-sm">
-          <p className="text-xs text-muted">
+        <div className="space-y-4 text-sm">
+          <p className="text-[13px] text-muted">
             Recria o fluxo do escritório: horário de atendimento, boas-vindas, menu, comunicado, CPF e transferência. Textos e
             horários podem ser editados depois no editor. O chatbot é criado pausado.
           </p>
           <label className="block">
-            Nome do chatbot
-            <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} className={input} />
+            <span className={fieldLabel}>Nome do chatbot</span>
+            <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} className={field} />
           </label>
           <label className="block">
-            Nome do escritório
+            <span className={fieldLabel}>Nome do escritório</span>
             <input
               value={companyName}
               maxLength={80}
               placeholder="Aparece na mensagem de boas-vindas"
               onChange={(e) => setCompanyName(e.target.value)}
-              className={input}
+              className={field}
             />
           </label>
           <label className="block">
-            Canal
-            <select value={channel} onChange={(e) => setChannelId(e.target.value)} className={input}>
+            <span className={fieldLabel}>Canal</span>
+            <select value={channel} onChange={(e) => setChannelId(e.target.value)} className={fieldSelect}>
               {ready.channels.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -112,15 +112,15 @@ export function OfficeTemplateDialog({ onCancel, onCreated }: { onCancel: () => 
             const v = current(k);
             const agents = ready.users.filter((u) => u.active && u.sectorIds.includes(v.sectorId));
             return (
-              <fieldset key={k} className="rounded border border-border p-2">
-                <legend className="px-1 text-xs font-medium">{DESTS[k].label}</legend>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="block">
-                    Setor
+              <fieldset key={k} className="min-w-0">
+                <legend className={`mb-2 ${blockTitle}`}>{DESTS[k].label}</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block min-w-0">
+                    <span className={fieldLabel}>Setor</span>
                     <select
                       value={v.sectorId}
                       onChange={(e) => setPicked((p) => ({ ...p, [k]: { sectorId: e.target.value, userId: '' } }))}
-                      className={input}
+                      className={fieldSelect}
                     >
                       {ready.sectors.map((s) => (
                         <option key={s.id} value={s.id}>
@@ -129,12 +129,12 @@ export function OfficeTemplateDialog({ onCancel, onCreated }: { onCancel: () => 
                       ))}
                     </select>
                   </label>
-                  <label className="block">
-                    Atendente
+                  <label className="block min-w-0">
+                    <span className={fieldLabel}>Atendente</span>
                     <select
                       value={v.userId}
                       onChange={(e) => setPicked((p) => ({ ...p, [k]: { ...v, userId: e.target.value } }))}
-                      className={input}
+                      className={fieldSelect}
                     >
                       <option value="">Nenhum (fila do setor)</option>
                       {agents.map((u) => (

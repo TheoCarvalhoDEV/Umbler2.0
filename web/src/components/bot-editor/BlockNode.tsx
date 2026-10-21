@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
 import { TrashIcon } from '@phosphor-icons/react';
-import { catalogEntry, outputsOf, type BlockCategory, type BotDto, type BotPatch } from '@talk/shared';
-import { field } from '../settings/common';
+import { catalogEntry, outputsOf, type BotDto, type BotPatch } from '@talk/shared';
+import { field, fieldLabel } from '../ui';
 import { BlockConfigCard } from './cards';
 import { canBeTarget, type BlockFlowNode } from './editor-state';
-import { blockIcon } from './icons';
+import { CATEGORY_TONE, blockIcon } from './icons';
 import type { EditorCatalog } from './useEditorCatalog';
 
 /** What a node needs from the editor. Kept out of node.data so the data stays a plain BotNode. */
@@ -20,14 +20,6 @@ export interface NodeActions {
 }
 
 export const NodeActionsContext = createContext<NodeActions | null>(null);
-
-export const CATEGORY_BORDER: Record<BlockCategory, string> = {
-  start: 'border-success',
-  condition: 'border-amber-500',
-  action: 'border-primary',
-  finish: 'border-danger',
-  utility: 'border-border',
-};
 
 export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
   const actions = useContext(NodeActionsContext);
@@ -48,34 +40,36 @@ export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
   useEffect(() => updateNodeInternals(id), [id, handleKey, updateNodeInternals]);
   if (!actions) throw new Error('BlockNode usado fora do BotEditor');
   const Icon = blockIcon(entry.icon);
-  const ring = problems.length > 0 ? 'ring-2 ring-danger' : selected ? 'ring-2 ring-primary/50' : '';
+  const ring = problems.length > 0 ? 'ring-2 ring-danger' : selected ? 'ring-2 ring-primary' : '';
 
   return (
     <div
       data-testid={`block-${node.id}`}
       data-invalid={problems.length > 0 ? 'true' : undefined}
-      className={`w-[280px] rounded-lg border-2 bg-panel text-fg shadow-lg ${CATEGORY_BORDER[entry.category]} ${ring}`}
+      className={`w-[280px] rounded-block bg-surface text-fg shadow-float ${ring}`}
     >
       {canBeTarget(node.type) && <Handle type="target" position={Position.Left} />}
-      <header className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Icon size={16} aria-hidden />
-        <span className="flex-1 truncate text-sm font-medium">{entry.label}</span>
+      <header className="flex items-center gap-2 border-b border-border py-2 pr-1.5 pl-3">
+        <span className={`grid size-7 shrink-0 place-items-center rounded-full ${CATEGORY_TONE[entry.category]}`}>
+          <Icon size={16} aria-hidden />
+        </span>
+        <span className="flex-1 truncate text-sm font-bold">{entry.label}</span>
         {!actions.readOnly && (
           <button
             type="button"
             aria-label={`Excluir bloco ${entry.label}`}
             title="Excluir bloco"
             onClick={() => actions.remove(id)}
-            className="nodrag rounded p-0.5 text-muted hover:text-danger"
+            className="nodrag grid size-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-danger-soft hover:text-danger"
           >
-            <TrashIcon size={14} />
+            <TrashIcon size={16} />
           </button>
         )}
       </header>
-      <fieldset disabled={actions.readOnly} className="nodrag nowheel min-w-0 cursor-default space-y-2 px-3 py-2">
+      <fieldset disabled={actions.readOnly} className="nodrag nowheel min-w-0 cursor-default space-y-3 p-3">
         {node.type !== 'sticky_note' && (
-          <label className="block text-xs text-muted">
-            Nome (variável)
+          <label className="block">
+            <span className={fieldLabel}>Nome (variável)</span>
             <input
               value={node.name ?? ''}
               maxLength={40}
@@ -83,7 +77,7 @@ export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
                 setNode({ ...node, name: e.target.value });
                 actions.rename(id, e.target.value);
               }}
-              className={`${field} bg-surface text-fg`}
+              className={field}
             />
           </label>
         )}
@@ -103,7 +97,7 @@ export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
           <p className="text-xs text-muted">Carregando…</p>
         )}
         {problems.length > 0 && (
-          <ul className="space-y-0.5 text-xs text-danger">
+          <ul className="space-y-0.5 text-xs font-semibold text-danger">
             {problems.map((p, i) => (
               <li key={i}>{p}</li>
             ))}
@@ -111,9 +105,9 @@ export function BlockNode({ id, data, selected }: NodeProps<BlockFlowNode>) {
         )}
       </fieldset>
       {outputs.length > 0 && (
-        <ul className="border-t border-border py-1">
+        <ul className="border-t border-border py-1.5">
           {outputs.map((o) => (
-            <li key={o.id} className="relative py-1 pr-4 text-right text-xs text-muted">
+            <li key={o.id} className="relative py-1.5 pr-4 text-right text-xs font-semibold text-fg-2">
               {o.label}
               <Handle type="source" position={Position.Right} id={o.id} />
             </li>

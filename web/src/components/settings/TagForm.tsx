@@ -1,5 +1,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { TAG_COLORS, tagColorHex, type TagDto } from '@talk/shared';
+import { button, field, fieldError, fieldLabel } from '../ui';
+import { block, btnPrimary } from './common';
 
 export interface TagInput {
   name: string;
@@ -8,6 +10,9 @@ export interface TagInput {
 }
 
 export const TAG_NAME_MAX = 30;
+
+/** A tag as a neutral pill with a dot of its color: readable in both themes whatever the color. */
+export const tagChip = 'inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-panel px-3 text-xs font-bold text-fg-2';
 
 export function TagForm({
   initial,
@@ -35,10 +40,10 @@ export function TagForm({
   }
 
   return (
-    <form onSubmit={submit} className="mb-6 space-y-4 rounded border border-border p-4">
+    <form onSubmit={submit} className={`${block} mb-5 space-y-5`}>
       <div className="flex gap-3">
         <div className="w-20">
-          <label htmlFor={`${id}-emoji`} className="block text-sm font-medium">
+          <label htmlFor={`${id}-emoji`} className={fieldLabel}>
             Emoji
           </label>
           {/* ponytail: native input, the OS emoji picker (Win + . / Ctrl+Cmd+Space) fills it; no picker library */}
@@ -47,11 +52,11 @@ export function TagForm({
             value={emoji}
             onChange={(e) => setEmoji(e.target.value)}
             placeholder="⭐"
-            className="mt-1 w-full rounded border border-border px-2 py-1.5 text-center"
+            className={`${field} text-center`}
           />
         </div>
         <div className="flex-1">
-          <label htmlFor={`${id}-name`} className="block text-sm font-medium">
+          <label htmlFor={`${id}-name`} className={fieldLabel}>
             Nome
           </label>
           <input
@@ -59,17 +64,17 @@ export function TagForm({
             value={name}
             maxLength={TAG_NAME_MAX}
             onChange={(e) => setName(e.target.value.slice(0, TAG_NAME_MAX))}
-            className="mt-1 w-full rounded border border-border px-2 py-1.5 text-sm"
+            className={field}
           />
-          <p className="mt-1 text-right text-xs text-muted">{`${name.length}/${TAG_NAME_MAX}`}</p>
+          <p className="mt-1.5 text-right text-xs text-muted tabular-nums">{`${name.length}/${TAG_NAME_MAX}`}</p>
         </div>
       </div>
 
       <div>
-        <span id={`${id}-colors`} className="block text-sm font-medium">
+        <span id={`${id}-colors`} className={fieldLabel}>
           Cor de fundo
         </span>
-        <div role="radiogroup" aria-labelledby={`${id}-colors`} className="mt-2 grid w-fit grid-cols-10 gap-2">
+        <div role="radiogroup" aria-labelledby={`${id}-colors`} className="grid w-fit grid-cols-10 gap-2.5">
           {TAG_COLORS.map((c) => (
             <button
               key={c.name}
@@ -79,7 +84,7 @@ export function TagForm({
               aria-label={c.label}
               title={c.label}
               onClick={() => setColor(c.hex)}
-              className={`h-7 w-7 rounded-full ${color === c.hex ? 'ring-2 ring-fg ring-offset-2 ring-offset-panel' : ''}`}
+              className={`size-7 rounded-full ${color === c.hex ? 'ring-2 ring-fg ring-offset-2 ring-offset-sunken' : ''}`}
               style={{ backgroundColor: c.hex }}
             />
           ))}
@@ -87,31 +92,24 @@ export function TagForm({
       </div>
 
       <div>
-        <span className="block text-sm font-medium">Pré-visualização</span>
-        <span
-          data-testid="tag-preview"
-          className="mt-2 inline-block rounded-full px-3 py-1 text-sm font-medium text-white"
-          style={{ backgroundColor: color }}
-        >
+        <span className={fieldLabel}>Pré-visualização</span>
+        <span data-testid="tag-preview" className={tagChip}>
+          <span aria-hidden className="size-[7px] shrink-0 rounded-full" style={{ backgroundColor: color }} />
           {`${cleanEmoji ? `${cleanEmoji} ` : ''}${cleanName || 'Nome da etiqueta'}`}
         </span>
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-danger">
+        <p role="alert" className={fieldError}>
           {error}
         </p>
       )}
 
       <div className="flex justify-end gap-2">
-        <button type="button" onClick={onCancel} className="rounded border border-border px-3 py-1.5 text-sm hover:bg-sidebar-hover">
+        <button type="button" onClick={onCancel} className={button('ghost')}>
           Cancelar
         </button>
-        <button
-          type="submit"
-          disabled={!cleanName || pending}
-          className="rounded bg-primary px-3 py-1.5 text-sm text-white hover:bg-primary-hover disabled:opacity-50"
-        >
+        <button type="submit" disabled={!cleanName || pending} className={btnPrimary}>
           Salvar
         </button>
       </div>
