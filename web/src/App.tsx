@@ -9,6 +9,7 @@ import { ContactsPage } from './pages/Contacts';
 import ConversationPage from './pages/Conversation';
 import { Inbox } from './pages/Inbox';
 import Login from './pages/Login';
+import { ScheduledMessagesPage } from './pages/ScheduledMessages';
 import { SettingsPage } from './pages/settings/SettingsPage';
 
 // React Flow, dagre and the block cards load only when an admin opens the editor.
@@ -61,6 +62,7 @@ export const routes: RouteObject[] = [
       },
       { path: 'contacts', element: <ContactsPage /> },
       { path: 'contacts/new', element: <ContactNewPage /> },
+      { path: 'agendamentos', element: <ScheduledMessagesPage /> },
       { path: 'configuracoes/:section?', element: <SettingsPage /> },
       { path: '*', element: <NotFound /> },
     ],

@@ -11,6 +11,7 @@ import { CustomFieldsSettings } from './CustomFieldsSettings';
 import { QuickAnswersSettings } from './QuickAnswersSettings';
 import { TriageSettings } from './TriageSettings';
 import { ChatSettings } from './ChatSettings';
+import { AutoRulesSettings } from './AutoRulesSettings';
 import { BotsSettings } from './bots/BotsSettings';
 import { card, sectionTitle } from '../../components/ui';
 
@@ -25,6 +26,7 @@ const SECTIONS: Array<{ path: string; label: string; group: (typeof GROUPS)[numb
   { path: 'triagem', label: 'Triagem', group: 'Atendimento', adminOnly: true, page: TriageSettings },
   { path: 'chatbots', label: 'Chatbots', group: 'Atendimento', adminOnly: true, page: BotsSettings },
   { path: 'conversas', label: 'Conversas', group: 'Atendimento', adminOnly: true, page: ChatSettings },
+  { path: 'regras', label: 'Regras automáticas', group: 'Atendimento', adminOnly: true, page: AutoRulesSettings },
   { path: 'atendentes', label: 'Atendentes', group: 'Equipe e cadastros', adminOnly: true, page: UsersSettings },
   { path: 'etiquetas', label: 'Etiquetas', group: 'Equipe e cadastros', adminOnly: true, page: TagsSettings },
   { path: 'campos', label: 'Campos personalizados', group: 'Equipe e cadastros', adminOnly: true, page: CustomFieldsSettings },

@@ -9,6 +9,7 @@ import rateLimit from '@fastify/rate-limit';
 import { authPlugin } from './auth/plugin.js';
 import { authRoutes } from './auth/routes.js';
 import { registerBotRoutes } from './bots/routes.js';
+import { registerAutomationRoutes } from './automation/routes.js';
 import { registerCustomFieldRoutes } from './catalog/custom-fields.js';
 import { registerChannelRoutes } from './channels/routes.js';
 import { chatRoutes } from './chats/routes.js';
@@ -78,6 +79,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerQuickAnswerRoutes(app, ctx);
   registerSettingsRoutes(app, ctx);
   await chatRoutes(app, ctx);
+  registerAutomationRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
   registerBotRoutes(app, ctx);
 

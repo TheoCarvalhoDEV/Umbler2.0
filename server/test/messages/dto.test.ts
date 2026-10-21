@@ -41,7 +41,7 @@ describe('toMessageDto', () => {
       mediaUnavailable: false,
       mediaExpired: false,
       authorId: s.agentA.id, authorName: s.agentA.name, authorAvatarUrl: null, botRunId: null, botName: null,
-      officeReaction: null, deleted: null, edited: null, forwarded: false, favorite: null,
+      officeReaction: null, deleted: null, edited: null, forwarded: false, favorite: null, scheduled: false,
       replyTo: { id: quotedId, body: 'Pode mandar o contrato?', kind: 'text' },
       reaction: null, status: 'pending', error: null,
       sentAt: '2026-10-14T12:05:00.000Z',

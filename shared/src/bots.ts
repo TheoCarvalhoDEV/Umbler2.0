@@ -359,4 +359,6 @@ export interface OfficeTemplateInput {
 export interface BotEventData { botId: string; botName: string; runId: string; reason?: string; text?: string; by?: string | null;
   fromSectorId?: string; toSectorId?: string; fromOwnerId?: string | null; toOwnerId?: string | null }
 export interface BotRunningErrorBody { error: string; code: 'BOT_RUNNING'; runs: Array<{ id: string; botName: string }> }
-export interface NotificationDto { id: string; chatId: string; title: string; text: string; botName: string; createdAt: string }
+export interface NotificationDto { id: string; chatId: string; title: string; text: string; botName: string; createdAt: string;
+  // spec 2026-10-20 agendamentos §3.3: a failed scheduled message (botName ''); absent = 'bot'
+  kind?: 'bot' | 'scheduled_failed' }

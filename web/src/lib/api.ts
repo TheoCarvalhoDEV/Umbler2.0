@@ -1,5 +1,6 @@
 import type { InfiniteData } from '@tanstack/react-query';
 import type {
+  AutoRulesDto,
   BotAction,
   BotDto,
   BotExport,
@@ -28,6 +29,8 @@ import type {
   QuickAnswerDto,
   RecentStickerDto,
   SaveVersionInput,
+  ScheduledMessageDto,
+  ScheduledTab,
   SectorDto,
   SettingsDto,
   TagDto,
@@ -80,6 +83,8 @@ export type AnchoredTimelineData = InfiniteData<TimelineItem[], TimelineCursor>;
 export interface StartChatInput { contactId?: string; phone?: string; name?: string; sectorId?: string }
 /** Spec 2026-10-20 §4: the same destination for every chat (one of the two). */
 export interface BulkTransferInput { chatIds: string[]; sectorId?: string; ownerId?: string | null }
+/** Spec 2026-10-20 agendamentos §3.1: `sendAt` is an ISO instant; at most one file, kept until it is sent. */
+export interface ScheduleInput { text: string; sendAt: string; signature: boolean; file?: Blob; fileName?: string }
 export interface SendTextInput { text: string; signature: boolean; replyToId?: string; botAction?: BotAction }
 export interface SendFileInput {
   file: Blob; fileName?: string; text?: string; signature: boolean; replyToId?: string; asVoice?: boolean; botAction?: BotAction;
@@ -273,6 +278,31 @@ export const api = Object.assign(call, {
   settings: {
     get: () => request<SettingsDto>('GET', '/api/settings'),
     put: (s: SettingsDto) => request<SettingsDto>('PUT', '/api/settings', s),
+    /** Spec 2026-10-20 agendamentos §4 (admin): its own route, apart from the whole-settings PUT. */
+    autoRules: {
+      get: () => request<AutoRulesDto>('GET', '/api/settings/auto-rules'),
+      put: (rules: AutoRulesDto) => request<AutoRulesDto>('PUT', '/api/settings/auto-rules', rules),
+    },
+  },
+  scheduled: {
+    /** The chat's pending ones (spec 2026-10-20 agendamentos §3.2). */
+    listForChat: (chatId: string) => request<ScheduledMessageDto[]>('GET', `/api/chats/${enc(chatId)}/scheduled-messages`),
+    /** Mine (an admin: everyone's), one tab at a time. */
+    list: (status: ScheduledTab) => request<ScheduledMessageDto[]>('GET', `/api/scheduled-messages${qs({ status })}`),
+    create: (chatId: string, input: ScheduleInput) => {
+      const path = `/api/chats/${enc(chatId)}/scheduled-messages`;
+      if (!input.file) return request<ScheduledMessageDto>('POST', path, { text: input.text, sendAt: input.sendAt, signature: input.signature });
+      // @fastify/multipart only exposes fields that come BEFORE the file part — keep the file last.
+      const form = new FormData();
+      form.append('text', input.text);
+      form.append('sendAt', input.sendAt);
+      form.append('signature', String(input.signature));
+      form.append('file', input.file, input.fileName ?? (input.file instanceof File ? input.file.name : 'arquivo'));
+      return request<ScheduledMessageDto>('POST', path, form);
+    },
+    update: (id: string, patch: { text?: string; sendAt?: string }) =>
+      request<ScheduledMessageDto>('PATCH', `/api/scheduled-messages/${enc(id)}`, patch),
+    cancel: (id: string) => request<ScheduledMessageDto>('POST', `/api/scheduled-messages/${enc(id)}/cancel`),
   },
   channels: {
     list: () => request<ChannelDto[]>('GET', '/api/channels'),
@@ -338,6 +368,11 @@ export const qk = {
   users: ['users'] as const,
   quickAnswers: ['quick-answers'] as const,
   settings: ['settings'] as const,
+  autoRules: ['settings', 'auto-rules'] as const,
+  /** Every scheduled-message list (prefix). Under ['chats'] so the WS reconnect invalidation refreshes them too. */
+  scheduled: ['chats', 'scheduled'] as const,
+  chatScheduled: (chatId: string) => ['chats', 'scheduled', 'chat', chatId] as const,
+  scheduledList: (tab: ScheduledTab) => ['chats', 'scheduled', 'list', tab] as const,
   channels: ['channels'] as const,
   bots: ['bots'] as const,
   bot: (id: string) => ['bots', 'detail', id] as const,

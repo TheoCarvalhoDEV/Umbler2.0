@@ -11,6 +11,7 @@ import { failInterruptedRuns } from './bots/engine.js';
 import { createScheduler } from './bots/scheduler.js';
 import { createAvatarSweep } from './contacts/avatar.js';
 import { createHistoryWorker } from './history/jobs.js';
+import { createAutomationWorker } from './automation/worker.js';
 import type { AppCtx } from './ctx.js';
 
 const config = loadConfig(process.env);
@@ -64,12 +65,18 @@ avatarSweep.start();
 const history = createHistoryWorker(ctx);
 history.start();
 
+// Spec 2026-10-20 agendamentos: due scheduled messages (every 15 s) and the automatic rules (every minute). State lives
+// in the DB; a row a restart left in 'sending' fails after 10 min instead of going out again.
+const automation = createAutomationWorker(ctx);
+automation.start();
+
 // Node as PID 1 in Docker ignores SIGTERM unless handled; close cleanly so `docker compose stop` is fast
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     scheduler.stop();
     void avatarSweep.stop();
     void history.stop();
+    automation.stop();
     void app.close().then(() => process.exit(0));
   });
 }

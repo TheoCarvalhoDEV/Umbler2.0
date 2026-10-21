@@ -1,12 +1,13 @@
 import { useState, type KeyboardEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, PencilSimpleLine, Robot, ShareFat, Star, WarningCircle,
+  CalendarCheck, Check, Checks, Clock, DownloadSimple, FileText, ImageBroken, PencilSimpleLine, Robot, ShareFat, Star, WarningCircle,
 } from '@phosphor-icons/react';
 import type { Me, MessageDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
 import { confirmDialog } from '../../lib/confirm';
 import { Avatar } from '../Avatar';
+import { AudioPlayer } from './AudioPlayer';
 import { button, fieldArea } from '../ui';
 import { applyWsEvent } from '../../lib/ws';
 import { EditHistoryDialog, ForwardDialog, MediaViewer } from './MessageDialogs';
@@ -133,7 +134,7 @@ function MediaView({ m }: { m: MessageDto }) {
     case 'audio':
       return (
         <div className={`flex items-center gap-1 ${beforeCaption}`}>
-          <audio controls preload="none" src={url} className="max-w-full" />
+          <AudioPlayer src={url} insetClass={insetOf(m)} />
           <SaveLink url={url} name={name} className={saveButton} />
         </div>
       );
@@ -341,6 +342,11 @@ export function MessageBubble({ m, onReply, chatOpen = false, highlighted = fals
         {m.forwarded && (
           <p data-tag="forwarded" className={`mb-1 flex items-center gap-1 text-xs italic ${meta}`}>
             <ShareFat size={12} aria-hidden /> Encaminhada
+          </p>
+        )}
+        {m.scheduled && (
+          <p data-tag="scheduled" className={`mb-1 flex items-center gap-1 text-xs italic ${meta}`}>
+            <CalendarCheck size={12} aria-hidden /> Agendada
           </p>
         )}
         {m.replyTo && (

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { STARTER_GRAPH, createBot } from '../../src/bots/repo.js';
-import { bots, channels, chats, contacts, messages } from '../../src/db/schema.js';
+import { bots, channels, chats, contacts, messages, scheduledMessages } from '../../src/db/schema.js';
 import { GatewayError } from '../../src/whatsapp/types.js';
 import { seedChat, seedMessage } from '../chats/seed.js';
 import { handleInbound } from '../../src/messages/ingest.js';
@@ -178,6 +178,11 @@ describe('DELETE /api/channels/:id', () => {
     const mine = await seedChat(ctx, { channelId: seed.channelId, sectorId: seed.sectorA, phone: '5565999990001' });
     await seedMessage(ctx, mine.chatId, seed.channelId, at, { kind: 'image', mediaPath: '2026/10/foto.jpg', externalId: 'C1' });
     await seedMessage(ctx, mine.chatId, seed.channelId, at, { kind: 'image', mediaPath: '2026/10/compartilhada.jpg', externalId: 'C2' });
+    // a scheduled message's file (any state) goes with its chat
+    await writeFile(join(ctx.config.mediaDir, '2026/10/agendado.pdf'), 'x');
+    await ctx.db.insert(scheduledMessages).values({
+      chatId: mine.chatId, authorId: seed.agentA.id, body: 'Lembrete', signature: false, sendAt: at, mediaPath: '2026/10/agendado.pdf',
+    });
     const kept = await seedChat(ctx, { channelId: other!.id, sectorId: seed.sectorA, contactId: mine.contactId });
     await seedMessage(ctx, kept.chatId, other!.id, at, { kind: 'image', mediaPath: '2026/10/compartilhada.jpg', externalId: 'C3' });
     const bot = await createBot(ctx.db, {
@@ -210,6 +215,7 @@ describe('DELETE /api/channels/:id', () => {
     expect(await ctx.db.select().from(chats).where(eq(chats.id, kept.chatId))).toHaveLength(1);
     expect(await ctx.db.select().from(contacts).where(eq(contacts.id, mine.contactId))).toHaveLength(1);
     expect(existsSync(join(ctx.config.mediaDir, '2026/10/foto.jpg'))).toBe(false);
+    expect(existsSync(join(ctx.config.mediaDir, '2026/10/agendado.pdf'))).toBe(false);
     expect(existsSync(join(ctx.config.mediaDir, '2026/10/compartilhada.jpg'))).toBe(true); // the other channel still uses it
     const [bot] = await ctx.db.select().from(bots).where(eq(bots.id, botId));
     expect(bot!.startChannelIds).toEqual([otherId]);

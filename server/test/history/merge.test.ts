@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, tags,
+  chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, deletedChats, messages, scheduledMessages, tags,
 } from '../../src/db/schema.js';
 import { mergeLidPairs } from '../../src/history/merge.js';
 import { placeRecords } from '../../src/history/place.js';
@@ -110,6 +110,18 @@ describe('mergeLidPairs (§5.4)', () => {
 
     const rows = await ctx.db.select().from(chatTags).where(eq(chatTags.chatId, phoneChat));
     expect(rows.map((r) => r.tagId).sort()).toEqual([t1!.id, t2!.id].sort());
+  });
+
+  it("an absorbed chat's scheduled messages move to the twin (spec 2026-10-20 agendamentos §3.3)", async () => {
+    const lidId = await lidOnly();
+    const phoneId = await newContact(ctx, { phone: PHONE });
+    const lidChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId: lidId });
+    const phoneChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.sectorA, contactId: phoneId });
+    await ctx.db.insert(scheduledMessages).values({ chatId: lidChat, authorId: s.agentA.id, body: 'Lembrete', signature: false, sendAt: new Date() });
+
+    await mergeLidPairs(ctx, pair);
+
+    expect((await ctx.db.select().from(scheduledMessages)).map((r) => r.chatId)).toEqual([phoneChat]);
   });
 
   it('two history chats become one spanning both', async () => {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_AUTO_RULES } from '@talk/shared';
 import { api, ApiError, botRunningRuns, graphProblems, request } from './api';
 
 const json = (status: number, body?: unknown) =>
@@ -254,5 +255,39 @@ describe('api routes of the 2026-10-20 delivery', () => {
       'POST /api/chats/bulk/read {"chatIds":["c1"]}',
       'GET /api/chats?tab=inbox&sort=waiting&chatTagId=t1 ',
     ]);
+  });
+});
+
+describe('api routes of the 2026-10-20 agendamentos delivery', () => {
+  it('calls the scheduled-message and auto-rule routes', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.scheduled.listForChat('c1');
+    await api.scheduled.list('failed');
+    await api.scheduled.create('c1', { text: 'Oi', sendAt: '2026-10-21T12:00:00.000Z', signature: true });
+    await api.scheduled.update('s1', { sendAt: '2026-10-21T13:00:00.000Z' });
+    await api.scheduled.cancel('s1');
+    await api.settings.autoRules.get();
+    await api.settings.autoRules.put(DEFAULT_AUTO_RULES);
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)} ${String(i?.body ?? '')}`)).toEqual([
+      'GET /api/chats/c1/scheduled-messages ',
+      'GET /api/scheduled-messages?status=failed ',
+      'POST /api/chats/c1/scheduled-messages {"text":"Oi","sendAt":"2026-10-21T12:00:00.000Z","signature":true}',
+      'PATCH /api/scheduled-messages/s1 {"sendAt":"2026-10-21T13:00:00.000Z"}',
+      'POST /api/scheduled-messages/s1/cancel ',
+      'GET /api/settings/auto-rules ',
+      `PUT /api/settings/auto-rules ${JSON.stringify(DEFAULT_AUTO_RULES)}`,
+    ]);
+  });
+
+  it('sends a scheduled attachment as multipart, with the fields before the file', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    const file = new File(['%PDF'], 'peticao.pdf', { type: 'application/pdf' });
+    await api.scheduled.create('c1', { text: 'Segue', sendAt: '2026-10-21T12:00:00.000Z', signature: false, file });
+    const body = fetchMock.mock.calls[0]![1]!.body as FormData;
+    expect([...body.keys()]).toEqual(['text', 'sendAt', 'signature', 'file']);
+    expect(body.get('signature')).toBe('false');
+    expect((body.get('file') as File).name).toBe('peticao.pdf');
   });
 });
