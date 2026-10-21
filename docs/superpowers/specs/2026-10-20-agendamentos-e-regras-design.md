@@ -90,7 +90,7 @@ Duas coisas que o escritório faz hoje à mão: **mandar uma mensagem num horár
 - Compositor: botão "Agendar mensagem"; aviso "Digite a mensagem que será agendada".
 - Diálogo: títulos "Agendar mensagem" / "Editar agendamento"; campos "Texto da mensagem", "Data e hora (horário de Cuiabá)"; "Anexo: <arquivo>"; botões "Agendar" / "Salvar" / "Cancelar"; erros "Digite a mensagem", "Escolha a data e a hora", "Escolha um horário pelo menos 2 minutos à frente", "Escolha um horário em até 1 ano".
 - Conversa: "1 mensagem agendada" / "N mensagens agendadas"; linha "por <nome>", "Anexo", "Editar", "Cancelar"; confirmação "Cancelar a mensagem agendada?" / "Cancelar agendamento"; marca da bolha "Agendada".
-- Menu: "Agendamentos"; abas "Pendentes", "Enviadas", "Falharam", "Canceladas"; situações "Pendente", "Enviando…", "Enviada", "Falhou", "Cancelada"; vazio "Nenhuma mensagem aqui."
+- Menu: "Agenda" (o título da página é "Agendamentos"; decisão de 21/10: o rótulo do menu lateral tem uma palavra só); abas "Pendentes", "Enviadas", "Falharam", "Canceladas"; situações "Pendente", "Enviando…", "Enviada", "Falhou", "Cancelada"; vazio "Nenhuma mensagem aqui."
 - Aviso de falha: "Mensagem agendada não enviada", rodapé "Mensagens agendadas".
 - Eventos: "Mensagem agendada por <nome> para <data>", "Mensagem agendada alterada por <nome> para <data>", "Mensagem agendada cancelada por <nome>", "Devolvida à fila: sem resposta há N min", "Finalizada por inatividade".
 - Configurações: seção "Regras automáticas"; "Devolver à fila conversas paradas" com "Minutos sem resposta"; "Finalizar por inatividade" com "Horas sem mensagens" e "Enviar a mensagem de encerramento"; botão "Salvar"; "Regras salvas."
