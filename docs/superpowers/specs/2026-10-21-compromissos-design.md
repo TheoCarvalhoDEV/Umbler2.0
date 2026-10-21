@@ -1,7 +1,7 @@
 # Compromissos (lembretes automáticos a partir de compromissos cadastrados à mão) — design
 
 - **Data:** 21/10/2026 · **Status:** desenho aprovado pelo usuário no chat (itens 1–7 da conversa); o resto foi decidido pelo controlador (§11) — aguardando revisão desta spec
-- **Branch:** `feat/compromissos` (a partir de `feat/agendamentos-e-regras`, a entrega 3, já integrada em `main` pelo PR #24). Migração `0009`, depois da `0008_agendamentos_e_regras`.
+- **Branch:** `feat/compromissos` (a partir de `feat/agendamentos-e-regras`, a entrega 3, que chegou à `main` pelo PR #25, e com o redesenho dos Ajustes `feat/ajustes-mensageiro`, PR #26, já incorporado: a seção de Configurações usa as peças novas). Migração `0009`, depois da `0008_agendamentos_e_regras`.
 - **Base:** mensagens agendadas `2026-10-20-agendamentos-e-regras-design.md` (fuso do escritório, limites de 2 min / 1 ano, máquina de estados, envio como o autor, aviso de falha) e o código atual: `server/src/automation/scheduled.ts`, `server/src/automation/delivery.ts`, `server/src/automation/rules.ts`, `server/src/messages/send.ts`, `server/src/catalog/settings.ts`, `server/src/history/merge.ts`, `shared/src/automation.ts`, `web/src/components/conversation/Scheduled.tsx`, `Composer.tsx`, `ConversationHeader.tsx`, `web/src/pages/ScheduledMessages.tsx`.
 - **Plano:** `docs/superpowers/plans/2026-10-21-compromissos.md` (ainda não escrito).
 
@@ -35,7 +35,7 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
 
 ### 3.1 Cadastrar
 - **Na conversa:** um botão **"Compromissos"** no cabeçalho da conversa (ícone `CalendarStar`), ao lado de "Contato". Ele aparece também em conversa finalizada e de histórico. Abre o diálogo **"Compromissos de <cliente>"** (§3.4), que tem o botão **"Novo compromisso"**. O cliente é o contato da conversa, e o compromisso fica preso a **esta** conversa.
-- **Na página "Compromissos"** (§3.5): o botão **"Novo compromisso"** abre o mesmo formulário com o campo **"Cliente"** a mais, uma busca de contatos por nome ou telefone igual à de "Nova conversa" (`api.contacts.list`, a partir de 2 letras). O servidor escolhe a conversa do contato (decisão 8):
+- **Na aba "Compromissos" da Agenda** (§3.5): o botão **"Novo compromisso"** abre o mesmo formulário com o campo **"Cliente"** a mais, uma busca de contatos por nome ou telefone igual à de "Nova conversa" (`api.contacts.list`, a partir de 2 letras). O servidor escolhe a conversa do contato (decisão 8):
   1. a conversa **aberta** desse contato que o usuário vê;
   2. se não houver, a conversa **mais recente** (`created_at`) desse contato que o usuário vê, finalizada ou de histórico;
   3. se o usuário não vê nenhuma → 400 "Você não tem conversa com este contato; comece uma em Nova conversa".
@@ -44,6 +44,7 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
   - "Data e hora (horário de Cuiabá)" (`<input type="datetime-local">`, o mesmo campo do diálogo de agendar);
   - "Observação interna (não é enviada ao cliente)" (opcional, até 2000 caracteres);
   - "Lembretes": de 1 a 5 linhas (§3.2), com "Adicionar lembrete" e "Remover" em cada linha;
+  - caixa **"Enviar com minha assinatura"**, marcada por padrão; desmarcada, os lembretes saem sem assinatura (pedido do usuário em 21/10);
   - botões "Cancelar" e "Salvar".
 - **Regras do horário do compromisso** (iguais no navegador e no servidor, função nova `appointmentTimeProblem(startsAt, now)` em `shared`):
   - sem data → "Escolha a data e a hora";
@@ -63,7 +64,7 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
   - "N dias antes" = **o mesmo horário de parede de Cuiabá**, N dias antes (`isoToOfficeLocal` → subtrai N dias da data → `officeLocalToIso`). Não supõe horário de verão nem a falta dele (decisão 7).
 - **Lembrete que não dá para criar:** se o horário de envio falha em `scheduleTimeProblem` (menos de 2 minutos à frente, ou já passou), o lembrete **é gravado sem mensagem agendada** e fica na situação **"Não criado"**. O formulário avisa antes de salvar, na própria linha: **"Não será enviado: o horário de envio já passou"**. Depois de salvar, a lista do compromisso mostra "Não criado: o horário de envio já tinha passado". Se todos os lembretes forem "Não criado", o compromisso é salvo assim mesmo.
 - Dois lembretes do mesmo compromisso que caem no **mesmo horário** de envio (por exemplo "2 dias" e "48 horas") → "Dois lembretes cairiam no mesmo horário".
-- A mensagem agendada de um lembrete tem como **autor o autor do compromisso**, também quando um administrador edita (decisão 9). Vai **com assinatura** (`signature = true`, o padrão do compositor) e sem anexo. Fica na conversa do compromisso (`chat_id`).
+- A mensagem agendada de um lembrete tem como **autor o autor do compromisso**, também quando um administrador edita (decisão 9). Vai com ou sem assinatura conforme a caixa **"Enviar com minha assinatura"** do compromisso (`appointments.signature`, padrão marcada) e sem anexo. Fica na conversa do compromisso (`chat_id`).
 - O formulário de um compromisso novo vem com os **lembretes padrão** de Configurações (§4), que podem ser mudados à vontade antes de salvar.
 
 ### 3.3 Editar e cancelar
@@ -91,9 +92,9 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
 - Vazio: "Nenhum compromisso marcado com este cliente."
 - Os lembretes pendentes também entram na linha **"N mensagens agendadas"** da conversa (a mesma lista da entrega 3), com a marca **"Lembrete · <título>"** no lugar de "Editar"/"Cancelar" (§3.7).
 
-### 3.5 Página "Compromissos"
-- **Menu lateral:** o item **"Compromissos"** (ícone `CalendarStar`) vai **logo depois de "Agenda"**, para todos os usuários. A rota é `/compromissos`. Decisão 14: o item do menu tem 60 px e a fonte é Plus Jakarta Sans de 11 px, então "Compromissos" não cabe numa linha. O rótulo vai com hífen discreto (`Compro­missos`) e quebra em duas linhas ("Compro-" / "missos"); o aceite manual confere.
-- Título "Compromissos" e botão **"Novo compromisso"**. Abas **"Próximos"** (não cancelados, horário ≥ agora), **"Passados"** (não cancelados, horário < agora) e **"Cancelados"**. O atendente vê **os seus** (autor); o administrador vê **os de todos** (igual à Agenda).
+### 3.5 Aba "Compromissos" na Agenda
+- **Sem item novo no menu lateral** (pedido do usuário em 21/10): os compromissos ficam numa **aba "Compromissos"** dentro da página **Agenda** (a mesma rota das mensagens agendadas), ao lado da aba **"Mensagens"** (as mensagens agendadas, com as abas Pendentes, Enviadas, Falharam e Canceladas de hoje). A aba escolhida vai na URL (`?aba=compromissos`; sem o parâmetro abre "Mensagens", como hoje), e o link "Ver todos os compromissos" da conversa abre direto nela. O filtro de cada aba usa um parâmetro próprio, para um não apagar o outro.
+- Na aba, o botão **"Novo compromisso"** e as abas **"Próximos"** (não cancelados, horário ≥ agora), **"Passados"** (não cancelados, horário < agora) e **"Cancelados"**. O atendente vê **os seus** (autor); o administrador vê **os de todos** (igual à Agenda).
 - Cada linha mostra a data e hora, o título, o cliente (link para a conversa do compromisso), o autor, os lembretes com a situação, a observação e Editar/Cancelar com as regras de §3.3. "Próximos" vai do mais próximo para o mais distante; as outras abas, do mais recente para o mais antigo; até 100 por aba. A página se atualiza a cada 30 s, como a Agenda.
 - Vazio: "Nenhum compromisso aqui."
 
@@ -120,7 +121,7 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
 ## 5. Dados e API
 
 ### 5.1 Tabelas (migração `0009_compromissos`)
-- **`appointments`**: `id`, `chat_id → chats (cascade)`, `author_id → users`, `title text not null`, `starts_at timestamptz not null`, `note text` (nulo = sem observação), `canceled_at timestamptz`, `canceled_by → users (set null)`, `created_at`. Índices `(starts_at)` e `(chat_id)`. Não tem coluna de situação: cancelado é `canceled_at` preenchido, e "próximo" ou "passado" se compara com agora.
+- **`appointments`**: `id`, `chat_id → chats (cascade)`, `author_id → users`, `title text not null`, `starts_at timestamptz not null`, `note text` (nulo = sem observação), `signature boolean not null default true` (a caixa "Enviar com minha assinatura"), `canceled_at timestamptz`, `canceled_by → users (set null)`, `created_at`. Índices `(starts_at)` e `(chat_id)`. Não tem coluna de situação: cancelado é `canceled_at` preenchido, e "próximo" ou "passado" se compara com agora.
 - **`appointment_reminders`**: `id`, `appointment_id → appointments (cascade)`, `amount integer not null`, `unit text not null` (`'days' | 'hours'`), `text text not null` (com os marcadores), `created_at`. Índice `(appointment_id)`.
 - **`scheduled_messages.reminder_id uuid → appointment_reminders (set null)`**, nulo para as mensagens agendadas comuns, com **índice único** (no máximo uma mensagem agendada por lembrete; vários nulos convivem).
 - **Decisão 1 (onde fica a ligação):** a ligação compromisso → lembrete → mensagem agendada fica numa **coluna em `scheduled_messages`**, e não numa tabela de ligação nem numa coluna `scheduled_message_id` no lembrete. Os três lugares que precisam saber "é lembrete?" já leem a linha de `scheduled_messages`: a guarda da Agenda (`pendingRowFor`), o `canEdit` do DTO e a exclusão da regra de inatividade. Com a coluna lá, cada um testa uma coluna, sem junção. O lembrete "Não criado" é só o lembrete sem linha que aponte para ele. `set null` em vez de `cascade` porque nenhum caminho apaga um lembrete sozinho; se um dia apagar, o histórico da Agenda não some junto.
@@ -151,12 +152,12 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
 
 ## 6. Interface (textos exatos)
 - Cabeçalho da conversa: botão "Compromissos". Diálogo "Compromissos de <cliente>"; vazio "Nenhum compromisso marcado com este cliente."; "Novo compromisso"; "Ver todos os compromissos".
-- Formulário: títulos "Novo compromisso" / "Editar compromisso"; campos "Cliente" (só na página, com o exemplo "Nome ou telefone"), "Título" ("Ex.: Audiência, Retorno de documento"), "Data e hora (horário de Cuiabá)", "Observação interna (não é enviada ao cliente)", "Lembretes"; na linha: número, "dias antes" / "horas antes", "Texto do lembrete", "Remover"; "Adicionar lembrete"; "Marcadores: {nome}, {titulo}, {data}, {hora}"; "Vai sair assim: …"; "Não será enviado: o horário de envio já passou"; botões "Salvar" / "Cancelar".
+- Formulário: títulos "Novo compromisso" / "Editar compromisso"; campos "Cliente" (só na página, com o exemplo "Nome ou telefone"), "Título" ("Ex.: Audiência, Retorno de documento"), "Data e hora (horário de Cuiabá)", "Observação interna (não é enviada ao cliente)", "Lembretes", "Enviar com minha assinatura"; na linha: número, "dias antes" / "horas antes", "Texto do lembrete", "Remover"; "Adicionar lembrete"; "Marcadores: {nome}, {titulo}, {data}, {hora}"; "Vai sair assim: …"; "Não será enviado: o horário de envio já passou"; botões "Salvar" / "Cancelar".
 - Erros: "Escolha o cliente", "Digite o título", "Escolha a data e a hora", "Este horário já passou; escolha uma data e hora futuras", "Escolha um horário em até 1 ano", "Inclua pelo menos um lembrete", "Digite o texto do lembrete", "Marcador desconhecido: {x}. Use {nome}, {titulo}, {data} ou {hora}", "O contato não tem nome cadastrado; tire {nome} do lembrete", "Dois lembretes cairiam no mesmo horário", "Você não tem conversa com este contato; comece uma em Nova conversa", "Este compromisso foi cancelado", "Este lembrete é de um compromisso; altere pelo compromisso".
 - Situação do lembrete: "Pendente · <dd/mm/aaaa hh:mm>", "Enviando…", "Enviado", "Falhou: <motivo>", "Cancelado", "Não criado: o horário de envio já tinha passado". A antecedência aparece como "2 dias antes", "1 dia antes", "1 hora antes", "3 horas antes".
 - Item: "por <nome>", "Observação interna", "Editar", "Cancelar", a marca "Cancelado" na aba Cancelados; confirmação "Cancelar o compromisso?" / "Os lembretes que ainda não saíram não serão enviados." / "Cancelar compromisso" / "Manter compromisso".
 - Agenda e linha "N mensagens agendadas": marca "Lembrete · <título>".
-- Menu: "Compromissos" (com hífen discreto), depois de "Agenda". Página "Compromissos"; abas "Próximos", "Passados", "Cancelados"; vazio "Nenhum compromisso aqui."
+- Agenda: abas "Mensagens" e "Compromissos" no topo da página; na aba Compromissos, as abas "Próximos", "Passados", "Cancelados"; vazio "Nenhum compromisso aqui."
 - Eventos: "Compromisso “<título>” marcado por <nome> para <data>", "Compromisso “<título>” remarcado por <nome> para <data>", "Compromisso “<título>” cancelado por <nome>" (data no horário de Cuiabá, em `model.ts` ao lado dos eventos de agendamento).
 - Configurações: seção "Compromissos"; "Lembretes que já vêm preenchidos em todo compromisso novo. Cada compromisso pode mudar os seus."; "Salvar"; "Lembretes salvos."
 
@@ -171,7 +172,7 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
   - quem não vê → 404, conversa privada de outro → 404, sem Origin → 403;
   - passado e > 1 ano → 400; marcador desconhecido, `{nome}` sem nome, horário repetido, 0 ou 6 lembretes → 400;
   - conversa finalizada e de histórico aceitas;
-  - cada lembrete válido vira `scheduled_messages` com o autor, `signature = true`, `body` preenchido, `send_at` certo e `reminder_id`; o que caiu a menos de 2 min fica "skipped" sem linha; com todos "skipped" o compromisso salva mesmo assim;
+  - cada lembrete válido vira `scheduled_messages` com o autor, `signature` igual à caixa do compromisso, `body` preenchido, `send_at` certo e `reminder_id`; o que caiu a menos de 2 min fica "skipped" sem linha; com todos "skipped" o compromisso salva mesmo assim;
   - evento na linha do tempo; `chat.updated` publicado.
 - **Listar:**
   - conversa: próximos do contato em todas as conversas visíveis, sem os de conversa invisível, sem cancelados e passados;
@@ -193,7 +194,7 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
   - página com abas e "Novo compromisso" com busca de cliente;
   - item com Editar/Cancelar só para quem pode;
   - Agenda com "Lembrete · <título>" e sem Editar/Cancelar;
-  - textos dos eventos; item do menu depois de "Agenda"; página de Configurações.
+  - textos dos eventos; abas "Mensagens"/"Compromissos" da Agenda e `?aba=` na URL; página de Configurações.
 
 ## 8. Aceite manual
 1. Em Configurações → Compromissos, conferir os dois lembretes padrão.
@@ -204,14 +205,14 @@ A mensagem agendada (entrega 3) já envia no horário, como o autor, reabre a co
 3. Criar outro para daqui a 1 h 10 min com "1 hora antes" e remarcar para daqui a 1 h 20 min: a Agenda mostra o novo horário, o evento "remarcado" aparece e a mensagem sai só uma vez, no horário novo.
 4. Criar um terceiro e cancelar: o lembrete vai para "Agenda → Canceladas", e o compromisso para a aba "Cancelados".
 5. Criar um pela página "Compromissos" escolhendo um cliente cuja conversa está finalizada; esperar o lembrete abrir uma conversa nova no mesmo setor.
-6. Conferir que o item "Compromissos" do menu cabe no menu lateral (duas linhas, sem barra de rolagem horizontal) nos temas claro e escuro.
+6. Na Agenda, alternar entre as abas "Mensagens" e "Compromissos"; o link "Ver todos os compromissos" da conversa abre a aba Compromissos. Criar um compromisso com "Enviar com minha assinatura" desmarcada e conferir que o lembrete chega sem assinatura.
 
 ## 9. Riscos
 - **Texto congelado:** nome do cliente e título são preenchidos ao salvar ou recalcular. Se o contato mudar de nome depois, os lembretes pendentes saem com o nome antigo até o compromisso ser remarcado ou mudar de título. Aceito: o compromisso é curto e o texto fica visível na Agenda.
 - **Corrida com o trabalhador:** um lembrete pego no meio de uma remarcação sai com o horário antigo no texto. Isso só acontece no próprio minuto do envio e nunca gera dois envios (§3.3).
 - **Autor desativado:** os lembretes falham com o motivo de hoje ("o autor do agendamento está desativado"), e o aviso vai para quem não está mais lá. O administrador vê a falha na Agenda. Trocar o autor de um compromisso fica fora do escopo.
 - **Visibilidade presa à conversa original:** se aquela conversa virar privada de outra pessoa, quem só vê a conversa nova do cliente deixa de ver o compromisso. Aceito: a regra é a mesma de tudo que é preso a uma conversa.
-- **Rótulo do menu:** a quebra com hífen discreto pode ficar estranha ao lado dos outros itens de uma palavra. O aceite confere (§8, item 6).
+- **Duas abas na Agenda:** a aba Mensagens já usa `?status=`; a aba Compromissos usa `?aba=` e o seu próprio parâmetro de filtro, e o link do aviso de falha ("Falharam") continua abrindo a aba Mensagens.
 - **Regra de inatividade:** quem contava que um lembrete seguraria a conversa aberta agora vê a conversa finalizada antes. O envio a reabre, então nada se perde.
 
 ## 10. Fora do escopo
@@ -226,10 +227,10 @@ Compromisso recorrente; sincronizar com o Google Agenda; confirmação do client
 6. **Marcadores:** entra `{titulo}` além de `{nome}`, `{data}` e `{hora}`. Marcador desconhecido → 400; `{nome}` com contato sem nome → 400. Os marcadores são preenchidos ao salvar e ao recalcular, nunca no envio (o caminho de envio não muda).
 7. **"N dias antes"** usa o mesmo horário de parede de Cuiabá N dias antes; "N horas antes" usa o tempo exato. Limites: 1–30 dias, 1–48 horas, até 5 lembretes, título até 120 e observação até 2000 caracteres.
 8. **Conversa do compromisso:** pode ser aberta, finalizada ou de histórico. Pela página, o servidor escolhe a conversa aberta visível do contato, senão a mais recente visível, senão 400.
-9. **Autor e assinatura:** os lembretes saem como o autor do compromisso, também depois que um administrador edita, sempre com assinatura e sem anexo.
+9. **Autor e assinatura:** os lembretes saem como o autor do compromisso, também depois que um administrador edita, com assinatura conforme a caixa do compromisso (padrão marcada) e sem anexo.
 10. **"Finalizar por inatividade"** ignora os lembretes pendentes (`reminder_id IS NULL`).
 11. **Na conversa**, a lista mostra os compromissos próximos do **contato** em todas as conversas dele que o usuário vê; a visibilidade de cada compromisso é `canSee` da sua conversa.
 12. **O próprio compromisso** precisa ser no futuro e em até 1 ano; os lembretes herdam o teto de 1 ano e o mínimo de 2 min de `scheduleTimeProblem`.
 13. **Eventos:** `appointment_scheduled` (com `edited`) e `appointment_canceled`, com o título e sem a observação. Não há evento por lembrete, porque a bolha "Agendada" já marca o envio.
-14. **Menu:** "Compromissos" com hífen discreto, logo depois de "Agenda", com a rota `/compromissos`.
+14. **Sem item novo no menu:** os compromissos são uma aba da Agenda (pedido do usuário em 21/10), para o menu lateral continuar com palavras curtas.
 15. **Cancelado é `canceled_at`**, sem coluna de situação. As abas Próximos/Passados se calculam contra a hora atual.
