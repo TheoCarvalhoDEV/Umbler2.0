@@ -8,6 +8,7 @@ import {
   DownloadSimpleIcon,
   SquaresFourIcon,
   TreeStructureIcon,
+  UploadSimpleIcon,
 } from '@phosphor-icons/react';
 import type { BotDto } from '@talk/shared';
 import { badge, badgeTone, button, iconButton, iconButtonGhost, iconButtonOn } from '../ui';
@@ -28,6 +29,8 @@ export interface ToolbarProps {
   dirty: boolean;
   readOnly: boolean;
   exportUrl: string;
+  /** A picked .json export: creates a new bot, never touches this one. */
+  onImport(file: File): void;
   paletteOpen: boolean;
   onTogglePalette(): void;
   versionsOpen: boolean;
@@ -109,6 +112,24 @@ export function Toolbar(p: ToolbarProps) {
           <DownloadSimpleIcon size={16} aria-hidden />
           Exportar
         </a>
+        <label
+          title="Cria um novo chatbot a partir de um arquivo exportado; este fluxo não muda"
+          className={`${button()} cursor-pointer has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-primary`}
+        >
+          <UploadSimpleIcon size={16} aria-hidden />
+          Importar
+          <input
+            type="file"
+            accept=".json,application/json"
+            disabled={p.busy || p.readOnly}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ''; // lets the same file be picked again
+              if (file) p.onImport(file);
+            }}
+            className="sr-only"
+          />
+        </label>
         <button type="button" className={button()} disabled={p.busy} onClick={p.onToggleStatus}>
           {active ? 'Pausar' : 'Ativar'}
         </button>

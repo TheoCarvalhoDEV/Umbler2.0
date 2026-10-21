@@ -66,6 +66,21 @@ export function graphProblems(e: unknown): GraphProblem[] | null {
   return Array.isArray(p) ? (p as GraphProblem[]) : null;
 }
 
+/** An exported chatbot file → the import body. Catches the wrong file only; the server validates the graph again (zod) and recomputes `valid`. */
+export async function readBotExport(file: Blob): Promise<BotExport> {
+  let data: unknown;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    throw new Error('Arquivo inválido: não é um JSON.');
+  }
+  const d = data as Partial<BotExport> | null;
+  if (!d || typeof d.name !== 'string' || !d.graph || !Array.isArray(d.graph.nodes) || !Array.isArray(d.graph.edges)) {
+    throw new Error('Arquivo inválido: não é um chatbot exportado.');
+  }
+  return { name: d.name, graph: d.graph };
+}
+
 export interface Page<T> {
   items: T[];
   nextCursor: string | null;
