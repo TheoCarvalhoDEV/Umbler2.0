@@ -1,10 +1,11 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PlusIcon } from '@phosphor-icons/react';
+import { PlusIcon, RobotIcon } from '@phosphor-icons/react';
 import type { BotDto, BotExport } from '@talk/shared';
-import { Loading, Section, btn, useSend } from '../../../components/settings/common';
-import { badge, badgeTone, button, field, fieldLabel } from '../../../components/ui';
+import { Actions, Modal } from '../../../components/conversation/ChatDialogs';
+import { EmptyState, ListRow, Loading, PageHeader, RowMenu, btnPrimary, btnSecondary, useSend } from '../../../components/settings/common';
+import { badge, badgeTone, field, fieldLabel } from '../../../components/ui';
 import { api, ApiError, qk } from '../../../lib/api';
 import { confirmDialog } from '../../../lib/confirm';
 import { OfficeTemplateDialog } from './OfficeTemplateDialog';
@@ -17,13 +18,14 @@ function statusLabel(b: BotDto): string {
 }
 
 function runsLabel(b: BotDto): string {
-  return b.activeRunCount > 0 ? `${b.runCount} (${b.activeRunCount} em andamento)` : String(b.runCount);
+  const runs = b.runCount === 1 ? '1 execução' : `${b.runCount} execuções`;
+  return b.activeRunCount > 0 ? `${runs} (${b.activeRunCount} em andamento)` : runs;
 }
 
 function channelsLabel(b: BotDto, names: Map<string, string>): string {
   const list = b.startChannelIds.map((id) => names.get(id) ?? 'Canal removido');
   if (b.manualStart) list.push('Início manual');
-  return list.join(', ') || '—';
+  return list.join(', ') || 'Nenhum canal';
 }
 
 /** Names from the DELETE 409 `{ usedBy: [{ id, name }] }`; [] for any other error. */
@@ -62,8 +64,9 @@ export function BotsSettings() {
   const channelNames = new Map((channels.data ?? []).map((c) => [c.id, c.name]));
   const used = usedByNames(save.error);
 
-  function create(e: FormEvent) {
-    e.preventDefault();
+  function create(e?: FormEvent) {
+    e?.preventDefault();
+    if (!name.trim() || save.isPending) return;
     save.mutate(async () => {
       const bot = await api.bots.create({ name: name.trim() });
       navigate(editorPath(bot.id));
@@ -88,33 +91,34 @@ export function BotsSettings() {
   }
 
   return (
-    <Section
-      title="Chatbots"
-      wide
-      action={
-        <div className="flex flex-wrap justify-end gap-2">
-          <label className={`${button()} cursor-pointer focus-within:ring-2 focus-within:ring-primary`}>
-            Importar
-            <input type="file" accept=".json,application/json" onChange={importFile} className="sr-only" />
-          </label>
-          <button type="button" onClick={() => setTemplate(true)} className={button()}>
-            Criar a partir do modelo
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              save.reset();
-              setName('');
-              setCreating(true);
-            }}
-            className={button(creating ? 'secondary' : 'primary')}
-          >
-            <PlusIcon size={16} aria-hidden />
-            Novo chatbot
-          </button>
-        </div>
-      }
-    >
+    <>
+      <PageHeader
+        title="Chatbots"
+        description="Fluxos automáticos que atendem pelo WhatsApp antes de passar a conversa para um setor."
+        action={
+          <>
+            <label className={`${btnSecondary} cursor-pointer focus-within:ring-2 focus-within:ring-primary`}>
+              Importar
+              <input type="file" accept=".json,application/json" onChange={importFile} className="sr-only" />
+            </label>
+            <button type="button" onClick={() => setTemplate(true)} className={btnSecondary}>
+              Criar a partir do modelo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                save.reset();
+                setName('');
+                setCreating(true);
+              }}
+              className={btnPrimary}
+            >
+              <PlusIcon size={16} weight="bold" aria-hidden />
+              Novo chatbot
+            </button>
+          </>
+        }
+      />
       {template && (
         <OfficeTemplateDialog
           onCancel={() => setTemplate(false)}
@@ -126,95 +130,82 @@ export function BotsSettings() {
         />
       )}
       {creating && (
-        <form onSubmit={create} className="mb-5 flex flex-wrap items-end gap-2.5 rounded-block bg-sunken p-4">
-          <label className="min-w-0 flex-[1_1_240px]">
-            <span className={fieldLabel}>Nome do chatbot</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus className={field} />
-          </label>
-          <button type="submit" disabled={save.isPending || !name.trim()} className={button('primary')}>
-            Criar
-          </button>
-          <button type="button" onClick={() => setCreating(false)} className={button('ghost')}>
-            Cancelar
-          </button>
-        </form>
+        <Modal title="Novo chatbot" onCancel={() => setCreating(false)}>
+          <form onSubmit={create}>
+            <label className="block">
+              <span className={fieldLabel}>Nome do chatbot</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus className={field} />
+            </label>
+            <Actions
+              busy={save.isPending || !name.trim()}
+              error={save.error?.message ?? null}
+              confirmLabel="Criar"
+              onCancel={() => setCreating(false)}
+              onConfirm={create}
+            />
+          </form>
+        </Modal>
       )}
-      {save.error && (
-        <div role="alert" className="mb-4 rounded-block bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">
+      {save.error && !creating && (
+        <div role="alert" className="mt-5 rounded-block bg-danger-soft px-4 py-3 text-sm font-semibold text-danger">
           <p>{save.error.message}</p>
           {used.length > 0 && <p>Usado por: {used.join(', ')}</p>}
         </div>
       )}
       {bots.data.length === 0 ? (
-        <p className="text-sm text-muted">Nenhum chatbot. Crie um novo, importe um arquivo ou comece pelo modelo do escritório.</p>
+        <EmptyState
+          icon={<RobotIcon size={28} />}
+          title="Nenhum chatbot ainda"
+          hint="Crie um novo, importe um arquivo ou comece pelo modelo do escritório."
+        />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs text-muted">
-              <tr className="border-b border-border">
-                <th className="h-10 px-3 font-semibold">Nome</th>
-                <th className="h-10 px-3 font-semibold">Canais</th>
-                <th className="h-10 px-3 font-semibold">Situação</th>
-                <th className="h-10 px-3 font-semibold">Execuções</th>
-                <th className="h-10 px-3 font-semibold">Atualizado em</th>
-                <th className="h-10 px-3">
-                  <span className="sr-only">Ações</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {bots.data.map((b) => (
-                <tr key={b.id} className="transition-colors hover:bg-sidebar-hover">
-                  <td className="px-3 py-3">
-                    <Link to={editorPath(b.id)} className="font-bold hover:underline">
-                      {b.name}
-                    </Link>
-                    {b.description && <span className="block text-[13px] text-muted">{b.description}</span>}
-                  </td>
-                  <td className="px-3 py-3">{channelsLabel(b, channelNames)}</td>
-                  <td className="px-3 py-3">
-                    <span className={`${badge} ${b.status === 'active' ? badgeTone.success : badgeTone.neutral}`}>{statusLabel(b)}</span>
-                  </td>
-                  <td className="px-3 py-3 tabular-nums">{runsLabel(b)}</td>
-                  <td className="px-3 py-3 whitespace-nowrap text-muted tabular-nums">
-                    {new Date(b.updatedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="flex flex-wrap justify-end gap-1.5">
-                      <Link to={editorPath(b.id)} className={btn}>
-                        Editar
-                      </Link>
-                      <button
-                        type="button"
-                        disabled={save.isPending || (b.status === 'paused' && !b.publishedVersionId)}
-                        title={b.publishedVersionId ? undefined : 'Publique uma versão no editor antes de ativar'}
-                        onClick={() => toggle(b)}
-                        className={btn}
-                      >
-                        {b.status === 'active' ? 'Pausar' : 'Ativar'}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={save.isPending}
-                        onClick={() => save.mutate(() => api.bots.duplicate(b.id))}
-                        className={btn}
-                      >
-                        Duplicar
-                      </button>
-                      <a href={api.bots.exportUrl(b.id)} download className={btn}>
-                        Exportar
-                      </a>
-                      <button type="button" disabled={save.isPending} onClick={() => remove(b)} className={button('danger', 'sm')}>
-                        Excluir
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="mt-5">
+          {bots.data.map((b) => (
+            <ListRow
+              key={b.id}
+              leading={<RobotIcon size={20} aria-hidden />}
+              title={
+                <Link to={editorPath(b.id)} className="hover:underline">
+                  {b.name}
+                </Link>
+              }
+              badges={
+                <span
+                  title={b.publishedVersionId ? undefined : 'Publique uma versão no editor antes de ativar'}
+                  className={`${badge} ${b.status === 'active' ? badgeTone.success : badgeTone.neutral}`}
+                >
+                  {statusLabel(b)}
+                </span>
+              }
+              subtitle={
+                <>
+                  <span>{channelsLabel(b, channelNames)}</span> · <span className="tabular-nums">{runsLabel(b)}</span> ·{' '}
+                  <span className="tabular-nums">
+                    atualizado em {new Date(b.updatedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                  </span>
+                  {b.description && <> · {b.description}</>}
+                </>
+              }
+              actions={
+                <RowMenu
+                  label={`Opções do chatbot ${b.name}`}
+                  items={[
+                    { label: 'Editar', onSelect: () => navigate(editorPath(b.id)) },
+                    {
+                      label: b.status === 'active' ? 'Pausar' : 'Ativar',
+                      onSelect: () => toggle(b),
+                      disabled: save.isPending || (b.status === 'paused' && !b.publishedVersionId),
+                    },
+                    { label: 'Duplicar', onSelect: () => save.mutate(() => api.bots.duplicate(b.id)), disabled: save.isPending },
+                    { label: 'Exportar', download: api.bots.exportUrl(b.id) },
+                    { label: 'Excluir', onSelect: () => void remove(b), danger: true, disabled: save.isPending },
+                  ]}
+                />
+              }
+            />
+          ))}
+        </ul>
       )}
-    </Section>
+    </>
   );
 }

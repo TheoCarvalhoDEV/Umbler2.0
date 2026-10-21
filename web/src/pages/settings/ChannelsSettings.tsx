@@ -1,12 +1,14 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
-import { PlusIcon } from '@phosphor-icons/react';
+import { useEffect, useId, useState } from 'react';
+import { PlusIcon, WhatsappLogoIcon } from '@phosphor-icons/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ChannelDto, HistoryImportDto, HistoryPeriod } from '@talk/shared';
 import { api, qk } from '../../lib/api';
-import { confirmDialog } from '../../lib/confirm';
+import { confirmDialog, promptDialog } from '../../lib/confirm';
 import { formatPhone } from '../../lib/format';
-import { badge, badgeTone, field, fieldLabel, fieldSelect } from '../../components/ui';
-import { ErrorText, Loading, Section, block, btnDanger, btnPrimary, btnSecondary, send, useSend } from '../../components/settings/common';
+import { badge, badgeTone, fieldSelect } from '../../components/ui';
+import {
+  EmptyState, ErrorText, ListRow, Loading, PageHeader, RowMenu, SettingRow, btnPrimary, btnSecondary, send, useSend,
+} from '../../components/settings/common';
 
 const QR_POLL_MS = 5_000;
 
@@ -22,6 +24,9 @@ const PERIODS: Array<[HistoryPeriod, string]> = [
   ['12m', '12 meses'],
   ['all', 'Tudo'],
 ];
+
+/** The QR / "Gerando QR code…" card inside the channel: highlighted, it is what to look at while connecting. */
+const qrCard = 'my-3 rounded-block bg-primary-soft p-4 text-fg';
 
 const asImageSrc = (qr: string) => (qr.startsWith('data:') ? qr : `data:image/png;base64,${qr}`);
 
@@ -46,9 +51,8 @@ export function ChannelsSettings() {
   const qc = useQueryClient();
   // applyWsEvent writes every channel.status into qk.channels, so this list (pill and import line) is live
   const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
-  const create = useSend(qk.channels);
-  const [name, setName] = useState('');
-  const nameId = useId();
+  const add = useSend(qk.channels);
+  const idBase = useId();
   const [qr, setQr] = useState<Record<string, string>>({});
   const [periods, setPeriods] = useState<Record<string, HistoryPeriod>>({});
   const periodOf = (c: ChannelDto): HistoryPeriod => periods[c.id] ?? c.historyPeriod ?? '3m';
@@ -113,122 +117,135 @@ export function ChannelsSettings() {
 
   if (!channels.data) return <Loading error={channels.error} />;
 
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    create.mutate(() => send('/api/channels', 'POST', { name: name.trim() }), { onSuccess: () => setName('') });
+  async function newChannel() {
+    add.reset();
+    const name = await promptDialog({
+      title: 'Novo canal',
+      body: 'Ex.: WhatsApp do escritório.',
+      label: 'Nome do canal',
+      confirmLabel: 'Criar canal',
+      maxLength: 60,
+    });
+    if (name) add.mutate(() => send('/api/channels', 'POST', { name }));
   }
 
   return (
-    <Section title="Canais">
-      <form onSubmit={submit} className={`${block} mb-5`}>
-        <label htmlFor={nameId} className={fieldLabel}>
-          Nome do novo canal
-        </label>
-        <div className="flex flex-wrap items-center gap-2.5">
-          <input
-            id={nameId}
-            aria-label="Nome do novo canal"
-            placeholder="Nome do canal (ex.: WhatsApp do escritório)"
-            value={name}
-            maxLength={60}
-            onChange={(e) => setName(e.target.value)}
-            className={`${field} min-w-0 flex-[1_1_240px]`}
-          />
-          <button type="submit" disabled={!name.trim() || create.isPending} className={btnPrimary}>
+    <>
+      <PageHeader
+        title="Canais"
+        description="Os números de WhatsApp do escritório. Cada canal se conecta lendo um QR code com o celular."
+        action={
+          <button type="button" onClick={() => void newChannel()} disabled={add.isPending} className={btnPrimary}>
             <PlusIcon size={16} weight="bold" aria-hidden />
             Novo canal
           </button>
-        </div>
-      </form>
-      <ErrorText error={create.error} />
+        }
+      />
+      <ErrorText error={add.error} />
       <ErrorText error={connect.error} />
       <ErrorText error={importHistory.error} />
       <ErrorText error={remove.error} />
 
-      {channels.data.length === 0 && <p className="text-sm text-muted">Nenhum canal cadastrado.</p>}
-      <ul>
-        {channels.data.map((c) => {
-          const code = qr[c.id];
-          const running = c.historyImport?.state === 'running';
-          return (
-            <li key={c.id} className="border-b border-border px-1 py-5 first:pt-0 last:border-b-0">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="font-bold">{c.name}</p>
-                  <p className="text-[13px] leading-[18px] text-muted tabular-nums">{c.phone ? formatPhone(c.phone) : 'Nenhum número conectado'}</p>
-                </div>
-                <span className={`${badge} ${STATUS[c.status].className}`}>
-                  {STATUS[c.status].label}
-                </span>
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <span className="text-[13px] font-semibold">Período do histórico</span>
-                <select
-                  aria-label="Período do histórico"
-                  value={periodOf(c)}
-                  onChange={(e) => setPeriods((cur) => ({ ...cur, [c.id]: e.target.value as HistoryPeriod }))}
-                  className={`${fieldSelect} max-w-40`}
-                >
-                  {PERIODS.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
+      {channels.data.length === 0 ? (
+        <EmptyState
+          icon={<WhatsappLogoIcon size={28} />}
+          title="Nenhum canal cadastrado."
+          hint="Crie o primeiro em “Novo canal” e conecte-o pelo QR code."
+        />
+      ) : (
+        <ul className="mt-5">
+          {channels.data.map((c) => {
+            const code = qr[c.id];
+            const running = c.historyImport?.state === 'running';
+            const periodId = `${idBase}-${c.id}`;
+            return (
+              <ListRow
+                key={c.id}
+                leading={<WhatsappLogoIcon size={20} aria-hidden />}
+                title={c.name}
+                badges={<span className={`${badge} ${STATUS[c.status].className}`}>{STATUS[c.status].label}</span>}
+                subtitle={<span className="tabular-nums">{c.phone ? formatPhone(c.phone) : 'Nenhum número conectado'}</span>}
+                actions={
+                  <RowMenu
+                    label={`Opções do canal ${c.name}`}
+                    items={[{ label: 'Excluir canal', onSelect: () => void confirmRemove(c), danger: true, disabled: remove.isPending }]}
+                  />
+                }
+              >
+                <SettingRow
+                  label="Período do histórico"
+                  htmlFor={periodId}
+                  description="O WhatsApp envia cerca de 3,5 meses de histórico; com “12 meses” ou “Tudo” vem só o que o celular mandar."
+                  control={
+                    <select
+                      id={periodId}
+                      value={periodOf(c)}
+                      onChange={(e) => setPeriods((cur) => ({ ...cur, [c.id]: e.target.value as HistoryPeriod }))}
+                      className={`${fieldSelect} w-40`}
+                    >
+                      {PERIODS.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  }
+                />
                 {c.status !== 'connected' && (
-                  <button
-                    type="button"
-                    disabled={connect.isPending}
-                    onClick={() => connect.mutate({ id: c.id, period: periodOf(c) })}
-                    className={btnSecondary}
-                  >
-                    Gerar novo QR / Reconectar
-                  </button>
+                  <SettingRow
+                    label="Conexão"
+                    description="Gere um QR code e leia com o WhatsApp do celular. O histórico vem conforme o período acima."
+                    control={
+                      <button
+                        type="button"
+                        disabled={connect.isPending}
+                        onClick={() => connect.mutate({ id: c.id, period: periodOf(c) })}
+                        className={btnSecondary}
+                      >
+                        Gerar novo QR / Reconectar
+                      </button>
+                    }
+                  />
                 )}
-                <button
-                  type="button"
-                  disabled={importHistory.isPending || running}
-                  onClick={() => importHistory.mutate({ id: c.id, period: periodOf(c) })}
-                  className={btnSecondary}
-                >
-                  Importar histórico
-                </button>
-                <button
-                  type="button"
-                  disabled={remove.isPending}
-                  onClick={() => void confirmRemove(c)}
-                  className={`${btnDanger} ml-auto`}
-                >
-                  Excluir canal
-                </button>
-              </div>
-              <p className="mt-2 text-[13px] leading-[18px] text-muted">
-                O WhatsApp envia cerca de 3,5 meses de histórico; com “12 meses” ou “Tudo” vem só o que o celular mandar.
-              </p>
-              {c.historyImport && (
-                <p role="status" className="mt-2 text-[13px] leading-[18px] font-semibold">
-                  {importText(c.historyImport)}
-                </p>
-              )}
-
-              {c.status === 'connecting' && !code && <p className={`${block} mt-4 text-sm text-muted`}>Gerando QR code…</p>}
-              {code && c.status !== 'connected' && (
-                <div className={`${block} mt-4 flex flex-wrap items-start gap-5`}>
-                  <img src={asImageSrc(code)} alt={`QR Code do canal ${c.name}`} className="size-64 shrink-0 rounded-block bg-surface p-2" />
-                  <ol className="max-w-xs list-decimal space-y-2 pl-5 text-sm text-fg-2 marker:font-bold marker:text-muted">
-                    <li>Abra o WhatsApp no celular do escritório.</li>
-                    <li>Toque em Mais opções › Aparelhos conectados › Conectar um aparelho.</li>
-                    <li>Aponte a câmera para este código.</li>
-                    <li>O código se renova sozinho (esta tela busca o mais recente a cada 5 segundos). Mantenha-a aberta até aparecer “Conectado”.</li>
-                  </ol>
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </Section>
+                {c.status === 'connecting' && !code && <p className={`${qrCard} text-sm`}>Gerando QR code…</p>}
+                {code && c.status !== 'connected' && (
+                  <div className={`${qrCard} flex flex-wrap items-start gap-5`}>
+                    <img src={asImageSrc(code)} alt={`QR Code do canal ${c.name}`} className="size-64 shrink-0 rounded-block bg-surface p-2" />
+                    <ol className="max-w-xs list-decimal space-y-2 pl-5 text-sm marker:font-bold marker:text-accent-ink">
+                      <li>Abra o WhatsApp no celular do escritório.</li>
+                      <li>Toque em Mais opções › Aparelhos conectados › Conectar um aparelho.</li>
+                      <li>Aponte a câmera para este código.</li>
+                      <li>O código se renova sozinho (esta tela busca o mais recente a cada 5 segundos). Mantenha-a aberta até aparecer “Conectado”.</li>
+                    </ol>
+                  </div>
+                )}
+                <SettingRow
+                  label="Histórico de conversas"
+                  description={
+                    c.historyImport ? (
+                      <span role="status" className="font-semibold text-fg">
+                        {importText(c.historyImport)}
+                      </span>
+                    ) : (
+                      'Traz as conversas antigas do celular para o sistema.'
+                    )
+                  }
+                  control={
+                    <button
+                      type="button"
+                      disabled={importHistory.isPending || running}
+                      onClick={() => importHistory.mutate({ id: c.id, period: periodOf(c) })}
+                      className={btnSecondary}
+                    >
+                      Importar histórico
+                    </button>
+                  }
+                />
+              </ListRow>
+            );
+          })}
+        </ul>
+      )}
+    </>
   );
 }

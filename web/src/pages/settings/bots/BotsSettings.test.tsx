@@ -93,25 +93,33 @@ function renderAt(path: string, me: Me = admin) {
 }
 
 const called = (method: string, path: string) => calls.filter((c) => c.method === method && c.path === path);
+/** A bot's list item, found by its name link. */
+const item = async (name: string) => (await screen.findByRole('link', { name })).closest('li')!;
+/** Opens the bot's ⋮ menu (Editar, Pausar/Ativar, Duplicar, Exportar, Excluir). */
+const openMenu = (row: HTMLElement, name: string) => fireEvent.click(within(row).getByRole('button', { name: `Opções do chatbot ${name}` }));
 
 describe('Settings › Chatbots', () => {
   it('lists the bots with channels, status and runs, and links each one to its editor', async () => {
     renderAt('/configuracoes/chatbots');
-    const officeRow = await screen.findByRole('row', { name: /Fluxo do escritório/ });
+    const officeRow = await item('Fluxo do escritório');
     expect(within(officeRow).getByText('WhatsApp escritório')).toBeTruthy();
     expect(within(officeRow).getByText('Ativo')).toBeTruthy();
-    expect(within(officeRow).getByText('12 (3 em andamento)')).toBeTruthy();
+    expect(within(officeRow).getByText('12 execuções (3 em andamento)')).toBeTruthy();
     expect(within(officeRow).getByRole('link', { name: 'Fluxo do escritório' }).getAttribute('href')).toBe('/configuracoes/chatbots/b1');
-    expect(within(officeRow).getByRole('link', { name: 'Editar' }).getAttribute('href')).toBe('/configuracoes/chatbots/b1');
 
-    const draftRow = screen.getByRole('row', { name: /Cobrança/ });
+    const draftRow = await item('Cobrança');
     expect(within(draftRow).getByText('Início manual')).toBeTruthy();
     expect(within(draftRow).getByText('Rascunho')).toBeTruthy();
-    expect(within(draftRow).getByText('0')).toBeTruthy();
+    expect(within(draftRow).getByText('0 execuções')).toBeTruthy();
+    openMenu(draftRow, 'Cobrança');
     expect(within(draftRow).getByRole('link', { name: 'Exportar' }).getAttribute('href')).toBe('/api/bots/b2/export');
 
     const nav = screen.getByRole('navigation', { name: 'Configurações' });
     expect(within(nav).getByRole('link', { name: 'Chatbots' }).getAttribute('href')).toBe('/configuracoes/chatbots');
+
+    openMenu(officeRow, 'Fluxo do escritório');
+    fireEvent.click(within(officeRow).getByRole('button', { name: 'Editar' }));
+    await screen.findByText('editor b1');
   });
 
   it('shows the Chatbots entry to admins only', async () => {
@@ -135,10 +143,13 @@ describe('Settings › Chatbots', () => {
   it('pauses an active bot and only lets a published bot be activated', async () => {
     routes['POST /api/bots/b1/status'] = { body: bot({ status: 'paused' }) };
     renderAt('/configuracoes/chatbots');
-    const officeRow = await screen.findByRole('row', { name: /Fluxo do escritório/ });
-    const activate = within(screen.getByRole('row', { name: /Cobrança/ })).getByRole('button', { name: 'Ativar' }) as HTMLButtonElement;
+    const officeRow = await item('Fluxo do escritório');
+    const draftRow = await item('Cobrança');
+    openMenu(draftRow, 'Cobrança');
+    const activate = within(draftRow).getByRole('button', { name: 'Ativar' }) as HTMLButtonElement;
     expect(activate.disabled).toBe(true);
 
+    openMenu(officeRow, 'Fluxo do escritório');
     fireEvent.click(within(officeRow).getByRole('button', { name: 'Pausar' }));
     await waitFor(() => expect(called('POST', '/api/bots/b1/status')).toHaveLength(1));
     expect(called('POST', '/api/bots/b1/status')[0]?.body).toEqual({ status: 'paused' });
@@ -148,7 +159,9 @@ describe('Settings › Chatbots', () => {
   it('duplicates a bot and refreshes the list', async () => {
     routes['POST /api/bots/b1/duplicate'] = { body: bot({ id: 'b4', name: 'Fluxo do escritório (cópia)' }) };
     renderAt('/configuracoes/chatbots');
-    fireEvent.click(within(await screen.findByRole('row', { name: /Fluxo do escritório/ })).getByRole('button', { name: 'Duplicar' }));
+    const officeRow = await item('Fluxo do escritório');
+    openMenu(officeRow, 'Fluxo do escritório');
+    fireEvent.click(within(officeRow).getByRole('button', { name: 'Duplicar' }));
     await waitFor(() => expect(called('POST', '/api/bots/b1/duplicate')).toHaveLength(1));
     await waitFor(() => expect(called('GET', '/api/bots')).toHaveLength(2));
   });
@@ -163,7 +176,9 @@ describe('Settings › Chatbots', () => {
       },
     };
     renderAt('/configuracoes/chatbots');
-    fireEvent.click(within(await screen.findByRole('row', { name: /Cobrança/ })).getByRole('button', { name: 'Excluir' }));
+    const draftRow = await item('Cobrança');
+    openMenu(draftRow, 'Cobrança');
+    fireEvent.click(within(draftRow).getByRole('button', { name: 'Excluir' }));
 
     const alert = await screen.findByRole('alert');
     expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: 'Excluir o chatbot "Cobrança"?' }));
@@ -174,7 +189,9 @@ describe('Settings › Chatbots', () => {
   it('does not delete when the confirmation is refused', async () => {
     vi.mocked(confirmDialog).mockClear().mockResolvedValueOnce(false);
     renderAt('/configuracoes/chatbots');
-    fireEvent.click(within(await screen.findByRole('row', { name: /Cobrança/ })).getByRole('button', { name: 'Excluir' }));
+    const draftRow = await item('Cobrança');
+    openMenu(draftRow, 'Cobrança');
+    fireEvent.click(within(draftRow).getByRole('button', { name: 'Excluir' }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 0)); // let the refused answer settle
     expect(called('DELETE', '/api/bots/b2')).toHaveLength(0);

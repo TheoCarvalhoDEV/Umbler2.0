@@ -111,10 +111,19 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
   );
 }
 
-/** A settings list item, drawn like a chat list item. leading sits in a 40px round chip (an Avatar fills it). */
-export function ListRow(props: { leading: ReactNode; title: ReactNode; subtitle?: ReactNode; badges?: ReactNode; actions?: ReactNode }) {
-  return (
-    <li className="flex items-center gap-3 rounded-item px-2.5 py-2.5 transition-colors hover:bg-sidebar-hover">
+/** A settings list item, drawn like a chat list item. leading sits in a 40px round chip (an Avatar fills it).
+ * children: an area under the line, indented to the title (Canais: QR and history); the item then gets a divider
+ * instead of the hover fill. */
+export function ListRow(props: {
+  leading: ReactNode;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  badges?: ReactNode;
+  actions?: ReactNode;
+  children?: ReactNode;
+}) {
+  const line = (
+    <>
       <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-full bg-primary-soft text-accent-ink">{props.leading}</span>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -124,11 +133,21 @@ export function ListRow(props: { leading: ReactNode; title: ReactNode; subtitle?
         {props.subtitle && <p className="truncate text-[13px] leading-[18px] text-muted">{props.subtitle}</p>}
       </div>
       {props.actions && <div className="flex shrink-0 items-center gap-1">{props.actions}</div>}
+    </>
+  );
+  if (!props.children) {
+    return <li className="flex items-center gap-3 rounded-item px-2.5 py-2.5 transition-colors hover:bg-sidebar-hover">{line}</li>;
+  }
+  return (
+    <li className="border-b border-border pb-3 last:border-b-0">
+      <div className="flex items-center gap-3 px-2.5 py-2.5">{line}</div>
+      <div className="px-2.5 sm:pl-[62px]">{props.children}</div>
     </li>
   );
 }
 
-export type RowMenuItem = { label: string; onSelect: () => void; danger?: boolean; disabled?: boolean };
+/** download: the item is a download link to that URL (Exportar) instead of a button. */
+export type RowMenuItem = { label: string; onSelect?: () => void; download?: string; danger?: boolean; disabled?: boolean };
 
 /** The ⋮ menu of a ListRow (as the chat list's "Opções da conversa"). Closes on a choice, Escape or a click outside.
  * false/null items are skipped, for `cond && {…}`. */
@@ -171,23 +190,28 @@ export function RowMenu({ label, items }: { label: string; items: Array<RowMenuI
       </button>
       {open && (
         <div id={id} className={`${menu} absolute right-0 z-10 mt-1 min-w-44`}>
-          {items.map(
-            (item) =>
-              item && (
-                <button
-                  key={item.label}
-                  type="button"
-                  disabled={item.disabled}
-                  onClick={() => {
-                    setOpen(false);
-                    item.onSelect();
-                  }}
-                  className={`${menuItem} whitespace-nowrap ${item.danger ? 'text-danger' : ''}`}
-                >
-                  {item.label}
-                </button>
-              ),
-          )}
+          {items.map((item) => {
+            if (!item) return null;
+            const className = `${menuItem} whitespace-nowrap ${item.danger ? 'text-danger' : ''}`;
+            return item.download ? (
+              <a key={item.label} href={item.download} download onClick={() => setOpen(false)} className={className}>
+                {item.label}
+              </a>
+            ) : (
+              <button
+                key={item.label}
+                type="button"
+                disabled={item.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  item.onSelect?.();
+                }}
+                className={className}
+              >
+                {item.label}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

@@ -114,7 +114,7 @@ export function OfficeTemplateDialog({ onCancel, onCreated }: { onCancel: () => 
             return (
               <fieldset key={k} className="min-w-0">
                 <legend className={`mb-2 ${blockTitle}`}>{DESTS[k].label}</legend>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block min-w-0">
                     <span className={fieldLabel}>Setor</span>
                     <select
