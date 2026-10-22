@@ -5763,3 +5763,999 @@ git commit -m "feat(server): Importar do Umbler routes (admin): status, analyze,
 
 ---
 
+### Task 12: Web: the "Importar do Umbler" page in Ajustes
+
+The page sits in Ajustes › **Equipe e cadastros**, admin only. An agent who opens the URL is sent back to Perfil, and the server answers 403 anyway. It is built from the settings building blocks (`PageHeader`, `SettingsSection`, `SettingRow`, `block`, `ErrorText`, `Loading`, `btnPrimary`, `btnSecondary`) and `fieldSelect`. It polls `GET /api/umbler-import` every 3 s while the job analyzes or imports; there is no WebSocket event.
+
+The states, with the copy of spec §6.1-6.4:
+- **Sem token**: the text that says how to set it, and "Analisar" disabled. No part of the token is ever shown.
+- **Analisando**: "Analisando o Umbler… N conversas lidas".
+- **Analisado**:
+  - "O que foi encontrado";
+  - one selector per channel, sector and attendant, with the proposals;
+  - per channel, the hint of §6.2/§6.3: the old number going to the official channel, the other number the replies leave from, or "N conversas deste canal não vêm.";
+  - the blocks and warnings;
+  - "Analisar de novo" and "Importar", which opens the confirmation and posts the mapping.
+- **Importando**: "Etapa 3 de 5: conversas abertas — 120 de 135", the counters, and "Pode fechar esta tela…".
+- **Falhou**: "A importação parou: <motivo>. O que já entrou fica." with "Continuar". A failed analysis shows "A análise parou: <motivo>." and offers "Analisar de novo" (decision 5).
+- **Concluída**: "Importação concluída em dd/mm/aaaa hh:mm (duração h min)." with the report, and "Analisar de novo".
+
+**Files:**
+- Modify: `web/src/lib/api.ts` (types, `api.umblerImport`, `qk.umblerImport`), `web/src/lib/api.test.ts`
+- Create: `web/src/pages/settings/UmblerImportSettings.tsx`, `web/src/pages/settings/UmblerImportSettings.test.tsx`
+- Modify: `web/src/pages/settings/SettingsPage.tsx` (icon, import, item), `web/src/pages/settings/SettingsPage.test.tsx`
+
+**Interfaces:**
+- Consumes:
+  - Task 1 `UMBLER_IMPORT_ERRORS`, `UMBLER_IMPORT_PHASES`, `UMBLER_PHASE_LABELS`, the DTOs;
+  - Task 11's routes;
+  - existing `confirmDialog`, `formatPhone`, `formatOfficeDateTime`, `api.channels.list`, `api.sectors.list`, `api.users.list`.
+- Produces: `api.umblerImport.*`, `qk.umblerImport`, `UmblerImportSettings`, `durationText`, `progressLines`, `reportLines`, `channelHint`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to the end of `web/src/lib/api.test.ts`:
+
+```ts
+describe('api routes of the 2026-10-21 importar-umbler delivery', () => {
+  it('calls the Umbler import routes', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    const mapping = { channels: { CH: 'c1' }, sectors: { S: 'create' }, members: { M: 'none' } };
+    await api.umblerImport.get();
+    await api.umblerImport.analyze();
+    await api.umblerImport.start('i1', mapping);
+    await api.umblerImport.resume('i1');
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)} ${String(i?.body ?? '')}`)).toEqual([
+      'GET /api/umbler-import ',
+      'POST /api/umbler-import/analyze ',
+      `POST /api/umbler-import/i1/start ${JSON.stringify({ mapping })}`,
+      'POST /api/umbler-import/i1/resume ',
+    ]);
+  });
+});
+```
+
+Create `web/src/pages/settings/UmblerImportSettings.test.tsx`:
+
+```tsx
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerImportDto, type UmblerImportStatusDto } from '@talk/shared';
+import { confirmDialog } from '../../lib/confirm';
+import { UmblerImportSettings, durationText } from './UmblerImportSettings';
+
+vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
+
+const analysis: UmblerAnalysisDto = {
+  organizationId: 'ORG', organization: 'Escritório Teste',
+  contacts: { total: 2368, existing: 300, withoutAddress: 8 },
+  chats: { open: 135, waiting: 12, closed: 9440, from: '2023-02-01T12:00:00.000Z', to: '2026-10-20T12:00:00.000Z' },
+  channels: [
+    { id: 'CH_OLD', name: 'Número antigo', type: 'OrganizationBrokerWhatsappChannelReferenceModel', phone: '5565988880000', whatsapp: true, chats: 900, proposal: 'ch1' },
+    { id: 'CH_WEB', name: 'Site', type: 'OrganizationWebsiteWidgetChannelReferenceModel', phone: null, whatsapp: false, chats: 4, proposal: 'none' },
+  ],
+  sectors: [{ id: 'SEC1', name: 'Atendimento', proposal: 's1' }, { id: 'SEC3', name: 'Trabalhista', proposal: 'create' }],
+  members: [{ id: 'M_CARLA', name: 'Carla Antiga', email: 'carla@antigo.test', active: false, chats: 321, proposal: 'create' }],
+  tags: { new: 3, existing: 1 },
+  customFields: { new: 1, existing: 0, unsupported: ['Aceitou termos'] },
+  quickAnswers: { new: 5, existing: 2 },
+  readTest: 'ok',
+  warnings: ['Espaço livre para arquivos: 40 GB.'],
+};
+const counts = { ...emptyUmblerCounts(), done: 120, total: 135, chatsRead: 0 };
+const imp = (over: Partial<UmblerImportDto> = {}): UmblerImportDto => ({
+  id: 'i1', state: 'analyzed', phase: null, analysis, progress: counts, report: null, error: null, blocks: [],
+  createdAt: '2026-10-21T12:00:00.000Z', startedAt: null, finishedAt: null, ...over,
+});
+
+let status: UmblerImportStatusDto;
+const calls: Array<{ method: string; path: string; body: unknown }> = [];
+const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+
+beforeEach(() => {
+  calls.length = 0;
+  status = { tokenConfigured: true, current: null };
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname;
+    const method = init?.method ?? 'GET';
+    calls.push({ method, path, body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined });
+    if (method === 'GET' && path === '/api/umbler-import') return json(status);
+    if (method === 'GET' && path === '/api/channels') return json([{ id: 'ch1', name: 'WhatsApp escritório', status: 'connected', phone: '5565999990000' }]);
+    if (method === 'GET' && path === '/api/sectors') return json([{ id: 's1', name: 'Atendimento', position: 0, isDefault: true }]);
+    if (method === 'GET' && path === '/api/users') return json([{ id: 'u1', name: 'Ana', email: 'ana@x', role: 'agent', signature: null, active: true, sectorIds: [], avatarUrl: null }]);
+    if (method === 'POST') return json(imp({ state: 'running' }));
+    return json({ error: 'inesperado' }, 500);
+  }));
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+function renderPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <UmblerImportSettings />
+    </QueryClientProvider>,
+  );
+}
+
+describe('Importar do Umbler (spec 2026-10-21 importar-umbler §6)', () => {
+  it('without the token: says how to set it, never shows any token, and "Analisar" is disabled', async () => {
+    status = { tokenConfigured: false, current: null };
+    renderPage();
+    expect(await screen.findByText(/Token do Umbler não configurado\. Coloque/)).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Analisar' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('with the token: "Analisar" posts analyze; while analyzing it shows the chats read and no button', async () => {
+    renderPage();
+    expect(await screen.findByText('Token do Umbler configurado.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Analisar' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/umbler-import/analyze')).toBe(true));
+
+    cleanup();
+    status = { tokenConfigured: true, current: imp({ state: 'analyzing', analysis: null, progress: { ...counts, chatsRead: 450 } }) };
+    renderPage();
+    expect(await screen.findByText('Analisando o Umbler… 450 conversas lidas')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Analisar/ })).toBeNull();
+  });
+
+  it('analyzed: counts, the proposed destinations, the channel hints; "Importar" confirms and posts the mapping', async () => {
+    status = { tokenConfigured: true, current: imp() };
+    renderPage();
+    expect(await screen.findByText('Contatos: 2.060 novos, 300 já existem aqui, 8 sem telefone nem LID (não vêm)')).toBeTruthy();
+    expect(screen.getByText('Conversas abertas: 135 (das quais 12 esperando)')).toBeTruthy();
+    expect(screen.getByText('Período: de 01/02/2023 a 20/10/2026')).toBeTruthy();
+    const oldNumber = (await screen.findByLabelText('Número antigo')) as HTMLSelectElement;
+    expect(oldNumber.value).toBe('ch1');
+    expect(screen.getByText('As conversas do número +55 65 98888-0000 entram no canal WhatsApp escritório; respostas a elas saem do número oficial.')).toBeTruthy();
+    expect((screen.getByLabelText('Site') as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText('4 conversas deste canal não vêm.')).toBeTruthy();
+    expect((screen.getByLabelText('Trabalhista') as HTMLSelectElement).value).toBe('create');
+    expect(screen.getByRole('option', { name: 'Criar setor “Trabalhista”' })).toBeTruthy();
+    expect((screen.getByLabelText('Carla Antiga') as HTMLSelectElement).value).toBe('create');
+    expect(screen.getByText('Espaço livre para arquivos: 40 GB.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Carla Antiga'), { target: { value: 'none' } });
+    fireEvent.change(oldNumber, { target: { value: 'none' } });
+    expect(screen.getByText('900 conversas deste canal não vêm.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Importar' }));
+
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/umbler-import/i1/start')).toBeTruthy());
+    expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Importar 2.360 contatos e 9.575 conversas do Umbler?', confirmLabel: 'Importar' }),
+    );
+    expect(calls.find((c) => c.path === '/api/umbler-import/i1/start')!.body).toEqual({
+      mapping: { channels: { CH_OLD: 'none', CH_WEB: 'none' }, sectors: { SEC1: 's1', SEC3: 'create' }, members: { M_CARLA: 'none' } },
+    });
+  });
+
+  it('a block (automatic rules on) is shown and keeps "Importar" disabled', async () => {
+    status = { tokenConfigured: true, current: imp({ blocks: ['Desligue as Regras automáticas antes de importar: …'] }) };
+    renderPage();
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect((await screen.findByRole('button', { name: 'Importar' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('importing: the step, the counters, and that the screen may be closed', async () => {
+    status = { tokenConfigured: true, current: imp({ state: 'running', phase: 'open_chats', startedAt: '2026-10-21T12:00:00.000Z' }) };
+    renderPage();
+    expect(await screen.findByText('Etapa 3 de 5: conversas abertas — 120 de 135')).toBeTruthy();
+    expect(screen.getByText('Casadas com o histórico do WhatsApp: 0')).toBeTruthy();
+    expect(screen.getByText('Pode fechar esta tela: a importação continua no servidor e retoma sozinha se o sistema reiniciar.')).toBeTruthy();
+  });
+
+  it('failed: the reason and "Continuar"; a failed analysis only offers "Analisar de novo"', async () => {
+    status = { tokenConfigured: true, current: imp({ state: 'failed', phase: 'closed_chats', error: 'umbler_429', startedAt: '2026-10-21T12:00:00.000Z' }) };
+    renderPage();
+    expect(await screen.findByText('A importação parou: O Umbler limitou as requisições. Clique em Continuar daqui a alguns minutos. O que já entrou fica.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/umbler-import/i1/resume')).toBe(true));
+
+    cleanup();
+    status = { tokenConfigured: true, current: imp({ state: 'failed', error: 'umbler_token', analysis: null }) };
+    renderPage();
+    expect(await screen.findByText(/^A análise parou: O Umbler recusou o token/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Continuar' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Analisar de novo' })).toBeTruthy();
+  });
+
+  it('done: when it ended, how long it took, and the report', async () => {
+    const report = { ...emptyUmblerCounts(), durationMs: 2 * 3_600_000 + 15 * 60_000, messages: { ...emptyUmblerCounts().messages, total: 150_000, matched: 4200, maxMatchDiffMs: 3500 } };
+    status = {
+      tokenConfigured: true,
+      current: imp({ state: 'done', phase: 'closed_chats', report, startedAt: '2026-10-21T12:00:00.000Z', finishedAt: '2026-10-21T18:15:00.000Z' }),
+    };
+    renderPage();
+    expect(await screen.findByText('Importação concluída em 21/10/2026 14:15 (duração 2 h 15 min).')).toBeTruthy();
+    expect(screen.getByText('Casadas com o histórico do WhatsApp: 4.200 (maior diferença: 3,5 s)')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Analisar de novo' })).toBeTruthy();
+    expect(durationText(40 * 60_000)).toBe('40 min');
+  });
+});
+```
+
+Append to the end of `web/src/pages/settings/SettingsPage.test.tsx`:
+
+```tsx
+it('lists "Importar do Umbler" under Equipe e cadastros for admins only (spec 2026-10-21 importar-umbler §6)', () => {
+  const nav = (me: Me) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['me'], me);
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/configuracoes/importar-umbler']}>
+          <Routes>
+            <Route path="/configuracoes/:section?" element={<SettingsPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return screen.getByRole('navigation', { name: 'Configurações' });
+  };
+  expect(within(nav(admin)).getByRole('link', { name: 'Importar do Umbler' }).getAttribute('href')).toBe('/configuracoes/importar-umbler');
+  cleanup();
+  const agentNav = nav({ ...admin, id: 'u2', role: 'agent' });
+  expect(within(agentNav).queryByRole('link', { name: 'Importar do Umbler' })).toBeNull();
+  expect(within(agentNav).getByRole('link', { name: 'Perfil' }).getAttribute('aria-current')).toBe('page'); // sent back to Perfil
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npm test -w web -- src/lib/api.test.ts src/pages/settings`
+Expected: FAIL. `api.umblerImport` is undefined, `./UmblerImportSettings` does not exist, and the nav has no "Importar do Umbler" link.
+
+- [ ] **Step 3: Add the client**
+
+In `web/src/lib/api.ts`, replace
+
+```ts
+  TimelineItem,
+  UserDto,
+  UserPreferences,
+} from '@talk/shared';
+```
+
+with
+
+```ts
+  TimelineItem,
+  UmblerImportDto,
+  UmblerImportStatusDto,
+  UmblerMappingDto,
+  UserDto,
+  UserPreferences,
+} from '@talk/shared';
+```
+
+replace
+
+```ts
+  botRuns: {
+    listForChat: (chatId: string) => request<BotRunDto[]>('GET', `/api/chats/${enc(chatId)}/bot-runs`),
+    start: (chatId: string, botId: string) => request<BotRunDto>('POST', `/api/chats/${enc(chatId)}/bot-runs`, { botId }),
+    stop: (runId: string) => request<BotRunDto>('POST', `/api/bot-runs/${enc(runId)}/stop`),
+  },
+});
+```
+
+with
+
+```ts
+  botRuns: {
+    listForChat: (chatId: string) => request<BotRunDto[]>('GET', `/api/chats/${enc(chatId)}/bot-runs`),
+    start: (chatId: string, botId: string) => request<BotRunDto>('POST', `/api/chats/${enc(chatId)}/bot-runs`, { botId }),
+    stop: (runId: string) => request<BotRunDto>('POST', `/api/bot-runs/${enc(runId)}/stop`),
+  },
+  /** Spec 2026-10-21 importar-umbler §10 (admin). */
+  umblerImport: {
+    get: () => request<UmblerImportStatusDto>('GET', '/api/umbler-import'),
+    analyze: () => request<UmblerImportDto>('POST', '/api/umbler-import/analyze'),
+    start: (id: string, mapping: UmblerMappingDto) => request<UmblerImportDto>('POST', `/api/umbler-import/${enc(id)}/start`, { mapping }),
+    resume: (id: string) => request<UmblerImportDto>('POST', `/api/umbler-import/${enc(id)}/resume`),
+  },
+});
+```
+
+and replace
+
+```ts
+  /** Under ['chats'] so the WS reconnect invalidation refreshes it too. */
+  chatBotRuns: (chatId: string) => ['chats', 'bot-runs', chatId] as const,
+};
+```
+
+with
+
+```ts
+  /** Under ['chats'] so the WS reconnect invalidation refreshes it too. */
+  chatBotRuns: (chatId: string) => ['chats', 'bot-runs', chatId] as const,
+  umblerImport: ['umbler-import'] as const,
+};
+```
+
+- [ ] **Step 4: Write the page**
+
+Create `web/src/pages/settings/UmblerImportSettings.tsx`:
+
+```tsx
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  UMBLER_IMPORT_ERRORS, UMBLER_IMPORT_PHASES, UMBLER_PHASE_LABELS, formatOfficeDateTime,
+  type ChannelDto, type UmblerAnalysisDto, type UmblerCountsDto, type UmblerImportDto, type UmblerMappingDto,
+} from '@talk/shared';
+import { api, qk } from '../../lib/api';
+import { confirmDialog } from '../../lib/confirm';
+import { formatPhone } from '../../lib/format';
+import { fieldSelect } from '../../components/ui';
+import { ErrorText, Loading, PageHeader, SettingRow, SettingsSection, block, btnPrimary, btnSecondary } from '../../components/settings/common';
+
+// Spec 2026-10-21 importar-umbler §6: Ajustes › Importar do Umbler (admins only; the server answers 403 to anyone else).
+
+const POLL_MS = 3_000;
+const n = (x: number) => x.toLocaleString('pt-BR');
+const day = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const gb = (bytes: number) => (bytes / 1024 ** 3).toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+const list = (names: string[]) => names.join(', ');
+
+/** "(duração 2 h 15 min)" */
+export function durationText(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  const h = Math.floor(minutes / 60);
+  return h ? `${h} h ${minutes % 60} min` : `${minutes} min`;
+}
+
+/** The counters while it runs (§6.1). */
+export function progressLines(p: UmblerCountsDto): string[] {
+  return [
+    `Contatos: ${n(p.contacts.created + p.contacts.completed + p.contacts.lidOnly)}`,
+    `Conversas: ${n(p.chats.openCreated + p.chats.openMerged + p.chats.closed)}`,
+    `Mensagens: ${n(p.messages.total)} (notas internas: ${n(p.messages.notes)})`,
+    `Observações: ${n(p.notes)}`,
+    `Arquivos: ${n(p.files.saved)} baixados, ${n(p.files.expired)} indisponíveis`,
+    `Casadas com o histórico do WhatsApp: ${n(p.messages.matched)}`,
+  ];
+}
+
+/** The final report (§6.4): created / already here / left out, per item. */
+export function reportLines(r: UmblerCountsDto): string[] {
+  const lines = [
+    `Setores: ${n(r.sectors.created)} criados, ${n(r.sectors.existing)} já existiam`,
+    `Etiquetas: ${n(r.tags.created)} criadas, ${n(r.tags.existing)} já existiam`,
+    `Campos personalizados: ${n(r.customFields.created)} criados, ${n(r.customFields.existing)} já existiam` +
+      (r.customFields.unsupported.length ? `; não suportados: ${list(r.customFields.unsupported)}` : ''),
+    `Atendentes: ${n(r.members.linked)} vinculados, ${n(r.members.createdInactive)} criados inativos, ${n(r.members.none)} sem atendente`,
+    `Respostas rápidas: ${n(r.quickAnswers.created)} criadas, ${n(r.quickAnswers.existing)} já existiam` +
+      (r.quickAnswers.unmappedVariables.length ? `; variáveis não convertidas em: ${list(r.quickAnswers.unmappedVariables)}` : '') +
+      (r.quickAnswers.attachmentErrors.length ? `; anexos que falharam em: ${list(r.quickAnswers.attachmentErrors)}` : ''),
+    `Contatos: ${n(r.contacts.created)} criados, ${n(r.contacts.completed)} completados, ${n(r.contacts.lidOnly)} só com LID, ` +
+      `${n(r.contacts.skipped)} ignorados sem telefone nem LID`,
+    `Observações: ${n(r.notes)}`,
+    `Conversas abertas: ${n(r.chats.openCreated)} criadas, ${n(r.chats.openMerged)} juntadas a uma conversa aberta daqui`,
+    `Conversas finalizadas: ${n(r.chats.closed)}`,
+    `Conversas ignoradas: ${n(r.chats.skippedChannel)} de canal “Não importar”, ${n(r.chats.skippedEmpty)} sem mensagens, ` +
+      `${n(r.chats.skippedDeleted)} apagadas aqui, ${n(r.chats.skippedNoAddress)} sem telefone nem LID`,
+    `Mensagens: ${n(r.messages.total)} (notas ${n(r.messages.notes)}, de chatbot ${n(r.messages.bot)}, ` +
+      `de atendente desconhecido ${n(r.messages.unknownAuthor)}, sem conteúdo para o token ${n(r.messages.redacted)})`,
+    `Casadas com o histórico do WhatsApp: ${n(r.messages.matched)} (maior diferença: ` +
+      `${(r.messages.maxMatchDiffMs / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} s)`,
+    `Arquivos: ${n(r.files.saved)} baixados (${gb(r.files.bytes)} GB), ${n(r.files.expired)} indisponíveis`,
+  ];
+  if (r.gone) lines.push(`Apagados no Umbler durante a cópia: ${n(r.gone)}`);
+  if (r.planLimited) lines.push('O plano do Umbler escondeu mensagens antigas; elas não vieram.');
+  return lines;
+}
+
+type ChannelRow = UmblerAnalysisDto['channels'][number];
+
+/** §6.2/§6.3 under a channel's selector: what its destination means. */
+export function channelHint(ch: ChannelRow, target: string, ours: ChannelDto[]): string | null {
+  if (target === 'none') return `${n(ch.chats)} conversas deste canal não vêm.`;
+  const to = ours.find((c) => c.id === target);
+  if (!to || !ch.phone || to.phone === ch.phone) return null;
+  if (target === ch.proposal) {
+    return `As conversas do número ${formatPhone(ch.phone)} entram no canal ${to.name}; respostas a elas saem do número oficial.`;
+  }
+  return to.phone ? `Respostas nessas conversas sairão do número ${formatPhone(to.phone)}.` : null;
+}
+
+function Lines({ lines }: { lines: string[] }) {
+  return (
+    <ul className="mt-2 space-y-1.5 text-sm text-fg-2">
+      {lines.map((line, i) => (
+        <li key={i}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
+function Blocks({ blocks }: { blocks: string[] }) {
+  return blocks.map((b) => (
+    <p key={b} role="alert" className={`${block} mt-3 text-sm font-semibold text-danger`}>
+      {b}
+    </p>
+  ));
+}
+
+function Analysis({ imp, analysis: a, onStart, pending }: {
+  imp: UmblerImportDto;
+  analysis: UmblerAnalysisDto;
+  onStart: (mapping: UmblerMappingDto) => void;
+  pending: boolean;
+}) {
+  const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
+  const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
+  const users = useQuery({ queryKey: qk.users, queryFn: api.users.list });
+  const [mapping, setMapping] = useState<UmblerMappingDto>(() => ({
+    channels: Object.fromEntries(a.channels.map((c) => [c.id, c.proposal])),
+    sectors: Object.fromEntries(a.sectors.map((s) => [s.id, s.proposal])),
+    members: Object.fromEntries(a.members.map((m) => [m.id, m.proposal])),
+  }));
+  if (!channels.data || !sectors.data || !users.data) return <Loading error={channels.error ?? sectors.error ?? users.error} />;
+  const set = (group: keyof UmblerMappingDto, id: string, value: string) =>
+    setMapping((m) => ({ ...m, [group]: { ...m[group], [id]: value } }));
+  const contactsToImport = a.contacts.total - a.contacts.withoutAddress;
+
+  async function confirmStart() {
+    const ok = await confirmDialog({
+      title: `Importar ${n(contactsToImport)} contatos e ${n(a.chats.open + a.chats.closed)} conversas do Umbler?`,
+      body: 'A cópia roda em segundo plano e pode levar algumas horas.',
+      confirmLabel: 'Importar',
+      danger: false,
+    });
+    if (ok) onStart(mapping);
+  }
+
+  return (
+    <>
+      <SettingsSection title="O que foi encontrado" description={`Organização ${a.organization} no Umbler Talk.`}>
+        <Lines
+          lines={[
+            `Contatos: ${n(contactsToImport - a.contacts.existing)} novos, ${n(a.contacts.existing)} já existem aqui, ` +
+              `${n(a.contacts.withoutAddress)} sem telefone nem LID (não vêm)`,
+            `Conversas abertas: ${n(a.chats.open)} (das quais ${n(a.chats.waiting)} esperando)`,
+            `Conversas finalizadas: ${n(a.chats.closed)}`,
+            ...(a.chats.from && a.chats.to ? [`Período: de ${day(a.chats.from)} a ${day(a.chats.to)}`] : []),
+            `Setores: ${n(a.sectors.length)} · Atendentes: ${n(a.members.length)}`,
+            `Etiquetas: ${n(a.tags.new)} novas, ${n(a.tags.existing)} já existem`,
+            `Campos: ${n(a.customFields.new)} novos, ${n(a.customFields.existing)} já existem` +
+              (a.customFields.unsupported.length ? `; não suportados: ${list(a.customFields.unsupported)}` : ''),
+            `Respostas rápidas: ${n(a.quickAnswers.new)} novas, ${n(a.quickAnswers.existing)} já existem`,
+          ]}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Canais">
+        {a.channels.map((ch) => {
+          const id = `umbler-channel-${ch.id}`;
+          const hint = channelHint(ch, mapping.channels[ch.id] ?? 'none', channels.data);
+          return (
+            <SettingRow
+              key={ch.id}
+              label={ch.name}
+              htmlFor={id}
+              description={
+                <>
+                  {`${ch.whatsapp ? 'WhatsApp' : 'Não é WhatsApp'}${ch.phone ? ` · ${formatPhone(ch.phone)}` : ''} · ${n(ch.chats)} conversas`}
+                  {hint && <span className="block text-fg-2">{hint}</span>}
+                </>
+              }
+              control={
+                <select
+                  id={id}
+                  value={mapping.channels[ch.id]}
+                  disabled={!ch.whatsapp}
+                  onChange={(e) => set('channels', ch.id, e.target.value)}
+                  className={`${fieldSelect} w-64`}
+                >
+                  {ch.whatsapp &&
+                    channels.data.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.phone ? `${c.name} (${formatPhone(c.phone)})` : c.name}
+                      </option>
+                    ))}
+                  <option value="none">Não importar</option>
+                </select>
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+
+      <SettingsSection title="Setores">
+        {a.sectors.map((s) => {
+          const id = `umbler-sector-${s.id}`;
+          return (
+            <SettingRow
+              key={s.id}
+              label={s.name}
+              htmlFor={id}
+              control={
+                <select id={id} value={mapping.sectors[s.id]} onChange={(e) => set('sectors', s.id, e.target.value)} className={`${fieldSelect} w-64`}>
+                  {sectors.data.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+                  <option value="create">{`Criar setor “${s.name}”`}</option>
+                </select>
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+
+      <SettingsSection title="Atendentes">
+        {a.members.map((m) => {
+          const id = `umbler-member-${m.id}`;
+          return (
+            <SettingRow
+              key={m.id}
+              label={m.name}
+              htmlFor={id}
+              description={`${m.email} · ${m.active ? 'ativo' : 'inativo'} no Umbler · ${n(m.chats)} conversas`}
+              control={
+                <select id={id} value={mapping.members[m.id]} onChange={(e) => set('members', m.id, e.target.value)} className={`${fieldSelect} w-64`}>
+                  {users.data.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.active ? u.name : `${u.name} (inativo)`}
+                    </option>
+                  ))}
+                  <option value="create">Criar usuário inativo</option>
+                  <option value="none">Sem atendente</option>
+                </select>
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+
+      <SettingsSection title="Avisos">
+        <Blocks blocks={imp.blocks} />
+        <Lines lines={a.warnings} />
+      </SettingsSection>
+
+      <div className="mt-7 flex flex-wrap gap-2">
+        <button type="button" disabled={pending || imp.blocks.length > 0} onClick={() => void confirmStart()} className={btnPrimary}>
+          Importar
+        </button>
+      </div>
+    </>
+  );
+}
+
+function Running({ imp }: { imp: UmblerImportDto }) {
+  const phase = imp.phase ?? 'catalog';
+  const p = imp.progress;
+  const of = p && p.total > 0 ? ` — ${n(p.done)} de ${n(p.total)}` : '';
+  return (
+    <SettingsSection title="Importando">
+      <p role="status" className="text-sm font-semibold">
+        {`Etapa ${UMBLER_IMPORT_PHASES.indexOf(phase) + 1} de ${UMBLER_IMPORT_PHASES.length}: ${UMBLER_PHASE_LABELS[phase]}${of}`}
+      </p>
+      {p && <Lines lines={progressLines(p)} />}
+      <p className="mt-3 text-[13px] leading-[18px] text-muted">
+        Pode fechar esta tela: a importação continua no servidor e retoma sozinha se o sistema reiniciar.
+      </p>
+    </SettingsSection>
+  );
+}
+
+function Failed({ imp, onResume, pending }: { imp: UmblerImportDto; onResume: () => void; pending: boolean }) {
+  const reason = UMBLER_IMPORT_ERRORS[imp.error ?? 'unexpected'].replace(/\.$/, '');
+  if (!imp.startedAt) {
+    // an analysis that stopped: "Analisar de novo" starts another one
+    return (
+      <p role="alert" className={`${block} mt-5 text-sm font-semibold text-danger`}>
+        {`A análise parou: ${reason}.`}
+      </p>
+    );
+  }
+  return (
+    <SettingsSection title="Importação">
+      <p role="alert" className="text-sm font-semibold text-danger">{`A importação parou: ${reason}. O que já entrou fica.`}</p>
+      <Blocks blocks={imp.blocks} />
+      {imp.progress && <Lines lines={progressLines(imp.progress)} />}
+      <button type="button" disabled={pending || imp.blocks.length > 0} onClick={onResume} className={`${btnPrimary} mt-4`}>
+        Continuar
+      </button>
+    </SettingsSection>
+  );
+}
+
+function Done({ imp }: { imp: UmblerImportDto }) {
+  const r = imp.report;
+  return (
+    <SettingsSection title="Relatório">
+      <p role="status" className="text-sm font-semibold">
+        {`Importação concluída em ${imp.finishedAt ? formatOfficeDateTime(imp.finishedAt) : ''} (duração ${durationText(r?.durationMs ?? 0)}).`}
+      </p>
+      {r && <Lines lines={reportLines(r)} />}
+    </SettingsSection>
+  );
+}
+
+export function UmblerImportSettings() {
+  const qc = useQueryClient();
+  const status = useQuery({
+    queryKey: qk.umblerImport,
+    queryFn: api.umblerImport.get,
+    // §6: polls while it analyzes or imports (no WS event)
+    refetchInterval: (q) => {
+      const state = q.state.data?.current?.state;
+      return state === 'analyzing' || state === 'running' ? POLL_MS : false;
+    },
+  });
+  const act = useMutation({
+    mutationFn: (run: () => Promise<unknown>) => run(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.umblerImport }),
+  });
+  if (!status.data) return <Loading error={status.error} />;
+  const { tokenConfigured, current } = status.data;
+  const active = current?.state === 'analyzing' || current?.state === 'running';
+
+  return (
+    <>
+      <PageHeader
+        title="Importar do Umbler"
+        description="Traz do Umbler Talk os contatos, os cadastros, os atendentes e todas as conversas, abertas e finalizadas."
+      />
+      <SettingsSection title="Token de acesso">
+        <SettingRow
+          label="Token do Umbler"
+          description={
+            tokenConfigured ? (
+              'Token do Umbler configurado.'
+            ) : (
+              <>
+                Token do Umbler não configurado. Coloque <code>UMBLER_TOKEN</code> no arquivo <code>.env</code> do servidor e reinicie o
+                sistema.
+              </>
+            )
+          }
+          control={
+            !active && (
+              <button
+                type="button"
+                disabled={!tokenConfigured || act.isPending}
+                onClick={() => act.mutate(() => api.umblerImport.analyze())}
+                className={current ? btnSecondary : btnPrimary}
+              >
+                {current ? 'Analisar de novo' : 'Analisar'}
+              </button>
+            )
+          }
+        />
+      </SettingsSection>
+      <ErrorText error={act.error} />
+
+      {current?.state === 'analyzing' && (
+        <p role="status" className={`${block} mt-5 text-sm font-semibold`}>
+          {`Analisando o Umbler… ${n(current.progress?.chatsRead ?? 0)} conversas lidas`}
+        </p>
+      )}
+      {current?.state === 'analyzed' && current.analysis && (
+        <Analysis
+          key={current.id}
+          imp={current}
+          analysis={current.analysis}
+          pending={act.isPending}
+          onStart={(mapping) => act.mutate(() => api.umblerImport.start(current.id, mapping))}
+        />
+      )}
+      {current?.state === 'running' && <Running imp={current} />}
+      {current?.state === 'failed' && (
+        <Failed imp={current} pending={act.isPending} onResume={() => act.mutate(() => api.umblerImport.resume(current.id))} />
+      )}
+      {current?.state === 'done' && <Done imp={current} />}
+    </>
+  );
+}
+```
+
+- [ ] **Step 5: Add it to Ajustes**
+
+In `web/src/pages/settings/SettingsPage.tsx`, replace
+
+```tsx
+import {
+  BuildingsIcon, ChatsCircleIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon, TagIcon,
+  TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
+} from '@phosphor-icons/react';
+```
+
+with
+
+```tsx
+import {
+  BuildingsIcon, ChatsCircleIcon, CloudArrowDownIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon,
+  TagIcon, TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
+} from '@phosphor-icons/react';
+```
+
+replace
+
+```tsx
+import { BotsSettings } from './bots/BotsSettings';
+```
+
+with
+
+```tsx
+import { BotsSettings } from './bots/BotsSettings';
+import { UmblerImportSettings } from './UmblerImportSettings';
+```
+
+and replace
+
+```tsx
+  { path: 'campos', label: 'Campos personalizados', icon: TextAaIcon, group: 'Equipe e cadastros', adminOnly: true, page: CustomFieldsSettings },
+];
+```
+
+with
+
+```tsx
+  { path: 'campos', label: 'Campos personalizados', icon: TextAaIcon, group: 'Equipe e cadastros', adminOnly: true, page: CustomFieldsSettings },
+  { path: 'importar-umbler', label: 'Importar do Umbler', icon: CloudArrowDownIcon, group: 'Equipe e cadastros', adminOnly: true, page: UmblerImportSettings },
+];
+```
+
+- [ ] **Step 6: Run the tests and the type check**
+
+Run: `npm test -w web`
+Expected: PASS.
+
+Run: `npm run typecheck`
+Expected: no errors in any workspace.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add web/src/lib/api.ts web/src/lib/api.test.ts web/src/pages/settings/UmblerImportSettings.tsx web/src/pages/settings/UmblerImportSettings.test.tsx web/src/pages/settings/SettingsPage.tsx web/src/pages/settings/SettingsPage.test.tsx
+git commit -m "feat(web): Importar do Umbler page (analysis, mapping, blocks, progress, Continuar and the report)" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 13: Docs: IMPLANTACAO §5, the go-live checklist and the acceptance script
+
+Spec §13: `IMPLANTACAO.md` §5 becomes the screen's procedure, covering the token in the `.env`, the rules switched off, Analisar and Importar. It adds the rehearsal in the test environment, which gets the same protection as production and is erased at the end, and the go-live order. The go-live list trades "Cadastros importados" for "Importar do Umbler". The `Dockerfile` comment about `import-report.json` goes with the CLI. The acceptance script is spec §15, as a checklist.
+
+**Files:**
+- Modify: `docs/IMPLANTACAO.md` (§5; the go-live checklist line)
+- Modify: `Dockerfile` (one comment)
+- Create: `docs/superpowers/plans/2026-10-21-importar-umbler-aceite.md`
+
+**Interfaces:**
+- Consumes: the screen copy of Task 12; `UMBLER_TOKEN` (Task 1).
+- Produces: nothing in code.
+
+- [ ] **Step 1: Rewrite §5 of the deployment guide**
+
+In `docs/IMPLANTACAO.md`, replace the whole §5
+
+````markdown
+## 5. Importar do Umbler Talk
+
+O importador traz contatos, setores, etiquetas, campos personalizados e respostas rápidas, com anexos e variáveis. O histórico de conversas fica no Umbler.
+
+1. No Umbler Talk: **Conta → Perfil → Tokens de acesso** → crie um token.
+2. No servidor:
+
+```bash
+cd /opt/talk
+read -rs -p 'Token do Umbler: ' UMBLER_TOKEN; echo; export UMBLER_TOKEN
+# 1) Ensaio (--dry-run): lê tudo do Umbler, mostra as contagens e desfaz no fim. Nada é gravado.
+docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run
+# 2) Se o ensaio estiver certo, a importação real:
+docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts
+unset UMBLER_TOKEN
+# 3) Cópia do relatório da importação real no servidor:
+docker compose cp app:/data/import-report.json data/backup/relatorio-importacao.json
+```
+
+3. Leia o relatório: ele sai na tela nos dois passos (o `-T` evita caracteres de terminal no texto) e a importação real também o grava em `/data/import-report.json` dentro do container, copiado acima para `data/backup/relatorio-importacao.json`. Ele lista o que não pôde ser convertido, como variáveis `{{n}}` sem correspondência ou anexos que não baixaram. Corrija esses itens à mão na tela de Configurações.
+4. Apague o token no Umbler depois da importação.
+
+````
+
+with
+
+````markdown
+## 5. Importar do Umbler Talk
+
+A tela **Ajustes › Importar do Umbler** (só administradores) traz do Umbler Talk tudo o que o escritório tem lá: contatos (com etiquetas, campos e observações), setores, etiquetas, campos personalizados, respostas rápidas, atendentes e **todas as conversas**, abertas e finalizadas, com mensagens, notas internas e arquivos. O importador só **lê** o Umbler (só `GET`; nunca marca conversa como lida).
+
+1. No Umbler Talk, entre com o **Proprietário**: **Conta → Perfil → Tokens de acesso** → crie um token.
+2. No servidor, coloque o token no `.env` e recrie o app. O token nunca aparece na tela, nos logs nem no banco:
+
+```bash
+cd /opt/talk
+read -rs -p 'Token do Umbler: ' UMBLER_TOKEN; echo
+printf 'UMBLER_TOKEN=%s\n' "$UMBLER_TOKEN" >> .env; unset UMBLER_TOKEN
+chmod 600 .env
+docker compose up -d app
+```
+
+3. Em **Configurações › Regras automáticas**, desligue as duas regras: com elas ligadas a importação fica bloqueada.
+4. Em **Ajustes › Importar do Umbler**, clique em **Analisar** (cerca de 1 minuto). Confira as contagens, os avisos e o destino de cada canal, setor e atendente. Atendente sem e-mail igual aqui vira usuário **inativo**: guarda quem atendeu cada conversa e pode ser ativado em Ajustes › Atendentes.
+5. Clique em **Importar**. A cópia roda em segundo plano (algumas horas, conforme o volume de arquivos), retoma sozinha se o sistema reiniciar e termina com um relatório na mesma tela. Se parar, a tela diz o motivo e oferece **Continuar**.
+6. Com o relatório conferido: apague o token no Umbler, tire a linha `UMBLER_TOKEN` do `.env` e rode `docker compose up -d app`.
+
+**Ensaio (ambiente de teste, antes da virada).** O ensaio recebe dados reais de clientes: o ambiente de teste precisa da mesma proteção da produção (HTTPS, senhas fortes, acesso restrito). No mapeamento, escolha o canal de teste para o canal do Umbler. Ninguém responde cliente pelo número de teste. Siga o [roteiro de aceite](superpowers/plans/2026-10-21-importar-umbler-aceite.md) e, no fim, apague o ambiente inteiro: `docker compose down -v` e a pasta `data/media`.
+
+**Dia da virada (produção), nesta ordem:**
+
+1. Fim do expediente no Umbler; anote as contagens de Entrada, Esperando e Finalizados.
+2. Conecte o número oficial em Configurações › Canais (isso desconecta o Umbler, que fica congelado) e espere a importação automática do histórico do WhatsApp terminar.
+3. Analisar → conferir o mapeamento e as contagens → Importar. As conversas abertas chegam nos primeiros minutos e o escritório já atende aqui; as finalizadas chegam depois, das mais recentes para as mais antigas.
+4. Relatório conferido ("casadas com o histórico do WhatsApp" maior que zero e uma conversa recente sem mensagens repetidas) → apague o token → uma semana de consulta → cancele o Umbler e peça o encerramento da organização.
+
+Se o Umbler deixar de responder à API com o canal desconectado, a ordem inversa (importar antes de conectar, com o escritório parado) também funciona: as mensagens repetidas são casadas nos dois sentidos.
+
+````
+
+and, in the go-live checklist (§10), replace
+
+```markdown
+- [ ] Cadastros importados do Umbler (seção 5) e relatório de importação revisado.
+```
+
+with
+
+```markdown
+- [ ] "Importar do Umbler" ensaiado no ambiente de teste (seção 5, roteiro de aceite), relatório revisado e ambiente de teste apagado.
+- [ ] No dia da virada: Importar do Umbler na ordem da seção 5 (depois de conectar o número oficial e de o histórico do WhatsApp terminar).
+```
+
+- [ ] **Step 2: Drop the CLI from the Dockerfile comment**
+
+In `Dockerfile`, replace
+
+```dockerfile
+# /data também do node: o importador grava /data/import-report.json ao lado de /data/media.
+```
+
+with
+
+```dockerfile
+# /data e /data/media do node: o app grava os arquivos das conversas em /data/media.
+```
+
+- [ ] **Step 3: Write the acceptance script**
+
+Create `docs/superpowers/plans/2026-10-21-importar-umbler-aceite.md`:
+
+```markdown
+# Aceite manual: Importar do Umbler
+
+Roteiro do §15 da [especificação](../specs/2026-10-21-importar-umbler-design.md). Primeiro no **ambiente de teste**; em produção, no dia da virada, o roteiro da seção 5 do [IMPLANTACAO.md](../../IMPLANTACAO.md) e as mesmas conferências por amostragem.
+
+> ⚠️ O ambiente de teste recebe dados reais de clientes: HTTPS, senhas fortes e acesso restrito, como a produção. Ninguém responde cliente pelo número de teste. No fim, o ambiente é apagado.
+
+## 0. Antes de começar
+
+- [ ] Testes automáticos passando: `npm test`.
+- [ ] Anote a versão testada: `git log -1 --format=%h` → `________`
+- [ ] No Umbler, anote 3 conversas **abertas com não lidas** e o número do badge de cada uma: `________`, `________`, `________`.
+- [ ] Anote as contagens do Umbler: Entrada `____`, Esperando `____`, Finalizados `____` (≈ 9440), Contatos `____` (≈ 2368).
+
+## A. Token e análise
+
+- [ ] Ajustes › Importar do Umbler, sem token: "Token do Umbler não configurado. Coloque UMBLER_TOKEN no arquivo .env do servidor e reinicie o sistema." e **Analisar** desabilitado.
+- [ ] Token do Proprietário no `.env` de teste (IMPLANTACAO §5, passo 2): aparece "Token do Umbler configurado." e nenhum pedaço do token.
+- [ ] Com as Regras automáticas ligadas, **Analisar** e veja o bloqueio "Desligue as Regras automáticas antes de importar…" com **Importar** desabilitado. Desligue-as e volte à tela: o bloqueio some.
+- [ ] "Analisando o Umbler… N conversas lidas" e, em cerca de 1 minuto, "O que foi encontrado": as contagens batem com as anotadas (Finalizados, Contatos, abertas e esperando).
+- [ ] O teste de leitura não bloqueou (nenhum aviso "A leitura marcou uma conversa como lida no Umbler…").
+- [ ] Canais: o canal do Umbler → **canal de teste** (de propósito). Setores e atendentes conferidos; ex-atendentes em "Criar usuário inativo".
+- [ ] Os avisos fazem sentido (espaço livre em disco, limite do plano, token sem acesso total, se houver).
+
+## B. Importação
+
+- [ ] **Importar** → confirmação "Importar N contatos e N conversas do Umbler? A cópia roda em segundo plano e pode levar algumas horas." → **Importar**.
+- [ ] A tela mostra "Etapa 3 de 5: conversas abertas — x de y" e os contadores subindo; fechar e reabrir a tela não muda nada.
+- [ ] Durante as conversas finalizadas, reinicie o servidor (`docker compose restart app`): a importação continua sozinha, sem duplicar (contadores seguem de onde estavam).
+- [ ] Ao fim: "Importação concluída em dd/mm/aaaa hh:mm (duração …)." e o relatório.
+
+## C. O que chegou
+
+- [ ] Abertas na **Entrada** com o mesmo setor, atendente e "esperando" do Umbler; as de ex-atendentes na fila do setor ("Sem atendente").
+- [ ] Finalizadas em **Finalizados** com as datas originais; a linha do tempo diz "Conversa importada do Umbler Talk: N mensagens" e "Conversa finalizada por X".
+- [ ] Uma conversa com foto, áudio e PDF abre os três arquivos; um arquivo que o Umbler não tem mais mostra "Arquivo não está mais disponível…".
+- [ ] Notas internas aparecem como notas; observações do contato aparecem na ficha, com autor e data.
+- [ ] Respostas rápidas com anexo funcionam; as "apenas para mim" de um atendente ativo ficam só dele.
+- [ ] Ex-atendentes aparecem em Ajustes › Atendentes como **inativos** e não conseguem entrar.
+- [ ] Nada disparou: nenhuma triagem, chatbot, aviso ou mensagem ao WhatsApp; finalizadas sem não lidas.
+
+## D. O Umbler não mudou
+
+- [ ] As 3 conversas anotadas continuam com o **mesmo badge** de não lidas; nada mudou de estado.
+- [ ] A tela "sendo utilizado em mais de um dispositivo" não apareceu no Umbler.
+- [ ] Atividades do Umbler sem entradas novas do token.
+
+## E. Encerramento do ensaio
+
+- [ ] Relatório revisado (casadas com o histórico, maior diferença, arquivos indisponíveis).
+- [ ] Ninguém respondeu cliente pelo número de teste.
+- [ ] Token apagado no Umbler e tirado do `.env`.
+- [ ] Ambiente de teste apagado: `docker compose down -v` e a pasta `data/media`.
+```
+
+- [ ] **Step 4: Check and run everything**
+
+Run: `grep -rn "import:umbler\|importer/cli\|import-report" docs/IMPLANTACAO.md Dockerfile README.md server/src server/package.json`
+Expected: nothing.
+
+Run: `npm test`
+Expected: PASS in every workspace.
+
+Run: `npm run typecheck`
+Expected: no errors in any workspace.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/IMPLANTACAO.md Dockerfile docs/superpowers/plans/2026-10-21-importar-umbler-aceite.md
+git commit -m "docs: Importar do Umbler na implantação (ensaio, virada) e roteiro de aceite" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Self-review checklist (for the executor, after Task 13)
+
+- [ ] Spec §3, GET only and never the read route:
+  - the scan test (Task 2) passes;
+  - every importer test ends with `fake.problems()` empty;
+  - `grep -rn "fetchImpl(" server/src/importer` shows exactly two lines, both inside `createUmblerClient` (the API call and the file link).
+- [ ] Spec §4, the calls:
+  - `ContactTypes=DirectMessage`, the three `Visibility` values, `IncludePinneds=false`;
+  - open chats `CreatedAtUTC Asc`, finished `ClosedAtUTC Desc`; `Behavior=CountAllAndGetSlice` on the first page in Analisar only;
+  - `relative-messages` with `FromEventUTC`, `TakeAfter`, `Take=250`, `IncludeMetadata=false`, the next page from last − 1 ms with seen ids dropped;
+  - `includeCustomFields`, with the per-contact fallback.
+- [ ] Spec §5:
+  - the read test on the newest finished "Received" chat, and the block;
+  - open chats without unread first, then the unread check after each, and the stop with `umbler_marked_read`;
+  - 100 ms between calls.
+- [ ] Spec §6, the screen:
+  - the six states with their exact copy;
+  - "Analisar de novo" / "Importar", and the confirmation text;
+  - per-channel hints, blocks and warnings, the 3 s polling, admin only.
+- [ ] Spec §7.1-7.2:
+  - names compared without case;
+  - "apenas para mim" for an active owner;
+  - inactive users with a random hash and no sectors;
+  - unsupported fields listed.
+- [ ] Spec §7.3-7.6:
+  - "Não importar" and non-WhatsApp channels skipped;
+  - LID-only contacts and `mergeLidPairs` before chats;
+  - notes with author and `done_at`;
+  - open, joined and finished chats; tombstone, deleted here, empty chat;
+  - `chat.updated` only for open chats.
+- [ ] Spec §7.7-7.8:
+  - every type, signature, note, bot or phone, reactions, reply, deleted, edited, redacted, location and contact card;
+  - files 4 at a time without `Authorization`, 64 MB, expired vs temporary, `disk_full` below 2 GB, retried on a new run.
+- [ ] Spec §8:
+  - both directions (Task 9 and Task 6 tests);
+  - `maxMatchDiffMs` in the report;
+  - history chat removed when emptied.
+- [ ] Spec §9:
+  - phase order;
+  - `umbler_map` before every insert;
+  - `done_at`, and a finished closed chat without calls;
+  - resume after a stop, the wait for the history import, one active import (409);
+  - the §9.4 waits and codes.
+- [ ] Spec §10:
+  - `UMBLER_TOKEN` in `config.ts`, `docker-compose.yml` and `.env.example`;
+  - never in a DTO, row, report or log (`grep -rn "umblerToken" server/src` shows only `config.ts`, `routes.ts` (`!== null`) and `job.ts` (`createUmblerClient`)).
+- [ ] Spec §12: `analysis` and `report` hold counts, office names (sectors, tags, fields, answers, attendants, channels) and no client data.
+- [ ] Spec §13 and §15: IMPLANTACAO §5, the checklist line, and the acceptance script.
+- [ ] Logs: `grep -rn "console\." server/src/importer` shows only ids, counts, the phase, the code, the route template and `errorTag(err)`.
+- [ ] `ls server/drizzle/*.sql | tail -2` shows `0008_agendamentos_e_regras.sql` then `0009_importar_umbler.sql`, and `git diff origin/main -- server/drizzle/0008_agendamentos_e_regras.sql server/drizzle/meta/0008_snapshot.json` prints nothing.
