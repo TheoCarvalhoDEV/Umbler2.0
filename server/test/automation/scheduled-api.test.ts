@@ -1,15 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ScheduledMessageDto } from '@talk/shared';
-import { NOT_PENDING } from '../../src/automation/scheduled.js';
+import { NOT_PENDING, REMINDER_LOCKED } from '../../src/automation/scheduled.js';
 import { scheduledMessages } from '../../src/db/schema.js';
 import { seedChat } from '../chats/seed.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 import { eventsOf } from '../inbox/fixtures.js';
 import { multipart } from '../messages/actions-seed.js';
-import { insertScheduled } from './seed.js';
+import { insertAppointment, insertScheduled } from './seed.js';
 
 const MIN = 60_000;
 
@@ -140,5 +141,29 @@ describe('listing, editing and cancelling (spec §3.2)', () => {
     const again = await cancel(ana);
     expect([again.statusCode, again.json().error]).toEqual([409, NOT_PENDING]);
     expect((await patch(ana, { text: 'y' })).statusCode).toBe(409);
+  });
+});
+
+describe('appointment reminders in the Agenda (spec 2026-10-21 compromissos §3.7, decision 4)', () => {
+  it('a reminder carries its appointment, cannot be edited or cancelled there (409), and anyone else still gets 404 (Review Focus 4)', async () => {
+    const { id: appointmentId, reminderId } = await insertAppointment(ctx, { chatId, authorId: s.agentA.id, startsAt: new Date(inMin(120)) });
+    const reminder = await insertScheduled(ctx, { chatId, authorId: s.agentA.id, sendAt: new Date(inMin(60)), reminderId });
+    const plain = await insertScheduled(ctx, { chatId, authorId: s.agentA.id, sendAt: new Date(inMin(30)) });
+    const list = (await app.inject({ method: 'GET', url: '/api/scheduled-messages?status=pending', headers: ana })).json() as ScheduledMessageDto[];
+    expect(list.map((r) => [r.id, r.canEdit, r.appointment])).toEqual([
+      [plain.id, true, null],
+      [reminder.id, false, { id: appointmentId, title: 'Audiência' }],
+    ]);
+
+    const bruno = (await loginAs(app, s.agentB.email)).headers;
+    const patchIt = (headers: Record<string, string>) =>
+      app.inject({ method: 'PATCH', url: `/api/scheduled-messages/${reminder.id}`, headers, payload: { text: 'x' } });
+    const cancelIt = () => app.inject({ method: 'POST', url: `/api/scheduled-messages/${reminder.id}/cancel`, headers: ana });
+    expect((await patchIt(bruno)).statusCode).toBe(404);
+    for (const res of [await patchIt(ana), await cancelIt()]) expect([res.statusCode, res.json().error]).toEqual([409, REMINDER_LOCKED]);
+    // once it went out, the answer is still "change it through the appointment"
+    await ctx.db.update(scheduledMessages).set({ status: 'sent' }).where(eq(scheduledMessages.id, reminder.id));
+    expect((await cancelIt()).json().error).toBe(REMINDER_LOCKED);
+    expect((await ctx.db.select().from(scheduledMessages).where(eq(scheduledMessages.id, reminder.id)))[0]!.body).not.toBe('x');
   });
 });

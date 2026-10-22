@@ -1,5 +1,5 @@
 import type { AppCtx } from '../../src/ctx.js';
-import { botRuns, botVersions, bots, scheduledMessages } from '../../src/db/schema.js';
+import { appointmentReminders, appointments, botRuns, botVersions, bots, scheduledMessages } from '../../src/db/schema.js';
 
 type ScheduledInsert = typeof scheduledMessages.$inferInsert;
 
@@ -29,4 +29,19 @@ export async function runningBot(ctx: AppCtx, chatId: string, contactId: string)
     .values({ botId: bot!.id, versionId: version!.id, chatId, contactId, state: 'waiting_reply', currentNodeId: 'n1' })
     .returning();
   return run!.id;
+}
+
+type AppointmentInsert = typeof appointments.$inferInsert;
+
+/** An appointment with one "1 hora antes" reminder and no scheduled message ("Não criado"), written directly (no route, no event). */
+export async function insertAppointment(
+  ctx: AppCtx,
+  values: Pick<AppointmentInsert, 'chatId' | 'authorId' | 'startsAt'> & Partial<AppointmentInsert>,
+): Promise<{ id: string; reminderId: string }> {
+  const [a] = await ctx.db.insert(appointments).values({ title: 'Audiência', ...values }).returning({ id: appointments.id });
+  const [r] = await ctx.db
+    .insert(appointmentReminders)
+    .values({ appointmentId: a!.id, amount: 1, unit: 'hours', text: 'Olá, {nome}! Hoje às {hora}.' })
+    .returning({ id: appointmentReminders.id });
+  return { id: a!.id, reminderId: r!.id };
 }

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_AUTO_RULES } from '@talk/shared';
-import { getAutoRules, getBotRunningBehavior } from '../../src/catalog/settings.js';
+import { DEFAULT_APPOINTMENT_REMINDERS, DEFAULT_AUTO_RULES } from '@talk/shared';
+import { getAppointmentReminders, getAutoRules, getBotRunningBehavior } from '../../src/catalog/settings.js';
 import { settings } from '../../src/db/schema.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -143,4 +143,41 @@ it('auto rules: both off by default, admin only, saved apart from the other sett
   // a broken stored value reads as the defaults (both off)
   await ctx.db.update(settings).set({ value: { returnToQueue: 'sim' } }).where(eq(settings.key, 'auto_rules'));
   expect(await getAutoRules(ctx.db)).toEqual(DEFAULT_AUTO_RULES);
+});
+
+it('appointment reminders: the defaults for everyone, saved by an admin only, validated (spec 2026-10-21 compromissos §4)', async () => {
+  const get = (headers: Record<string, string>) => app.inject({ method: 'GET', url: '/api/settings/appointment-reminders', headers });
+  const putReminders = (headers: Record<string, string>, payload: object) =>
+    app.inject({ method: 'PUT', url: '/api/settings/appointment-reminders', headers, payload });
+  const mine = { reminders: [{ amount: 3, unit: 'days', text: 'Olá, {nome}! {titulo} em {data}.' }] };
+
+  expect((await get(agent)).json()).toEqual(DEFAULT_APPOINTMENT_REMINDERS); // the form of every agent starts with them
+  expect((await putReminders(agent, mine)).statusCode).toBe(403);
+  expect((await putReminders({ cookie: admin.cookie! }, mine)).statusCode).toBe(403); // no Origin
+
+  const saved = await putReminders(admin, { reminders: [{ ...mine.reminders[0], text: '  Olá, {nome}! {titulo} em {data}.  ' }] });
+  expect([saved.statusCode, saved.json()]).toEqual([200, mine]);
+  expect((await get(agent)).json()).toEqual(mine);
+
+  const unknown = await putReminders(admin, { reminders: [{ amount: 1, unit: 'hours', text: 'Olá, {Nome}!' }] });
+  expect([unknown.statusCode, unknown.json().error]).toEqual([400, 'Marcador desconhecido: {Nome}. Use {nome}, {titulo}, {data} ou {hora}']);
+  const sameTime = await putReminders(admin, { reminders: [{ amount: 2, unit: 'days', text: 'a' }, { amount: 48, unit: 'hours', text: 'b' }] });
+  expect([sameTime.statusCode, sameTime.json().error]).toEqual([400, 'Dois lembretes cairiam no mesmo horário']);
+  for (const bad of [
+    { reminders: [] },
+    { reminders: Array.from({ length: 6 }, (_, i) => ({ amount: i + 1, unit: 'hours', text: 'a' })) },
+    { reminders: [{ amount: 0, unit: 'days', text: 'a' }] },
+    { reminders: [{ amount: 31, unit: 'days', text: 'a' }] },
+    { reminders: [{ amount: 49, unit: 'hours', text: 'a' }] },
+    { reminders: [{ amount: 1.5, unit: 'hours', text: 'a' }] },
+    { reminders: [{ amount: 1, unit: 'hours', text: '  ' }] },
+    {},
+  ]) {
+    expect((await putReminders(admin, bad)).statusCode).toBe(400);
+  }
+  expect(await getAppointmentReminders(ctx.db)).toEqual(mine);
+
+  // a broken stored value reads as the defaults
+  await ctx.db.update(settings).set({ value: { reminders: 'sim' } }).where(eq(settings.key, 'appointment_reminders'));
+  expect(await getAppointmentReminders(ctx.db)).toEqual(DEFAULT_APPOINTMENT_REMINDERS);
 });

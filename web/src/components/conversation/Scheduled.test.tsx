@@ -5,6 +5,7 @@ process.env.TZ = 'Asia/Tokyo';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router';
 import type { ScheduledMessageDto } from '@talk/shared';
 import { confirmDialog } from '../../lib/confirm';
 import { ScheduleDialog, ScheduledStrip } from './Scheduled';
@@ -46,7 +47,9 @@ function renderStrip() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <ScheduledStrip chatId="c1" />
+      <MemoryRouter>
+        <ScheduledStrip chatId="c1" />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -124,6 +127,14 @@ describe('ScheduledStrip (spec §3.2)', () => {
     renderStrip();
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('marks an appointment reminder "Lembrete · <título>" in place of Editar/Cancelar (spec 2026-10-21 compromissos §3.7)', async () => {
+    stubFetch({ 'GET /api/chats/c1/scheduled-messages': [item({ canEdit: false, appointment: { id: 'a1', title: 'Audiência' } })] });
+    renderStrip();
+    fireEvent.click(await screen.findByRole('button', { name: '1 mensagem agendada' }));
+    expect(screen.getByRole('link', { name: 'Lembrete · Audiência' }).getAttribute('href')).toBe('/agendamentos?aba=compromissos');
+    expect(screen.queryByRole('button', { name: 'Editar' })).toBeNull();
   });
 
   it('cancels after confirming', async () => {

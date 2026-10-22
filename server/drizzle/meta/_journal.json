@@ -64,6 +64,13 @@
       "when": 1792531775524,
       "tag": "0008_agendamentos_e_regras",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792612914339,
+      "tag": "0009_compromissos",
+      "breakpoints": true
     }
   ]
 }

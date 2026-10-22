@@ -102,6 +102,8 @@ function ConversationPane({
     void qc.invalidateQueries({ queryKey: qk.chatFavorites(chatId), exact: true });
     // scheduling, editing, cancelling and each send or failure publish chat.updated (spec 2026-10-20 agendamentos §3.2)
     void qc.invalidateQueries({ queryKey: qk.chatScheduled(chatId), exact: true });
+    // making, moving and cancelling an appointment publish chat.updated too (spec 2026-10-21 compromissos §3.1)
+    void qc.invalidateQueries({ queryKey: qk.chatAppointments(chatId), exact: true });
   });
 
   if (detail.isError) {

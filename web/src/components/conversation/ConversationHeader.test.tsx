@@ -48,6 +48,7 @@ function stubFetch() {
         new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
       if (method === 'GET' && url.pathname === '/api/sectors') return json(200, SECTORS);
       if (method === 'GET' && url.pathname === '/api/users') return json(200, []);
+      if (method === 'GET' && url.pathname === '/api/chats/c1/appointments') return json(200, []);
       if (method === 'POST' && url.pathname === '/api/chats/c1/transfer') {
         return transfers++ === 0 ? json(409, BOT_RUNNING) : json(200, { ...CHAT, sectorId: 's2' });
       }
@@ -174,5 +175,14 @@ describe('ConversationHeader search (spec 2026-10-19 §4)', () => {
     renderHeader({ ...CHAT, state: 'closed' }, { onToggleSearch });
     fireEvent.click(screen.getByRole('button', { name: 'Buscar na conversa' }));
     expect(onToggleSearch).toHaveBeenCalledTimes(1);
+  });
+});
+describe('ConversationHeader appointments (spec 2026-10-21 compromissos §3.1)', () => {
+  it('"Compromissos" opens the contact’s appointments, also in a closed chat', async () => {
+    stubFetch();
+    renderHeader({ ...CHAT, state: 'closed' });
+    fireEvent.click(screen.getByRole('button', { name: 'Compromissos' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Compromissos de Maria' });
+    expect(await within(dialog).findByText('Nenhum compromisso marcado com este cliente.')).toBeTruthy();
   });
 });

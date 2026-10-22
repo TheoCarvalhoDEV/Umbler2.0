@@ -16,7 +16,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type {
   BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
-  ScheduledStatus, UserPreferences,
+  ReminderUnit, ScheduledStatus, UserPreferences,
 } from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
@@ -369,6 +369,41 @@ export const messageFavorites = pgTable('message_favorites', {
 });
 
 /**
+ * Spec 2026-10-21 compromissos §5.1: an appointment kept by hand, tied to one chat (its contact comes from the chat).
+ * No status column: cancelled = canceled_at set; upcoming / past compare starts_at with now.
+ */
+export const appointments = pgTable(
+  'appointments',
+  {
+    id: id(),
+    chatId: uuid('chat_id').notNull().references(() => chats.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id').notNull().references(() => users.id),
+    title: text('title').notNull(),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    note: text('note'), // internal; never sent, never in an event
+    signature: boolean('signature').notNull().default(true), // "Enviar com minha assinatura", applied to the reminders
+    canceledAt: timestamp('canceled_at', { withTimezone: true }),
+    canceledBy: uuid('canceled_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [index('appointments_starts_at_idx').on(t.startsAt), index('appointments_chat_idx').on(t.chatId)],
+);
+
+/** One reminder of an appointment; its scheduled message (if any) points back through scheduled_messages.reminder_id. */
+export const appointmentReminders = pgTable(
+  'appointment_reminders',
+  {
+    id: id(),
+    appointmentId: uuid('appointment_id').notNull().references(() => appointments.id, { onDelete: 'cascade' }),
+    amount: integer('amount').notNull(),
+    unit: text('unit').$type<ReminderUnit>().notNull(),
+    text: text('text').notNull(), // with the placeholders, to fill them again on a reschedule
+    createdAt: createdAt(),
+  },
+  (t) => [index('appointment_reminders_appointment_idx').on(t.appointmentId)],
+);
+
+/**
  * Spec 2026-10-20 agendamentos §3: a message to send later as `author_id`. pending → sending (claimed) → sent | failed,
  * or pending → canceled. The file is saved when it is scheduled; `message_id` is the message it became.
  */
@@ -392,8 +427,15 @@ export const scheduledMessages = pgTable(
     messageId: uuid('message_id').references(() => messages.id, { onDelete: 'set null' }),
     error: text('error'), // pt-BR reason of a failure (never gateway text)
     createdAt: createdAt(),
+    // spec 2026-10-21 compromissos §5.1 (decision 1): the appointment reminder this row sends; null for a plain scheduled message
+    reminderId: uuid('reminder_id').references(() => appointmentReminders.id, { onDelete: 'set null' }),
   },
-  (t) => [index('scheduled_messages_due_idx').on(t.status, t.sendAt), index('scheduled_messages_chat_idx').on(t.chatId)],
+  (t) => [
+    index('scheduled_messages_due_idx').on(t.status, t.sendAt),
+    index('scheduled_messages_chat_idx').on(t.chatId),
+    // at most one scheduled message per reminder; NULLs never collide
+    uniqueIndex('scheduled_messages_reminder_unique').on(t.reminderId),
+  ],
 );
 
 export const historyImports = pgTable(
