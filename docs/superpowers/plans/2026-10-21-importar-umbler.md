@@ -4611,3 +4611,1155 @@ git commit -m "feat(server): copy an Umbler chat (finished, open or joined) with
 
 ---
 
+### Task 9: Use the match while copying a chat
+
+This fills the line Task 8 left empty.
+
+**What a match does (§8):** nothing is inserted, and our row keeps its id, WhatsApp id, status and file. It gains:
+- `chat_id`: the imported chat;
+- `author_id`: the mapped attendant, when it was null;
+- its `umbler_map` row;
+- the Umbler file, when it had none. This is the gain of §7.8: media WhatsApp had already lost now comes back;
+- for a location or contact card, the §7.7 text, with `kind='text'`.
+
+**The chat it came from** is recalculated: `last_message_at` and the preview, plus `created_at` and `closed_at` for a WhatsApp-history chat. A history chat left without messages is deleted and published as `chat.removed`. An open one gets `chat.updated`.
+
+The report keeps `matched` and the largest difference, `maxMatchDiffMs`. That is the calibration knob of §8.4.
+
+**What never matches:** a note, a row of another contact or channel, or a row that is already in `umbler_map`.
+
+**Files:**
+- Modify: `server/src/importer/chats.ts` (the `match.js` import; the match block in `placePage`)
+- Test: `server/test/importer/chats-match.test.ts` (create)
+
+**Interfaces:**
+- Consumes: Task 6 `matchCandidates`, `pairUp`; Task 8 `placePage`, `refreshChat`.
+- Produces: nothing new.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `server/test/importer/chats-match.test.ts`:
+
+```ts
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { and, asc, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { chats, contacts, messages, umblerMap } from '../../src/db/schema.js';
+import { importChat } from '../../src/importer/chats.js';
+import { importCatalog, type ImportRun } from '../../src/importer/umbler.js';
+import { PDF, umblerChat, umblerMessage } from '../fakes/umbler-api.js';
+import { insertChat, newContact } from '../inbox/fixtures.js';
+import { importWorld, runFor, type World } from './world.js';
+
+let w: World;
+let run: ImportRun;
+let maria: string;
+let historyChat: string;
+const T = Date.UTC(2026, 7, 1, 10, 0, 0);
+const at = (s: number) => new Date(T + s * 1000);
+const iso = (s: number) => at(s).toISOString();
+
+beforeEach(async () => {
+  w = await importWorld();
+  run = await runFor(w);
+  await importCatalog(run);
+  maria = await newContact(w.ctx, { phone: '5565999998888', name: 'Maria' });
+  historyChat = await insertChat(w.ctx, { channelId: w.s.channelId, sectorId: w.s.defaultSector, contactId: maria, state: 'closed', history: true });
+});
+afterEach(async () => {
+  expect(w.fake.problems()).toEqual([]);
+  await w.fake.close();
+});
+
+/** A row the WhatsApp history copy stored (spec 2026-10-16): it has a WhatsApp id. */
+async function ours(chatId: string, s: number, values: Partial<typeof messages.$inferInsert>): Promise<string> {
+  const [m] = await w.ctx.db
+    .insert(messages)
+    .values({ chatId, channelId: w.s.channelId, direction: 'in', kind: 'text', status: 'read', sentAt: at(s), createdAt: at(s), ...values })
+    .returning({ id: messages.id });
+  return m!.id;
+}
+async function importClosed(list: Array<Record<string, unknown>>): Promise<string> {
+  const chat = umblerChat({ open: false, createdAtUTC: iso(0), closedAtUTC: iso(600) });
+  w.fake.world.messages[chat.id as string] = list;
+  await importChat(run, chat as never, 'closed');
+  const [m] = await w.ctx.db.select().from(umblerMap).where(and(eq(umblerMap.kind, 'chat'), eq(umblerMap.umblerId, chat.id as string)));
+  return m!.localId;
+}
+const row = async (id: string) => (await w.ctx.db.select().from(messages).where(eq(messages.id, id)))[0];
+const chatRow = async (id: string) => (await w.ctx.db.select().from(chats).where(eq(chats.id, id)))[0];
+
+describe('matching with the WhatsApp history (spec 2026-10-21 importar-umbler §8)', () => {
+  it('the same message is not inserted again: our row moves to the imported chat with its id, WhatsApp id and status, and gains the author', async () => {
+    const h1 = await ours(historyChat, 3, { body: 'Bom dia', externalId: 'wa1' });
+    const h2 = await ours(historyChat, 62, { direction: 'out', body: 'Segue o boleto', externalId: 'wa2', status: 'delivered' });
+    const h3 = await ours(historyChat, 71, { body: 'Ok', externalId: 'wa3' }); // 11 s from U4: not the same
+    const h4 = await ours(historyChat, 300, { body: 'Outra coisa', externalId: 'wa4' }); // no twin in Umbler
+
+    const imported = await importClosed([
+      umblerMessage('U1', iso(0), { content: 'Bom dia' }),
+      umblerMessage('U2', iso(60), { source: 'Member', sentByOrganizationMember: { id: 'M_ANA' }, prefix: 'Financeiro - Ana', content: 'Segue o boleto' }),
+      umblerMessage('U3', iso(61), { isPrivate: true, source: 'Member', content: 'Segue o boleto' }), // a note never matches
+      umblerMessage('U4', iso(60), { content: 'Ok' }),
+    ]);
+
+    const rows = await w.ctx.db.select().from(messages).where(eq(messages.chatId, imported)).orderBy(asc(messages.sentAt));
+    expect(rows.map((m) => [m.id === h1 || m.id === h2 ? 'ours' : 'new', m.kind, m.body, m.externalId])).toEqual([
+      ['ours', 'text', 'Bom dia', 'wa1'],
+      ['new', 'text', 'Ok', null],
+      ['new', 'note', 'Segue o boleto', null],
+      ['ours', 'text', 'Segue o boleto', 'wa2'], // our row keeps its own time (62 s)
+    ]);
+    expect(await row(h2)).toMatchObject({ authorId: w.s.agentA.id, status: 'delivered', sentAt: at(62) });
+    expect(await row(h3)).toMatchObject({ chatId: historyChat });
+    expect(await row(h4)).toMatchObject({ chatId: historyChat });
+    // the history chat it came from now spans what it has left
+    expect(await chatRow(historyChat)).toMatchObject({ createdAt: at(71), closedAt: at(300), lastMessageAt: at(300), lastMessagePreview: 'Outra coisa' });
+    expect(run.progress.messages).toMatchObject({ total: 4, matched: 2, maxMatchDiffMs: 3000 });
+    const mapped = await w.ctx.db.select().from(umblerMap).where(eq(umblerMap.kind, 'message'));
+    expect(Object.fromEntries(mapped.filter((m) => m.umblerId === 'U1' || m.umblerId === 'U2').map((m) => [m.umblerId, m.localId]))).toEqual({ U1: h1, U2: h2 });
+  });
+
+  it('a history chat left without messages is deleted (chat.removed)', async () => {
+    await ours(historyChat, 0, { body: 'Bom dia', externalId: 'wa1' });
+    await importClosed([umblerMessage('U1', iso(1), { content: 'Bom dia' })]);
+    expect(await chatRow(historyChat)).toBeUndefined();
+    expect(w.ctx.hub.events).toContainEqual({ type: 'chat.removed', chatId: historyChat });
+  });
+
+  it("a match whose file had expired on WhatsApp gets Umbler's file; a location gets the §7.7 text", async () => {
+    w.fake.world.files['foto.jpg'] = { body: PDF, mime: 'image/jpeg' };
+    const photo = await ours(historyChat, 0, { kind: 'image', body: null, externalId: 'wa1', mediaMime: 'image/jpeg', mediaStatus: 'expired' });
+    const place = await ours(historyChat, 5, { kind: 'unsupported', body: null, externalId: 'wa2' });
+    await ours(historyChat, 900, { body: 'fica no histórico', externalId: 'wa3' });
+
+    await importClosed([
+      umblerMessage('U1', iso(0), {
+        messageType: 'Image', content: null,
+        file: { url: w.fake.fileUrl('foto.jpg'), contentType: 'image/jpeg', originalName: 'foto.jpg', originalSizeBytes: PDF.length, failDownload: false },
+      }),
+      umblerMessage('U2', iso(4), { messageType: 'Location', location: { latitude: '-15.6', longitude: '-56.1', name: 'Fórum', address: null } }),
+    ]);
+
+    const p = (await row(photo))!;
+    expect(p).toMatchObject({ mediaStatus: null, mediaMime: 'image/jpeg', externalId: 'wa1' });
+    expect(await readFile(join(w.ctx.config.mediaDir, p.mediaPath!))).toEqual(PDF);
+    expect(await row(place)).toMatchObject({ kind: 'text', body: 'Localização: Fórum https://maps.google.com/?q=-15.6,-56.1', externalId: 'wa2' });
+    expect(run.progress.files).toMatchObject({ saved: 1, expired: 0 });
+  });
+
+  it("never matches another contact's row", async () => {
+    const other = await newContact(w.ctx);
+    const otherChat = await insertChat(w.ctx, { channelId: w.s.channelId, sectorId: w.s.defaultSector, contactId: other, state: 'closed', history: true });
+    const theirs = await ours(otherChat, 0, { body: 'Bom dia', externalId: 'wa9' });
+    await importClosed([umblerMessage('U1', iso(0), { content: 'Bom dia' })]);
+    expect(await row(theirs)).toMatchObject({ chatId: otherChat });
+    expect(await w.ctx.db.$count(contacts)).toBe(2);
+    expect(run.progress.messages.matched).toBe(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npm test -w server -- test/importer/chats-match.test.ts`
+Expected: FAIL. Every Umbler message is inserted as a new row (`matched` is 0), our history rows stay in the history chat, and the history chat is not deleted.
+
+- [ ] **Step 3: Match before writing**
+
+In `server/src/importer/chats.ts`, replace
+
+```ts
+import type { Candidate } from './match.js';
+```
+
+with
+
+```ts
+import { matchCandidates, pairUp, type Candidate } from './match.js';
+```
+
+and, in `placePage`, replace
+
+```ts
+  const match = new Map<string, { row: Candidate; diffMs: number }>(); // the §8 match with the WhatsApp history: next task
+```
+
+with
+
+```ts
+  const comparable = fresh.filter((i) => i.kind !== 'note'); // a note never matches (§8)
+  const scope = { contactId: st.contactId, channelId: st.channelId };
+  const pairs = pairUp(
+    comparable.map((i) => ({ direction: i.direction, kind: i.matchKind, text: i.matchText, at: i.at })),
+    await matchCandidates(ctx.db, scope, comparable, 'ours'),
+  );
+  const match = new Map<string, { row: Candidate; diffMs: number }>();
+  comparable.forEach((i, n) => {
+    const pair = pairs[n];
+    if (pair) match.set(i.umblerId, pair);
+  });
+```
+
+- [ ] **Step 4: Run the tests and the type check**
+
+Run: `npm test -w server -- test/importer`
+Expected: PASS.
+
+Run: `npm run typecheck -w server`
+Expected: no errors.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/src/importer/chats.ts server/test/importer/chats-match.test.ts
+git commit -m "feat(server): an Umbler message that is already here from the WhatsApp history moves our row instead of duplicating it" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 10: The five phases, the resume and the worker loop
+
+**Phase 3** lists every open chat first. It copies the ones without unread messages first and then the ones with them (§5.2). Right after each of those, it reads the chat again through `contacts/{id}/chats/?ChatState=Open`. When `totalUnread` dropped without a new agent message, it stops with `umbler_marked_read`, so at most one chat is affected.
+
+**Phase 5** walks the finished chats newest first, one list page at a time (§11: memory of one page).
+
+**Before each chat**, the job waits while a WhatsApp history import is `running` (§9.3).
+
+**`importUmbler`** runs the phases from the one the row is in, resetting `done`/`total` per phase. It ends with `state='done'`, the report (the counters plus `durationMs`) and `finished_at`. A stop between pages (`Stopped`, or the worker's abort during a wait) leaves the row `running`. Any other error makes it `failed` with its code.
+
+**`umblerBeat`** builds the client from `UMBLER_TOKEN` with the worker's abortable sleep. Without the token, an active row fails with `umbler_token`.
+
+**The worker** gets the third loop of `createHistoryWorker`, beside the media queue, with the same `AbortController`, every 15 s. `stop()` waits for it.
+
+**Files:**
+- Modify: `server/src/importer/chats.ts` (imports; append the phases)
+- Modify: `server/src/importer/job.ts` (imports; `runUmblerJob` replaced by `importUmbler`, `runUmblerJob` for both states, `umblerBeat`)
+- Modify: `server/src/history/jobs.ts` (imports, options, the third loop)
+- Modify: `server/test/importer/world.ts` (append `startImport`)
+- Test: `server/test/importer/job.test.ts` (create)
+
+**Interfaces:**
+- Consumes: Tasks 3-9 (all the phases); Task 5 `analyzeUmbler`.
+- Produces:
+  - `importOpenChats`, `importClosedChats`;
+  - `importUmbler`, `runUmblerJob` (final), `umblerBeat`;
+  - `createHistoryWorker(ctx, { umblerClient? })`;
+  - test world: `startImport`.
+
+- [ ] **Step 1: Extend the test world**
+
+Append to the end of `server/test/importer/world.ts`:
+
+```ts
+/** "Importar" after an analysis, as the start route leaves the row, then one job beat (every phase, unless it stops). */
+export async function startImport(w: World, row: UmblerImportRow, deps: JobDeps = depsOf(w)): Promise<UmblerImportRow> {
+  await w.ctx.db
+    .update(umblerImports)
+    .set({ state: 'running', phase: 'catalog', mapping: proposals(row.analysis!), startedAt: new Date() })
+    .where(eq(umblerImports.id, row.id));
+  await runUmblerJob(w.ctx, deps);
+  return rowOf(w, row.id);
+}
+```
+
+- [ ] **Step 2: Write the failing test**
+
+Create `server/test/importer/job.test.ts`:
+
+```ts
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { chats, contactNotes, contacts, historyImports, messages, umblerImports, umblerMap } from '../../src/db/schema.js';
+import { createHistoryWorker } from '../../src/history/jobs.js';
+import { emptyProgress, runUmblerJob, umblerBeat, type JobDeps } from '../../src/importer/job.js';
+import type { UmblerClient } from '../../src/importer/umbler.js';
+import { umblerChat, umblerMessage } from '../fakes/umbler-api.js';
+import { analyze, depsOf, importWorld, rowOf, startImport, type World } from './world.js';
+
+let w: World;
+beforeEach(async () => {
+  w = await importWorld();
+  vi.spyOn(console, 'info').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+afterEach(async () => {
+  vi.restoreAllMocks();
+  expect(w.fake.problems()).toEqual([]);
+  await w.fake.close();
+});
+
+type Obj = Record<string, unknown>;
+const joao = { id: 'C2', name: 'João Teste', phoneNumber: '5565988887777', lid: null };
+let chatsOf: { open: Obj; unread: Obj; older: Obj; newer: Obj };
+/** Two open chats (one with unread messages) and two finished ones, two messages each; notes for Maria. */
+function givenOffice(): void {
+  const open = umblerChat({ createdAtUTC: '2026-10-01T10:00:00Z' });
+  const unread = umblerChat({ createdAtUTC: '2026-09-01T10:00:00Z', totalUnread: 1, contact: joao, lastMessage: { id: 'X', source: 'Contact', messageState: 'Received' } });
+  const older = umblerChat({ open: false, createdAtUTC: '2026-03-01T10:00:00Z', closedAtUTC: '2026-03-01T11:00:00Z' });
+  const newer = umblerChat({ open: false, createdAtUTC: '2026-06-01T10:00:00Z', closedAtUTC: '2026-06-01T11:00:00Z', contact: joao });
+  chatsOf = { open, unread, older, newer };
+  for (const [i, chat] of [open, unread, older, newer].entries()) {
+    const day = String(chat.createdAtUTC).slice(0, 10);
+    w.fake.world.chats.push(chat);
+    w.fake.world.messages[chat.id as string] = [umblerMessage(`A${i}`, `${day}T10:00:00Z`), umblerMessage(`B${i}`, `${day}T10:01:00Z`)];
+  }
+  w.fake.world.notes.C1 = [{ _t: 'NoteModel', id: 'N1', content: 'Retornar', pinned: false, createdBy: 'M_ANA', createdAtUTC: '2026-08-01T10:00:00Z' }];
+  w.fake.world.notes.C2 = [];
+  w.fake.world.notes.C3 = [];
+}
+const relativeChatIds = () => w.fake.calls(/relative-messages/).map((r) => r.path.split('/')[4]);
+const counts = async () => ({
+  contacts: await w.ctx.db.$count(contacts),
+  chats: await w.ctx.db.$count(chats),
+  messages: await w.ctx.db.$count(messages),
+  notes: await w.ctx.db.$count(contactNotes),
+  mapped: await w.ctx.db.$count(umblerMap, eq(umblerMap.kind, 'message')),
+});
+/** A client that stops the job (as the worker's stop() does) right after the call `when` matches. */
+function stoppingAt(when: (route: string, query: Obj, params: Obj) => boolean): JobDeps {
+  const abort = new AbortController();
+  const client: UmblerClient = {
+    async get<T>(route: string, query: Obj = {}, params: Record<string, string> = {}) {
+      const res = await w.client.get<T>(route, query as never, params);
+      if (when(route, query, params)) abort.abort();
+      return res;
+    },
+    file: (url) => w.client.file(url),
+  };
+  return { ...depsOf(w), client, signal: abort.signal };
+}
+
+describe('Importar (spec 2026-10-21 importar-umbler §9)', () => {
+  it('runs the five phases in order (open chats, notes, closed newest first) and ends with the report', async () => {
+    givenOffice();
+    const row = await startImport(w, await analyze(w));
+
+    expect(row).toMatchObject({ state: 'done', phase: 'closed_chats', error: null });
+    expect(row.finishedAt).not.toBeNull();
+    // the open chat without unread messages first (§5.2), then the one with them; finished ones newest first (§9.1)
+    expect(relativeChatIds()).toEqual([chatsOf.open.id, chatsOf.unread.id, chatsOf.newer.id, chatsOf.older.id]);
+    const paths = w.fake.requests.map((r) => r.path);
+    const firstNotes = paths.findIndex((p) => p.endsWith('/notes/'));
+    expect(firstNotes).toBeGreaterThan(paths.lastIndexOf(`/api/v1/chats/${chatsOf.unread.id}/relative-messages/`));
+    expect(firstNotes).toBeLessThan(paths.indexOf(`/api/v1/chats/${chatsOf.newer.id}/relative-messages/`));
+    expect(w.fake.calls(/\/contacts\/C2\/chats\/$/).map((r) => r.query.get('ChatState'))).toEqual(['Open']); // the unread check
+    expect(row.report).toMatchObject({
+      contacts: { created: 2, completed: 0, lidOnly: 1, skipped: 1 },
+      notes: 1,
+      chats: { openCreated: 2, closed: 2 },
+      messages: { total: 8, matched: 0 },
+    });
+    expect(row.report!.durationMs).toBeGreaterThanOrEqual(0);
+    expect(await counts()).toEqual({ contacts: 3, chats: 4, messages: 8, notes: 1, mapped: 8 });
+  });
+
+  it('stops with umbler_marked_read when an open chat lost its unread count without an agent reply (§5.2)', async () => {
+    givenOffice();
+    w.fake.world.marksRead = chatsOf.unread.id as string; // reading it marks it as read in Umbler
+    const row = await startImport(w, await analyze(w));
+    expect(row).toMatchObject({ state: 'failed', error: 'umbler_marked_read', phase: 'open_chats' });
+    expect(relativeChatIds()).toEqual([chatsOf.open.id, chatsOf.unread.id]); // at most one chat affected
+  });
+
+  it('a stop in the middle of the contacts or of a chat leaves it running; the next beat goes on without duplicates (§9.3)', async () => {
+    givenOffice();
+    w.fake.world.maxTake = 2; // contacts in two pages
+    w.fake.world.messages[chatsOf.newer.id as string] = Array.from({ length: 251 }, (_, i) =>
+      umblerMessage(`L${i}`, new Date(Date.UTC(2026, 5, 1, 10, 0, 0) + i * 1000).toISOString()),
+    ); // two message pages
+    const analyzed = await analyze(w);
+
+    let row = await startImport(w, analyzed, stoppingAt((route, query) => route === '/v1/contacts/' && query.Skip === 2));
+    expect(row).toMatchObject({ state: 'running', phase: 'contacts' });
+
+    await runUmblerJob(w.ctx, stoppingAt((route, _q, params) => route.includes('relative-messages') && params.chatId === chatsOf.newer.id));
+    row = await rowOf(w, analyzed.id);
+    expect(row).toMatchObject({ state: 'running', phase: 'closed_chats' });
+    expect(await w.ctx.db.$count(messages)).toBe(4 + 250); // the open chats, the first page of the long chat, then the stop
+
+    await runUmblerJob(w.ctx, depsOf(w));
+    row = await rowOf(w, analyzed.id);
+    expect(row.state).toBe('done');
+    expect(await counts()).toEqual({ contacts: 3, chats: 4, messages: 257, notes: 1, mapped: 257 });
+    expect(row.report).toMatchObject({ contacts: { created: 2, lidOnly: 1 }, chats: { openCreated: 2, closed: 2 }, messages: { total: 257 }, notes: 1 });
+  });
+
+  it('"Analisar de novo" + "Importar" brings only what is missing; a finished closed chat costs no message call (§9.2)', async () => {
+    givenOffice();
+    await startImport(w, await analyze(w));
+    const before = await counts();
+    w.fake.world.messages[chatsOf.open.id as string]!.push(umblerMessage('C0', '2026-10-01T10:05:00Z'));
+    const extra = umblerChat({ open: false, createdAtUTC: '2026-07-01T10:00:00Z', closedAtUTC: '2026-07-01T11:00:00Z' });
+    w.fake.world.chats.push(extra);
+    w.fake.world.messages[extra.id as string] = [umblerMessage('E1', '2026-07-01T10:00:00Z')];
+    const calls = w.fake.requests.length;
+
+    const second = await startImport(w, await analyze(w));
+
+    expect(second.state).toBe('done');
+    expect(await counts()).toEqual({ ...before, chats: before.chats + 1, messages: before.messages + 2, mapped: before.mapped + 2 });
+    const relative = w.fake.requests.slice(calls).filter((r) => r.path.includes('relative-messages')).map((r) => r.path.split('/')[4]);
+    expect(relative).toEqual([chatsOf.open.id, chatsOf.unread.id, extra.id]); // the old finished ones: none
+  });
+
+  it('waits while a WhatsApp history import runs (§9.3)', async () => {
+    givenOffice();
+    const [history] = await w.ctx.db
+      .insert(historyImports)
+      .values({ channelId: w.s.channelId, period: '3m', auto: false, state: 'running' })
+      .returning();
+    const deps: JobDeps = {
+      ...depsOf(w),
+      sleep: async (ms) => {
+        w.sleeps.push(ms);
+        await w.ctx.db.update(historyImports).set({ state: 'done' }).where(eq(historyImports.id, history!.id));
+      },
+    };
+    const row = await startImport(w, await analyze(w), deps);
+    expect(row.state).toBe('done');
+    expect(w.sleeps).toContain(15_000);
+  });
+
+  it('without UMBLER_TOKEN an active row fails with umbler_token; the worker runs the job in its own loop', async () => {
+    await w.ctx.db.insert(umblerImports).values({ state: 'analyzing', progress: emptyProgress() });
+    await umblerBeat(w.ctx, new AbortController().signal); // makeTestCtx: umblerToken null
+    expect((await w.ctx.db.select().from(umblerImports))[0]).toMatchObject({ state: 'failed', error: 'umbler_token' });
+
+    const [row] = await w.ctx.db.insert(umblerImports).values({ state: 'analyzing', progress: emptyProgress() }).returning();
+    const worker = createHistoryWorker(w.ctx, { umblerClient: () => w.client });
+    worker.start();
+    await vi.waitFor(async () => expect((await rowOf(w, row!.id)).state).toBe('analyzed'), { timeout: 10_000, interval: 50 });
+    await worker.stop();
+  });
+});
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `npm test -w server -- test/importer/job.test.ts`
+Expected: FAIL. `umblerBeat` is not exported by `job.ts`, and `createHistoryWorker` has no `umblerClient` option.
+
+- [ ] **Step 4: Add phases 3 and 5**
+
+In `server/src/importer/chats.ts`, replace
+
+```ts
+import { chatEvents, chatTags, chats, contacts, deletedChats, messages, umblerMap } from '../db/schema.js';
+```
+
+with
+
+```ts
+import { chatEvents, chatTags, chats, contacts, deletedChats, historyImports, messages, umblerMap } from '../db/schema.js';
+```
+
+replace
+
+```ts
+import {
+  UmblerError, checkStop, isGone, maps, saveProgress, upsertContact, type ImportRun, type Query, type UmblerChat, type UmblerClient,
+  type UmblerMessage,
+} from './umbler.js';
+```
+
+with
+
+```ts
+import {
+  UmblerError, checkStop, getAll, isGone, maps, orgQuery, pages, saveProgress, upsertContact, type ImportRun, type Query,
+  type UmblerChat, type UmblerClient, type UmblerMessage,
+} from './umbler.js';
+```
+
+and append:
+
+```ts
+// ---------- phases 3 and 5 (§9.1) ----------
+
+const HISTORY_WAIT_MS = 15_000;
+
+/** §9.3: the WhatsApp history copy writes into the same chats and §8 assumes one at a time: wait while one runs. */
+async function waitForHistory(run: ImportRun): Promise<void> {
+  while ((await run.ctx.db.$count(historyImports, eq(historyImports.state, 'running'))) > 0) {
+    checkStop(run);
+    await run.sleep(HISTORY_WAIT_MS);
+  }
+}
+
+/** §5.2: after copying a chat that had unread messages, its unread count must not have dropped without an agent reply. */
+async function checkUnread(run: ImportRun, before: UmblerChat): Promise<void> {
+  const page = await run.client.get<{ items?: UmblerChat[] }>(
+    '/v1/contacts/{id}/chats/',
+    { ...orgQuery(run), ChatState: 'Open', Skip: 0, Take: 50 },
+    { id: before.contact.id },
+  );
+  const after = page.items?.find((c) => c.id === before.id);
+  if (!after) return;
+  const agentReplied = after.lastMessage?.source === 'Member' && after.lastMessage.id !== before.lastMessage?.id;
+  if ((after.totalUnread ?? 0) < (before.totalUnread ?? 0) && !agentReplied) {
+    throw new UmblerError('umbler_marked_read', null, '/v1/contacts/{id}/chats/');
+  }
+}
+
+/** Phase 3 (§9.1): every open chat listed first; the ones without unread messages copied first (§5.2). */
+export async function importOpenChats(run: ImportRun): Promise<void> {
+  const list = await getAll<UmblerChat>(run.client, '/v1/chats/', chatQuery(run.org, 'open'));
+  const ordered = [...list.filter((c) => !c.totalUnread), ...list.filter((c) => (c.totalUnread ?? 0) > 0)];
+  const p = run.progress;
+  p.total = ordered.length;
+  for (const chat of ordered) {
+    checkStop(run);
+    await waitForHistory(run);
+    const read = await importChat(run, chat, 'open');
+    if (read && (chat.totalUnread ?? 0) > 0) await checkUnread(run, chat);
+    p.done += 1;
+    await saveProgress(run.ctx.db, run);
+  }
+}
+
+/** Phase 5 (§9.1): finished chats, newest first, one list page at a time (§11: memory of one page). */
+export async function importClosedChats(run: ImportRun): Promise<void> {
+  const p = run.progress;
+  p.total = run.analysis.chats.closed;
+  for await (const page of pages<UmblerChat>(run.client, '/v1/chats/', chatQuery(run.org, 'closed'))) {
+    for (const chat of page.items) {
+      checkStop(run);
+      await waitForHistory(run);
+      await importChat(run, chat, 'closed');
+      p.done += 1;
+    }
+    await saveProgress(run.ctx.db, run);
+  }
+}
+```
+
+- [ ] **Step 5: Run the phases, from where the row stopped**
+
+In `server/src/importer/job.ts`, replace
+
+```ts
+import { statfs } from 'node:fs/promises';
+import { eq } from 'drizzle-orm';
+import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerProgressDto } from '@talk/shared';
+import { errorTag } from '../bots/scheduler.js';
+import type { AppCtx } from '../ctx.js';
+import { channels, contacts, customFields, quickAnswers, sectors, tags, umblerImports, users } from '../db/schema.js';
+import { normalizePhoneBR } from '../whatsapp/phone.js';
+import { FIRST_EVENT, chatQuery, fetchMessagePage } from './chats.js';
+import {
+  FIELD_KINDS, Stopped, UmblerError, fold, getAll, isGone, lidOf, pages, validPhone, type UmblerChannel, type UmblerChat,
+  type UmblerClient, type UmblerContact, type UmblerFieldDef, type UmblerMe, type UmblerOrganization, type UmblerQuickAnswer,
+  type UmblerSector, type UmblerTag,
+} from './umbler.js';
+```
+
+with
+
+```ts
+import { statfs } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
+import { eq, inArray } from 'drizzle-orm';
+import { UMBLER_IMPORT_PHASES, emptyUmblerCounts, type UmblerAnalysisDto, type UmblerImportPhase, type UmblerProgressDto } from '@talk/shared';
+import { errorTag } from '../bots/scheduler.js';
+import type { AppCtx } from '../ctx.js';
+import { channels, contacts, customFields, quickAnswers, sectors, tags, umblerImports, users } from '../db/schema.js';
+import { normalizePhoneBR } from '../whatsapp/phone.js';
+import { FIRST_EVENT, chatQuery, fetchMessagePage, importClosedChats, importOpenChats } from './chats.js';
+import {
+  FIELD_KINDS, Stopped, UmblerError, createUmblerClient, fold, getAll, importCatalog, importContactsPhase, importNotesPhase, isGone,
+  lidOf, pages, saveProgress, validPhone, type ImportRun, type UmblerChannel, type UmblerChat, type UmblerClient, type UmblerContact,
+  type UmblerFieldDef, type UmblerMe, type UmblerOrganization, type UmblerQuickAnswer, type UmblerSector, type UmblerTag,
+} from './umbler.js';
+```
+
+and replace the analysis-only `runUmblerJob`
+
+```ts
+/** One beat (§9.3): the analysis of the 'analyzing' row; an error marks it failed with its §9.4 code. */
+export async function runUmblerJob(ctx: AppCtx, deps: JobDeps): Promise<void> {
+  const [row] = await ctx.db.select().from(umblerImports).where(eq(umblerImports.state, 'analyzing'));
+  if (!row) return;
+  try {
+    await analyzeUmbler(ctx, deps, row);
+  } catch (err) {
+    if (err instanceof Stopped || deps.signal?.aborted) return;
+    const code = err instanceof UmblerError ? err.code : 'unexpected';
+    // ids, the code and the route template only (§3): never text, phone, name, URL or the token
+    console.error('umbler: import stopped', { importId: row.id, code, route: err instanceof UmblerError ? err.route : null, err: errorTag(err) });
+    await ctx.db.update(umblerImports).set({ state: 'failed', error: code }).where(eq(umblerImports.id, row.id));
+  }
+}
+```
+
+with
+
+```ts
+// ---------- Importar (§9.1-9.3) ----------
+
+const PHASES: Record<UmblerImportPhase, (run: ImportRun) => Promise<void>> = {
+  catalog: importCatalog,
+  contacts: importContactsPhase,
+  open_chats: importOpenChats,
+  notes: importNotesPhase,
+  closed_chats: importClosedChats,
+};
+
+/** The phases from the one the row stopped in; every phase skips what umbler_map already has. */
+export async function importUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImportRow): Promise<void> {
+  if (!row.analysis || !row.mapping) throw new Error('umbler: a running import without analysis or mapping');
+  const signal = deps.signal ?? new AbortController().signal;
+  const run: ImportRun = {
+    ctx,
+    client: deps.client,
+    importId: row.id,
+    org: row.analysis.organizationId,
+    analysis: row.analysis,
+    mapping: row.mapping,
+    progress: { ...emptyProgress(), ...row.progress },
+    signal,
+    sleep: deps.sleep ?? ((ms) => delay(ms, undefined, { signal })),
+    freeBytes: deps.freeBytes ?? freeBytesOf,
+  };
+  for (let i = UMBLER_IMPORT_PHASES.indexOf(row.phase ?? 'catalog'); i < UMBLER_IMPORT_PHASES.length; i += 1) {
+    const phase = UMBLER_IMPORT_PHASES[i]!;
+    run.progress.done = 0;
+    run.progress.total = 0;
+    await saveProgress(ctx.db, run, phase);
+    await PHASES[phase](run);
+    console.info('umbler: phase done', { importId: row.id, phase });
+  }
+  const finishedAt = new Date();
+  const { done: _done, total: _total, chatsRead: _read, maps: _maps, ...counts } = run.progress;
+  const durationMs = finishedAt.getTime() - (row.startedAt ?? finishedAt).getTime();
+  await ctx.db.update(umblerImports).set({ state: 'done', finishedAt, report: { ...counts, durationMs } }).where(eq(umblerImports.id, row.id));
+  console.info('umbler: import done', { importId: row.id, chats: counts.chats.openCreated + counts.chats.closed, messages: counts.messages.total });
+}
+
+/**
+ * One beat (§9.3): advances the active row (analyzing or running) until it ends, fails or the worker stops. A stop
+ * between pages leaves it as it is; any other error marks it failed with its §9.4 code.
+ */
+export async function runUmblerJob(ctx: AppCtx, deps: JobDeps): Promise<void> {
+  const [row] = await ctx.db.select().from(umblerImports).where(inArray(umblerImports.state, ['analyzing', 'running']));
+  if (!row) return;
+  try {
+    if (row.state === 'analyzing') await analyzeUmbler(ctx, deps, row);
+    else await importUmbler(ctx, deps, row);
+  } catch (err) {
+    if (err instanceof Stopped || deps.signal?.aborted) return;
+    const code = err instanceof UmblerError ? err.code : 'unexpected';
+    // ids, the code and the route template only (§3): never text, phone, name, URL or the token
+    console.error('umbler: import stopped', { importId: row.id, code, route: err instanceof UmblerError ? err.route : null, err: errorTag(err) });
+    await ctx.db.update(umblerImports).set({ state: 'failed', error: code }).where(eq(umblerImports.id, row.id));
+  }
+}
+
+/** The worker's beat. Without UMBLER_TOKEN an active row fails with umbler_token (the token left the .env). */
+export async function umblerBeat(ctx: AppCtx, signal: AbortSignal, makeClient?: () => UmblerClient): Promise<void> {
+  const sleep = (ms: number) => delay(ms, undefined, { signal });
+  const token = ctx.config.umblerToken;
+  const client = makeClient ? makeClient() : token ? createUmblerClient({ token, sleep }) : null;
+  if (!client) {
+    await ctx.db.update(umblerImports).set({ state: 'failed', error: 'umbler_token' }).where(inArray(umblerImports.state, ['analyzing', 'running']));
+    return;
+  }
+  await runUmblerJob(ctx, { client, signal, sleep });
+}
+```
+
+- [ ] **Step 6: Run the job in the history worker**
+
+In `server/src/history/jobs.ts`, replace
+
+```ts
+import { channels, historyImports } from '../db/schema.js';
+import { copyRange } from './copy.js';
+```
+
+with
+
+```ts
+import { channels, historyImports } from '../db/schema.js';
+import { umblerBeat } from '../importer/job.js';
+import type { UmblerClient } from '../importer/umbler.js';
+import { copyRange } from './copy.js';
+```
+
+replace
+
+```ts
+/**
+ * The history worker (§5-6), one per app process: import passes that are due and, every 5 min, the back-fill of every
+ * channel; plus the media queue in its own loop, so a long download run never delays an import pass. All state lives
+ * in the DB, so a restart resumes where the previous process stopped.
+ * ponytail: one process only; claim rows with FOR UPDATE SKIP LOCKED if the app ever runs more than one.
+ */
+export function createHistoryWorker(ctx: AppCtx, opts: { intervalMs?: number; mediaIntervalMs?: number } = {}) {
+  const { intervalMs = 15_000, mediaIntervalMs = 10_000 } = opts;
+```
+
+with
+
+```ts
+/**
+ * The history worker (§5-6), one per app process: import passes that are due and, every 5 min, the back-fill of every
+ * channel; plus the media queue in its own loop, so a long download run never delays an import pass; plus the "Importar
+ * do Umbler" job (spec 2026-10-21 importar-umbler §9.3) in a third loop, which runs for hours in one beat. All state
+ * lives in the DB, so a restart resumes where the previous process stopped.
+ * ponytail: one process only; claim rows with FOR UPDATE SKIP LOCKED if the app ever runs more than one.
+ */
+export function createHistoryWorker(
+  ctx: AppCtx,
+  opts: { intervalMs?: number; mediaIntervalMs?: number; umblerClient?: () => UmblerClient } = {},
+) {
+  const { intervalMs = 15_000, mediaIntervalMs = 10_000 } = opts;
+```
+
+replace
+
+```ts
+  let media: Promise<unknown> | null = null;
+```
+
+with
+
+```ts
+  let media: Promise<unknown> | null = null;
+  let umbler: Promise<unknown> | null = null;
+```
+
+and replace
+
+```ts
+  return {
+    tick,
+    start(): void {
+      if (timers.length) return;
+      abort = new AbortController();
+      runJobs();
+      runMedia();
+      timers.push(setInterval(runJobs, intervalMs), setInterval(runMedia, mediaIntervalMs));
+      for (const t of timers) t.unref();
+    },
+    /** Clears the timers, ends the media loop after its current download, and waits for both. */
+    async stop(): Promise<void> {
+      for (const t of timers) clearInterval(t);
+      timers.length = 0;
+      abort.abort();
+      await Promise.all([jobs, media]);
+    },
+  };
+```
+
+with
+
+```ts
+  function runUmbler(): void {
+    if (umbler) return; // the import is still running: it goes on in the same beat
+    umbler = umblerBeat(ctx, abort.signal, opts.umblerClient)
+      .catch((err: unknown) => console.error('umbler: beat failed', errorTag(err)))
+      .finally(() => {
+        umbler = null;
+      });
+  }
+
+  return {
+    tick,
+    start(): void {
+      if (timers.length) return;
+      abort = new AbortController();
+      runJobs();
+      runMedia();
+      runUmbler();
+      timers.push(setInterval(runJobs, intervalMs), setInterval(runMedia, mediaIntervalMs), setInterval(runUmbler, intervalMs));
+      for (const t of timers) t.unref();
+    },
+    /** Clears the timers, ends the media loop after its current download and the Umbler job between pages, and waits for all. */
+    async stop(): Promise<void> {
+      for (const t of timers) clearInterval(t);
+      timers.length = 0;
+      abort.abort();
+      await Promise.all([jobs, media, umbler]);
+    },
+  };
+```
+
+`server/src/index.ts` needs no change: it already starts and stops `createHistoryWorker(ctx)`.
+
+- [ ] **Step 7: Run the tests and the type check**
+
+Run: `npm test -w server -- test/importer test/history`
+Expected: PASS.
+
+Run: `npm run typecheck -w server`
+Expected: no errors.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add server/src/importer/chats.ts server/src/importer/job.ts server/src/history/jobs.ts server/test/importer/world.ts server/test/importer/job.test.ts
+git commit -m "feat(server): run the Umbler import phases in the history worker, resuming where they stopped" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11: Routes: status, Analisar, Importar, Continuar
+
+The four routes are admin-only: an agent gets 403, and every POST passes the global Origin check. The routes never call Umbler; the worker does.
+- **`GET`** answers `tokenConfigured` and the newest import.
+- **`analyze`** creates the `analyzing` row. It answers 400 without the token, and 409 while another import is active (the partial unique index).
+- **`start`** works only on an `analyzed` row. Every Umbler channel, sector and attendant of the analysis needs a destination that exists here, and a channel that is not WhatsApp may only be "Não importar". The §6.3 blocks are checked again at that moment: automatic rules on, or a read test that marked a chat. The row then moves to `running` at `catalog`.
+- **`resume`** ("Continuar") works only on a `failed` import that started. It checks the same blocks and goes back to `running` in the same phase, with the same counters.
+
+The DTO computes `blocks` on every read of an `analyzed` or `failed` row, so the message disappears once the rules are switched off. It strips `progress.maps`.
+
+**Files:**
+- Create: `server/src/importer/routes.ts`
+- Modify: `server/src/app.ts` (import, registration)
+- Test: `server/test/importer/routes.test.ts` (create)
+
+**Interfaces:**
+- Consumes: Task 5 `emptyProgress`, `UmblerImportRow`; existing `getAutoRules`, `badRequest`, `conflict`, `forbidden`, `notFound`.
+- Produces: `UMBLER_RUNNING`, `NO_TOKEN`, `BLOCK_RULES`, `BLOCK_READ_TEST`, `BAD_MAPPING`, `NOT_ANALYZED`, `NOT_FAILED`, `importBlocks`, `toUmblerImportDto`, `registerUmblerImportRoutes`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `server/test/importer/routes.test.ts`:
+
+```ts
+import { eq } from 'drizzle-orm';
+import type { FastifyInstance } from 'fastify';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { UmblerImportDto, UmblerImportStatusDto } from '@talk/shared';
+import { settings, umblerImports } from '../../src/db/schema.js';
+import { emptyProgress } from '../../src/importer/job.js';
+import { BAD_MAPPING, BLOCK_READ_TEST, BLOCK_RULES, NO_TOKEN, NOT_FAILED, UMBLER_RUNNING } from '../../src/importer/routes.js';
+import { TEST_ORIGIN, loginAs, makeTestApp } from '../helpers.js';
+import { importWorld, proposals, testAnalysis, type World } from './world.js';
+
+let w: World;
+let app: FastifyInstance;
+let admin: Record<string, string>;
+let agent: Record<string, string>;
+beforeEach(async () => {
+  w = await importWorld();
+  ({ app } = await makeTestApp(w.ctx));
+  admin = (await loginAs(app, 'admin@teste.local')).headers;
+  agent = (await loginAs(app, 'ana@teste.local')).headers;
+});
+afterEach(async () => {
+  await app.close();
+  expect(w.fake.requests).toEqual([]); // the routes never call Umbler: the worker does
+  await w.fake.close();
+});
+
+const call = (method: 'GET' | 'POST', url: string, headers: Record<string, string>, payload?: object) =>
+  app.inject({ method, url, headers, payload });
+const analyzed = async (over: Partial<typeof umblerImports.$inferInsert> = {}) => {
+  const [row] = await w.ctx.db
+    .insert(umblerImports)
+    .values({ state: 'analyzed', analysis: testAnalysis(w), progress: emptyProgress(), ...over })
+    .returning();
+  return row!;
+};
+const rulesOn = () =>
+  w.ctx.db.insert(settings).values({
+    key: 'auto_rules',
+    value: { returnToQueue: { enabled: true, minutes: 30 }, closeInactive: { enabled: false, hours: 24, sendClosingMessage: true } },
+  });
+
+describe('Importar do Umbler routes (spec 2026-10-21 importar-umbler §10)', () => {
+  it('admins only; a POST without Origin is refused', async () => {
+    const row = await analyzed();
+    for (const [method, url] of [
+      ['GET', '/api/umbler-import'], ['POST', '/api/umbler-import/analyze'], ['POST', `/api/umbler-import/${row.id}/start`],
+      ['POST', `/api/umbler-import/${row.id}/resume`],
+    ] as const) {
+      expect((await call(method, url, agent, method === 'POST' ? {} : undefined)).statusCode).toBe(403);
+    }
+    const { origin: _origin, ...noOrigin } = admin;
+    expect((await call('POST', '/api/umbler-import/analyze', noOrigin)).statusCode).toBe(403);
+    expect(admin.origin).toBe(TEST_ORIGIN);
+  });
+
+  it('GET says whether the token is configured, never any part of it, and returns the newest import', async () => {
+    expect((await call('GET', '/api/umbler-import', admin)).json()).toEqual({ tokenConfigured: false, current: null });
+    w.ctx.config.umblerToken = 'tok-segredo-123';
+    await analyzed({ createdAt: new Date('2026-10-20T10:00:00Z') });
+    const newest = await analyzed({ state: 'done', createdAt: new Date('2026-10-21T10:00:00Z') });
+    const res = await call('GET', '/api/umbler-import', admin);
+    const body = res.json<UmblerImportStatusDto>();
+    expect(body.tokenConfigured).toBe(true);
+    expect(body.current).toMatchObject({ id: newest.id, state: 'done', blocks: [] });
+    expect(res.body).not.toContain('tok-segredo');
+    expect(body.current!.progress).not.toHaveProperty('maps');
+  });
+
+  it('analyze: 400 without a token; creates the analyzing row; 409 while one is active', async () => {
+    expect((await call('POST', '/api/umbler-import/analyze', admin)).json()).toEqual({ error: NO_TOKEN });
+    w.ctx.config.umblerToken = 'tok-teste';
+    const first = await call('POST', '/api/umbler-import/analyze', admin);
+    expect(first.statusCode).toBe(200);
+    expect(first.json<UmblerImportDto>()).toMatchObject({ state: 'analyzing', phase: null, analysis: null, startedAt: null });
+    const again = await call('POST', '/api/umbler-import/analyze', admin);
+    expect([again.statusCode, again.json()]).toEqual([409, { error: UMBLER_RUNNING }]);
+  });
+
+  it('start: every Umbler channel, sector and attendant needs a destination here; then it runs from the catalog', async () => {
+    const row = await analyzed();
+    const mapping = proposals(row.analysis!);
+    const bad = await call('POST', `/api/umbler-import/${row.id}/start`, admin, { mapping: { ...mapping, sectors: { SEC1: w.s.defaultSector } } });
+    expect([bad.statusCode, bad.json()]).toEqual([400, { error: BAD_MAPPING }]);
+    const webToo = { ...mapping, channels: { ...mapping.channels, CH_WEB: w.s.channelId } }; // not WhatsApp: only "Não importar"
+    expect((await call('POST', `/api/umbler-import/${row.id}/start`, admin, { mapping: webToo })).statusCode).toBe(400);
+
+    const ok = await call('POST', `/api/umbler-import/${row.id}/start`, admin, { mapping });
+    expect(ok.json<UmblerImportDto>()).toMatchObject({ state: 'running', phase: 'catalog', error: null });
+    const [stored] = await w.ctx.db.select().from(umblerImports).where(eq(umblerImports.id, row.id));
+    expect(stored!.mapping).toEqual(mapping);
+    expect(stored!.startedAt).not.toBeNull();
+    expect((await call('POST', `/api/umbler-import/${row.id}/start`, admin, { mapping })).statusCode).toBe(409); // not 'analyzed' anymore
+  });
+
+  it('start is blocked while the automatic rules are on or the read test marked a chat; 409 while another import is active', async () => {
+    const marked = await analyzed({ analysis: testAnalysis(w, { readTest: 'marked' }) });
+    const mapping = proposals(marked.analysis!);
+    expect((await call('GET', '/api/umbler-import', admin)).json<UmblerImportStatusDto>().current!.blocks).toEqual([BLOCK_READ_TEST]);
+    expect((await call('POST', `/api/umbler-import/${marked.id}/start`, admin, { mapping })).json()).toEqual({ error: BLOCK_READ_TEST });
+
+    await w.ctx.db.update(umblerImports).set({ state: 'done' }).where(eq(umblerImports.id, marked.id));
+    const row = await analyzed();
+    await rulesOn();
+    expect((await call('POST', `/api/umbler-import/${row.id}/start`, admin, { mapping })).json()).toEqual({ error: BLOCK_RULES });
+    await w.ctx.db.delete(settings).where(eq(settings.key, 'auto_rules'));
+
+    await analyzed({ state: 'running', phase: 'contacts', startedAt: new Date() });
+    const busy = await call('POST', `/api/umbler-import/${row.id}/start`, admin, { mapping });
+    expect([busy.statusCode, busy.json()]).toEqual([409, { error: UMBLER_RUNNING }]);
+  });
+
+  it('resume ("Continuar"): only a failed import; same blocks; back to running in the same phase with the same counters', async () => {
+    const progress = { ...emptyProgress(), messages: { ...emptyProgress().messages, total: 120 } };
+    const row = await analyzed({ state: 'failed', phase: 'closed_chats', error: 'umbler_429', startedAt: new Date(), progress, mapping: proposals(testAnalysis(w)) });
+    const analysis = await analyzed({ state: 'failed', error: 'umbler_token' }); // a failed analysis: "Analisar de novo"
+    expect((await call('POST', `/api/umbler-import/${analysis.id}/resume`, admin)).json()).toEqual({ error: NOT_FAILED });
+
+    await rulesOn();
+    expect((await call('POST', `/api/umbler-import/${row.id}/resume`, admin)).json()).toEqual({ error: BLOCK_RULES });
+    await w.ctx.db.delete(settings).where(eq(settings.key, 'auto_rules'));
+
+    const res = await call('POST', `/api/umbler-import/${row.id}/resume`, admin);
+    expect(res.json<UmblerImportDto>()).toMatchObject({ state: 'running', phase: 'closed_chats', error: null, progress: { messages: { total: 120 } } });
+    expect((await call('POST', `/api/umbler-import/${row.id}/resume`, admin)).json()).toEqual({ error: NOT_FAILED });
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npm test -w server -- test/importer/routes.test.ts`
+Expected: FAIL. `../../src/importer/routes.js` does not exist.
+
+- [ ] **Step 3: Write the routes and register them**
+
+Create `server/src/importer/routes.ts`:
+
+```ts
+import { and, desc, eq } from 'drizzle-orm';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { z } from 'zod';
+import type { UmblerAnalysisDto, UmblerImportDto, UmblerImportStatusDto, UmblerMappingDto, UmblerProgressDto } from '@talk/shared';
+import { getAutoRules } from '../catalog/settings.js';
+import type { AppCtx } from '../ctx.js';
+import type { Db } from '../db/client.js';
+import { channels, sectors, umblerImports, users } from '../db/schema.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
+import { emptyProgress, type UmblerImportRow } from './job.js';
+
+// Spec 2026-10-21 importar-umbler §6, §10: "Importar do Umbler" (admins only; every POST passes the global Origin check).
+
+export const UMBLER_RUNNING = 'Já existe uma importação do Umbler em andamento';
+export const NO_TOKEN = 'Token do Umbler não configurado';
+export const BLOCK_RULES =
+  'Desligue as Regras automáticas antes de importar: elas finalizariam ou devolveriam à fila as conversas abertas importadas e poderiam enviar a mensagem de encerramento a clientes.';
+export const BLOCK_READ_TEST = 'A leitura marcou uma conversa como lida no Umbler. A importação foi bloqueada para não alterar o Umbler.';
+// decisions: these three are not in the spec
+export const BAD_MAPPING = 'Escolha um destino para cada canal, setor e atendente.';
+export const NOT_ANALYZED = 'Analise o Umbler antes de importar.';
+export const NOT_FAILED = 'Só uma importação que parou pode continuar.';
+
+const idParams = z.object({ id: z.uuid() });
+const startBody = z.object({
+  mapping: z.object({
+    channels: z.record(z.string(), z.string()),
+    sectors: z.record(z.string(), z.string()),
+    members: z.record(z.string(), z.string()),
+  }),
+});
+
+/** §6.3, checked on every read and again right before start / resume (the rules may have been switched on meanwhile). */
+export async function importBlocks(db: Db, row: UmblerImportRow): Promise<string[]> {
+  const blocks: string[] = [];
+  const rules = await getAutoRules(db);
+  if (rules.returnToQueue.enabled || rules.closeInactive.enabled) blocks.push(BLOCK_RULES);
+  if (row.analysis?.readTest === 'marked') blocks.push(BLOCK_READ_TEST);
+  return blocks;
+}
+
+function progressDto(p: UmblerImportRow['progress']): UmblerProgressDto | null {
+  if (!p) return null;
+  const { maps: _maps, ...rest } = p; // the catalog maps are ids only, but the screen has no use for them
+  return rest;
+}
+
+export async function toUmblerImportDto(db: Db, row: UmblerImportRow): Promise<UmblerImportDto> {
+  return {
+    id: row.id,
+    state: row.state,
+    phase: row.phase,
+    analysis: row.analysis,
+    progress: progressDto(row.progress),
+    report: row.report,
+    error: row.error,
+    blocks: row.state === 'analyzed' || row.state === 'failed' ? await importBlocks(db, row) : [],
+    createdAt: row.createdAt.toISOString(),
+    startedAt: row.startedAt?.toISOString() ?? null,
+    finishedAt: row.finishedAt?.toISOString() ?? null,
+  };
+}
+
+/** §10 start: every Umbler channel, sector and attendant of the analysis has a destination that exists. */
+async function validMapping(db: Db, a: UmblerAnalysisDto, m: UmblerMappingDto): Promise<boolean> {
+  const ids = async (rows: Promise<Array<{ id: string }>>) => new Set((await rows).map((r) => r.id));
+  const ourChannels = await ids(db.select({ id: channels.id }).from(channels));
+  const ourSectors = await ids(db.select({ id: sectors.id }).from(sectors));
+  const ourUsers = await ids(db.select({ id: users.id }).from(users));
+  return (
+    a.channels.every((ch) => m.channels[ch.id] === 'none' || (ch.whatsapp && ourChannels.has(m.channels[ch.id] ?? ''))) &&
+    a.sectors.every((s) => m.sectors[s.id] === 'create' || ourSectors.has(m.sectors[s.id] ?? '')) &&
+    a.members.every((u) => m.members[u.id] === 'create' || m.members[u.id] === 'none' || ourUsers.has(m.members[u.id] ?? ''))
+  );
+}
+
+const pgCode = (err: unknown) => {
+  const e = err as { code?: string; cause?: { code?: string } } | null;
+  return e?.cause?.code ?? e?.code;
+};
+
+/** → running, after the §6.3 blocks; 409 while another import is active (umbler_imports_one_active). */
+async function begin(db: Db, row: UmblerImportRow, patch: Partial<typeof umblerImports.$inferInsert>): Promise<UmblerImportDto> {
+  const blocks = await importBlocks(db, row);
+  if (blocks.length) throw conflict(blocks[0]);
+  let updated: UmblerImportRow | undefined;
+  try {
+    [updated] = await db
+      .update(umblerImports)
+      .set({ ...patch, state: 'running', error: null })
+      .where(and(eq(umblerImports.id, row.id), eq(umblerImports.state, row.state)))
+      .returning();
+  } catch (err) {
+    if (pgCode(err) === '23505') throw conflict(UMBLER_RUNNING);
+    throw err;
+  }
+  if (!updated) throw conflict(UMBLER_RUNNING); // changed meanwhile
+  return toUmblerImportDto(db, updated);
+}
+
+async function rowOf(db: Db, id: string): Promise<UmblerImportRow> {
+  const [row] = await db.select().from(umblerImports).where(eq(umblerImports.id, id));
+  if (!row) throw notFound();
+  return row;
+}
+
+export function registerUmblerImportRoutes(app: FastifyInstance, ctx: AppCtx): void {
+  const admin = (req: FastifyRequest) => {
+    if (req.user.role !== 'admin') throw forbidden();
+  };
+
+  // the screen polls this every 3 s while it analyzes or imports (§6); never any part of the token
+  app.get('/api/umbler-import', async (req): Promise<UmblerImportStatusDto> => {
+    admin(req);
+    const [row] = await ctx.db.select().from(umblerImports).orderBy(desc(umblerImports.createdAt)).limit(1);
+    return { tokenConfigured: ctx.config.umblerToken !== null, current: row ? await toUmblerImportDto(ctx.db, row) : null };
+  });
+
+  // the worker picks the row up on its next beat (≤ 15 s)
+  app.post('/api/umbler-import/analyze', async (req) => {
+    admin(req);
+    if (!ctx.config.umblerToken) throw badRequest(NO_TOKEN);
+    const [row] = await ctx.db
+      .insert(umblerImports)
+      .values({ state: 'analyzing', createdBy: req.user.id, progress: emptyProgress() })
+      .onConflictDoNothing()
+      .returning();
+    if (!row) throw conflict(UMBLER_RUNNING);
+    return toUmblerImportDto(ctx.db, row);
+  });
+
+  app.post('/api/umbler-import/:id/start', async (req) => {
+    admin(req);
+    const { id } = idParams.parse(req.params);
+    const { mapping } = startBody.parse(req.body);
+    const row = await rowOf(ctx.db, id);
+    if (row.state !== 'analyzed' || !row.analysis) throw conflict(NOT_ANALYZED);
+    if (!(await validMapping(ctx.db, row.analysis, mapping))) throw badRequest(BAD_MAPPING);
+    return begin(ctx.db, row, { phase: 'catalog', mapping, startedAt: new Date() });
+  });
+
+  // "Continuar": same phase, same counters
+  app.post('/api/umbler-import/:id/resume', async (req) => {
+    admin(req);
+    const row = await rowOf(ctx.db, idParams.parse(req.params).id);
+    if (row.state !== 'failed' || !row.startedAt) throw conflict(NOT_FAILED);
+    return begin(ctx.db, row, {});
+  });
+}
+```
+
+In `server/src/app.ts`, replace
+
+```ts
+import { registerContactRoutes } from './contacts/routes.js';
+```
+
+with
+
+```ts
+import { registerContactRoutes } from './contacts/routes.js';
+import { registerUmblerImportRoutes } from './importer/routes.js';
+```
+
+and replace
+
+```ts
+  registerChannelRoutes(app, ctx);
+  registerBotRoutes(app, ctx);
+```
+
+with
+
+```ts
+  registerChannelRoutes(app, ctx);
+  registerBotRoutes(app, ctx);
+  registerUmblerImportRoutes(app, ctx);
+```
+
+- [ ] **Step 4: Run the tests and the type check**
+
+Run: `npm test -w server`
+Expected: PASS (every server test).
+
+Run: `npm run typecheck -w server`
+Expected: no errors.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/src/importer/routes.ts server/src/app.ts server/test/importer/routes.test.ts
+git commit -m "feat(server): Importar do Umbler routes (admin): status, analyze, start and resume, with the import blocks" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
