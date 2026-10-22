@@ -2765,3 +2765,1849 @@ git commit -m "feat(server): Umbler contacts phase (LID-only contacts, LID merge
 
 ---
 
+### Task 5: "Analisar": counts, proposals, warnings and the read test
+
+"Analisar" reads lists only, about 300 calls (§11). It counts:
+- contacts: new, already here, and without phone nor LID;
+- chats: open, waiting, finished, and the period by `createdAtUTC`;
+- the chats per channel and per attendant;
+- tags, fields and quick answers: new or already here.
+
+It proposes a destination for every channel, sector and attendant (§6.2):
+- a channel: the same number, else the official channel (§18.3); not WhatsApp → `none`;
+- a sector: the same name, without case, else `create`;
+- an attendant: the same e-mail, without case, else `create` (§18.4).
+
+It writes the fixed warnings of §6.3: token without full access, chats without content, plan limit, no read-test candidate, the count check, and free space. The channel warnings depend on the admin's choice, so the page computes them (Task 12).
+
+The read test (§5.1) takes the newest finished chat whose last message is from the contact and still `Received`. It reads its messages with the import's own call, then looks at the chat again through `contacts/{id}/chats`. It never uses the chat-detail route.
+
+`chats.ts` starts with the two chat calls the analysis shares with the import. `job.ts` starts with the analysis and a `runUmblerJob` that only knows `analyzing`; Task 10 replaces it. Every error becomes `failed` with its §9.4 code. The row never holds the token.
+
+**Files:**
+- Create: `server/src/importer/chats.ts`, `server/src/importer/job.ts`
+- Modify: `server/test/importer/world.ts` (imports; append `depsOf`, `rowOf`, `analyze`)
+- Test: `server/test/importer/analyze.test.ts` (create)
+
+**Interfaces:**
+- Consumes: Tasks 2-3 (client, `pages`, `getAll`, `fold`, `validPhone`, `lidOf`, `FIELD_KINDS`, the `Umbler*` types); Task 1 `umblerImports`, `emptyUmblerCounts`.
+- Produces:
+  - `FIRST_EVENT`, `MESSAGES_TAKE`, `chatQuery`, `MessagePage`, `fetchMessagePage`;
+  - `UmblerImportRow`, `JobDeps`, `freeBytesOf`, `emptyProgress`, `analyzeUmbler`, `runUmblerJob`;
+  - test world: `depsOf`, `rowOf`, `analyze`.
+
+- [ ] **Step 1: Extend the test world**
+
+In `server/test/importer/world.ts`, replace
+
+```ts
+import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerMappingDto } from '@talk/shared';
+import { umblerImports } from '../../src/db/schema.js';
+import { createUmblerClient, type ImportRun, type UmblerClient } from '../../src/importer/umbler.js';
+```
+
+with
+
+```ts
+import { eq } from 'drizzle-orm';
+import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerMappingDto } from '@talk/shared';
+import { umblerImports } from '../../src/db/schema.js';
+import { emptyProgress, runUmblerJob, type JobDeps, type UmblerImportRow } from '../../src/importer/job.js';
+import { createUmblerClient, type ImportRun, type UmblerClient } from '../../src/importer/umbler.js';
+```
+
+and append:
+
+```ts
+export const depsOf = (w: World): JobDeps => ({ client: w.client, sleep: async (ms) => void w.sleeps.push(ms), freeBytes: async () => w.free.bytes });
+
+export async function rowOf(w: World, id: string): Promise<UmblerImportRow> {
+  return (await w.ctx.db.select().from(umblerImports).where(eq(umblerImports.id, id)))[0]!;
+}
+
+/** "Analisar" as the worker runs it: a new 'analyzing' row and one job beat. */
+export async function analyze(w: World): Promise<UmblerImportRow> {
+  const [row] = await w.ctx.db.insert(umblerImports).values({ state: 'analyzing', progress: emptyProgress() }).returning();
+  await runUmblerJob(w.ctx, depsOf(w));
+  return rowOf(w, row!.id);
+}
+```
+
+- [ ] **Step 2: Write the failing test**
+
+Create `server/test/importer/analyze.test.ts`:
+
+```ts
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { channels } from '../../src/db/schema.js';
+import { umblerChat, umblerMessage } from '../fakes/umbler-api.js';
+import { analyze, importWorld, proposals, testAnalysis, type World } from './world.js';
+
+let w: World;
+let logs: unknown[][];
+beforeEach(async () => {
+  w = await importWorld();
+  logs = [];
+  for (const level of ['info', 'error'] as const) vi.spyOn(console, level).mockImplementation((...args: unknown[]) => void logs.push(args));
+});
+afterEach(async () => {
+  vi.restoreAllMocks();
+  expect(w.fake.problems()).toEqual([]);
+  await w.fake.close();
+});
+
+const closed = (closedAtUTC: string, over: Record<string, unknown> = {}) =>
+  umblerChat({ open: false, closedAtUTC, createdAtUTC: closedAtUTC, ...over });
+const received = { id: 'LAST', source: 'Contact', messageState: 'Received' };
+
+describe('Analisar (spec 2026-10-21 importar-umbler §6.2)', () => {
+  it('counts lists only and proposes sector by name, attendant by e-mail and channel by number', async () => {
+    await w.ctx.db.update(channels).set({ phone: '5565999990000' }).where(eq(channels.id, w.s.channelId));
+    w.fake.world.chats.push(
+      umblerChat({ createdAtUTC: '2026-10-01T12:00:00Z', waiting: true }),
+      umblerChat({ createdAtUTC: '2026-10-02T12:00:00Z', organizationMember: { id: 'M_CARLA' } }),
+      closed('2025-03-04T12:00:00Z'),
+      closed('2026-01-01T12:00:00Z', { channel: { _t: 'ChatWebsiteWidgetChannelReferenceModel', id: 'CH_WEB', name: 'Site' } }),
+    );
+
+    const row = await analyze(w);
+
+    expect(row.state).toBe('analyzed');
+    const a = row.analysis!;
+    expect(a).toMatchObject({
+      organizationId: 'ORG_TESTE_00001',
+      organization: 'Escritório Teste',
+      contacts: { total: 4, existing: 0, withoutAddress: 1 },
+      chats: { open: 2, waiting: 1, closed: 2, from: '2025-03-04T12:00:00.000Z', to: '2026-10-02T12:00:00.000Z' },
+      tags: { new: 2, existing: 0 },
+      customFields: { new: 2, existing: 0, unsupported: ['Aceitou termos'] },
+      quickAnswers: { new: 2, existing: 0 },
+    });
+    expect(a.channels.map((c) => [c.id, c.whatsapp, c.phone, c.chats])).toEqual([
+      ['CH_WA', true, '5565999990000', 3],
+      ['CH_WEB', false, null, 1],
+    ]);
+    expect(a.members.map((m) => [m.id, m.chats])).toEqual([['M_ANA', 3], ['M_CARLA', 1]]); // the AI agent stays out
+    expect(proposals(a)).toEqual(proposals(testAnalysis(w)));
+    expect(row.progress?.chatsRead).toBe(4);
+    expect(w.fake.calls(/relative-messages/)).toEqual([]); // no candidate for the read test: no message call at all
+    expect(JSON.stringify(logs)).not.toMatch(/Maria|5565|ana@teste|tok-teste/i);
+  });
+
+  it('an old WhatsApp number of the office goes to the official channel (§18.3); other kinds of channel never come', async () => {
+    w.fake.world.channels.push({ _t: 'OrganizationCloudAPIWhatsappChannelReferenceModel', id: 'CH_OLD', name: 'Número antigo', phoneNumber: '+5565988880000' });
+    const [second] = await w.ctx.db.insert(channels).values({ name: 'Outro', evolutionInstance: 'talk-outro', phone: '5565999990000' }).returning();
+
+    const a = (await analyze(w)).analysis!;
+
+    // CH_WA has the number of `second`, which is then the official channel; CH_OLD's number is nowhere here
+    expect(Object.fromEntries(a.channels.map((c) => [c.id, c.proposal]))).toEqual({ CH_WA: second!.id, CH_WEB: 'none', CH_OLD: second!.id });
+  });
+
+  it('warns: token without full access, chats without content, plan limit, no read-test candidate, a count that disagrees, free space', async () => {
+    const me = w.fake.world.me as { organizations: Array<Record<string, unknown>> };
+    me.organizations[0]!.permissions = ['Operator'];
+    w.fake.world.organization.maxDaysMessageHistoric = 90;
+    w.fake.world.chats.push(umblerChat({ redactReason: 'InDisallowedSector' }));
+    w.fake.world.totalBias = 1;
+    w.free.bytes = 12.5 * 1024 ** 3;
+
+    const a = (await analyze(w)).analysis!;
+
+    expect(a.readTest).toBe('not_done');
+    expect(a.warnings).toEqual([
+      'O token é de um usuário sem acesso a tudo: gere o token com o Proprietário.',
+      'O Umbler informou 2 conversas abertas, mas a lista trouxe 1.',
+      '1 conversas vêm sem conteúdo para este token.',
+      'O plano do Umbler mostra só os últimos 90 dias de mensagens; as anteriores não vêm.',
+      'Não houve conversa para o teste de leitura; a importação confere as abertas durante a cópia.',
+      'Espaço livre para arquivos: 12,5 GB.',
+    ]);
+  });
+
+  it('read test (§5.1): reads the newest closed chat still "Received" from the contact, then looks at it again', async () => {
+    const newest = closed('2026-09-10T12:00:00Z', { lastMessage: received, totalUnread: 2 });
+    const older = closed('2026-09-05T12:00:00Z', { lastMessage: received });
+    w.fake.world.chats.push(older, newest);
+    w.fake.world.messages[newest.id as string] = [umblerMessage('M1', '2026-09-10T11:59:00Z')];
+
+    expect((await analyze(w)).analysis!.readTest).toBe('ok');
+    expect(w.fake.calls(/relative-messages/).map((r) => r.path)).toEqual([`/api/v1/chats/${newest.id}/relative-messages/`]);
+    expect(w.fake.calls(/\/contacts\/C1\/chats\/$/).map((r) => r.query.get('ChatState'))).toEqual(['Closed']);
+
+    w.fake.world.marksRead = newest.id as string; // this time reading marks it as read in Umbler
+    expect((await analyze(w)).analysis!.readTest).toBe('marked');
+  });
+
+  it('a refused token fails the analysis with umbler_token, and the token is never in the row', async () => {
+    w.fake.faults.push({ path: /members\/me/, status: 401 });
+    const row = await analyze(w);
+    expect(row).toMatchObject({ state: 'failed', error: 'umbler_token', analysis: null });
+    expect(JSON.stringify(row)).not.toContain('tok-teste');
+    expect(JSON.stringify(logs)).not.toContain('tok-teste');
+  });
+});
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `npm test -w server -- test/importer/analyze.test.ts`
+Expected: FAIL. `../../src/importer/job.js` does not exist.
+
+- [ ] **Step 4: Create the chat calls and the analysis**
+
+Create `server/src/importer/chats.ts`:
+
+```ts
+import type { Query, UmblerClient, UmblerMessage } from './umbler.js';
+
+// Spec 2026-10-21 importar-umbler §7.6-7.8: Umbler chats and their messages, page by page.
+
+/** §4: the first relative-messages page starts here; the next one at the last eventAtUTC - 1 ms. */
+export const FIRST_EVENT = '2000-01-01T00:00:00Z';
+export const MESSAGES_TAKE = 250; // the route's maximum
+
+/** §4: direct conversations only, hidden ones included, without the token owner's pinned chats mixed in. */
+export function chatQuery(org: string, state: 'open' | 'closed'): Query {
+  return {
+    organizationId: org,
+    ContactTypes: ['DirectMessage'],
+    Visibility: ['Show', 'Hide', 'HideUntilNextMessage'],
+    IncludePinneds: false,
+    ...(state === 'open'
+      ? { ChatState: 'Open', ChatOrderBy: 'CreatedAtUTC', Order: 'Asc' }
+      : { ChatState: 'Closed', ChatOrderBy: 'ClosedAtUTC', Order: 'Desc' }),
+  };
+}
+
+export interface MessagePage { hasMessagesBeforeAllowedOrganizationPlan?: boolean; messages?: UmblerMessage[] }
+
+/** One relative-messages page from `from` on (§4), without timeline events. "Analisar" reads with it too (§5.1). */
+export function fetchMessagePage(client: UmblerClient, org: string, chatId: string, from: Date): Promise<MessagePage> {
+  return client.get<MessagePage>(
+    '/v1/chats/{chatId}/relative-messages/',
+    { organizationId: org, FromEventUTC: from.toISOString(), Direction: 'TakeAfter', Take: MESSAGES_TAKE, IncludeMetadata: false },
+    { chatId },
+  );
+}
+```
+
+Create `server/src/importer/job.ts`:
+
+```ts
+import { statfs } from 'node:fs/promises';
+import { eq } from 'drizzle-orm';
+import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerProgressDto } from '@talk/shared';
+import { errorTag } from '../bots/scheduler.js';
+import type { AppCtx } from '../ctx.js';
+import { channels, contacts, customFields, quickAnswers, sectors, tags, umblerImports, users } from '../db/schema.js';
+import { normalizePhoneBR } from '../whatsapp/phone.js';
+import { FIRST_EVENT, chatQuery, fetchMessagePage } from './chats.js';
+import {
+  FIELD_KINDS, Stopped, UmblerError, fold, getAll, isGone, lidOf, pages, validPhone, type UmblerChannel, type UmblerChat,
+  type UmblerClient, type UmblerContact, type UmblerFieldDef, type UmblerMe, type UmblerOrganization, type UmblerQuickAnswer,
+  type UmblerSector, type UmblerTag,
+} from './umbler.js';
+
+// Spec 2026-10-21 importar-umbler §5, §6.2, §9: "Analisar", the five phases and the resume. All state lives in
+// umbler_imports and umbler_map, so a restart picks the row up where it stopped.
+
+export type UmblerImportRow = typeof umblerImports.$inferSelect;
+
+export interface JobDeps {
+  client: UmblerClient;
+  signal?: AbortSignal;
+  sleep?: (ms: number) => Promise<unknown>;
+  freeBytes?: (dir: string) => Promise<number>;
+}
+
+/** Free bytes of the disk that holds `dir` (§6.3 "Espaço livre", §7.8 disk_full). */
+export async function freeBytesOf(dir: string): Promise<number> {
+  const s = await statfs(dir);
+  return s.bavail * s.bsize;
+}
+
+export const emptyProgress = (): UmblerProgressDto => ({ ...emptyUmblerCounts(), done: 0, total: 0, chatsRead: 0 });
+const n = (x: number) => x.toLocaleString('pt-BR');
+
+// ---------- Analisar (§5.1, §6.2, §6.3) ----------
+
+/** §5.1: reads the newest closed chat still "Received" from the contact the way the import does, then checks it again. */
+async function readTest(client: UmblerClient, org: string, chat: UmblerChat): Promise<UmblerAnalysisDto['readTest']> {
+  try {
+    await fetchMessagePage(client, org, chat.id, new Date(FIRST_EVENT));
+  } catch (err) {
+    if (isGone(err)) return 'not_done';
+    throw err;
+  }
+  const again = await client.get<{ items?: UmblerChat[] }>(
+    '/v1/contacts/{id}/chats/',
+    { organizationId: org, ChatState: 'Closed', Skip: 0, Take: 50 },
+    { id: chat.contact.id },
+  );
+  const after = again.items?.find((c) => c.id === chat.id);
+  if (!after) return 'not_done';
+  const same = after.lastMessage?.messageState === chat.lastMessage?.messageState && (after.totalUnread ?? 0) === (chat.totalUnread ?? 0);
+  return same ? 'ok' : 'marked';
+}
+
+/** "Analisar" (§6.2): lists only (no messages, ~300 calls), counts, proposals, warnings and the read test. */
+export async function analyzeUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImportRow): Promise<void> {
+  const c = deps.client;
+  const me = await c.get<UmblerMe>('/v1/members/me/');
+  const ref = me.organizations?.[0]; // ponytail: the office has exactly one organization (§4)
+  if (!ref) throw new UmblerError('umbler_token', null, '/v1/members/me/');
+  const q = { organizationId: ref.id };
+  const org = await c.get<UmblerOrganization>('/v1/organizations/{id}/', {}, { id: ref.id });
+  const channelList = await c.get<UmblerChannel[]>('/v1/channels/', q);
+  const sectorList = await c.get<UmblerSector[]>('/v1/sectors/', q);
+  const tagList = await getAll<UmblerTag>(c, '/v1/tags/', q);
+  const fieldDefs = await c.get<UmblerFieldDef[]>('/v1/custom-field-definitions/', q);
+  const answers = await getAll<UmblerQuickAnswer>(c, '/v1/quick-answers/', { ...q, viewFrom: 'Everyone' });
+
+  const ours = await ctx.db.select({ phone: contacts.phone, lid: contacts.lid }).from(contacts);
+  const phones = new Set(ours.flatMap((r) => (r.phone ? [r.phone] : [])));
+  const lids = new Set(ours.flatMap((r) => (r.lid ? [r.lid] : [])));
+  const contactCounts = { total: 0, existing: 0, withoutAddress: 0 };
+  for await (const page of pages<UmblerContact>(c, '/v1/contacts/', { ...q, includeGroups: false, State: 'All' })) {
+    for (const ct of page.items) {
+      const phone = validPhone(ct.phoneNumber);
+      const lid = lidOf(ct.lid);
+      contactCounts.total += 1;
+      if (!phone && !lid) contactCounts.withoutAddress += 1;
+      else if ((phone && phones.has(phone)) || (lid && lids.has(lid))) contactCounts.existing += 1;
+    }
+    if (deps.signal?.aborted) throw new Stopped();
+  }
+
+  const progress = emptyProgress();
+  const warnings: string[] = [];
+  const stats = { open: 0, waiting: 0, closed: 0, redacted: 0, from: Number.POSITIVE_INFINITY, to: Number.NEGATIVE_INFINITY };
+  const byChannel = new Map(channelList.map((ch) => [ch.id, { name: ch.name, type: ch._t, phone: ch.phoneNumber ?? null, chats: 0 }]));
+  const byMember = new Map<string, number>();
+  let candidate: UmblerChat | undefined;
+  for (const state of ['open', 'closed'] as const) {
+    let walked = 0;
+    let total: number | null = null;
+    for await (const page of pages<UmblerChat>(c, '/v1/chats/', chatQuery(ref.id, state), true)) {
+      total ??= page.total;
+      for (const ch of page.items) {
+        walked += 1;
+        stats[state] += 1;
+        if (state === 'open' && ch.waiting) stats.waiting += 1;
+        if (ch.redactReason) stats.redacted += 1;
+        stats.from = Math.min(stats.from, Date.parse(ch.createdAtUTC));
+        stats.to = Math.max(stats.to, Date.parse(ch.createdAtUTC));
+        // a channel only a chat names (removed from Umbler) still gets its row
+        const known = byChannel.get(ch.channel.id) ?? { name: ch.channel.name ?? '', type: ch.channel._t, phone: ch.channel.phoneNumber ?? null, chats: 0 };
+        known.chats += 1;
+        byChannel.set(ch.channel.id, known);
+        if (ch.organizationMember) byMember.set(ch.organizationMember.id, (byMember.get(ch.organizationMember.id) ?? 0) + 1);
+        if (state === 'closed' && !candidate && ch.lastMessage?.source === 'Contact' && ch.lastMessage.messageState === 'Received') {
+          candidate = ch; // the newest one: the list is ClosedAtUTC Desc
+        }
+      }
+      progress.chatsRead += page.items.length;
+      await ctx.db.update(umblerImports).set({ progress }).where(eq(umblerImports.id, row.id)); // "N conversas lidas"
+      if (deps.signal?.aborted) throw new Stopped();
+    }
+    // decision: page.totalItems of the first page is checked against what the walk found (§4 "conferir")
+    if (total !== null && total !== walked) {
+      warnings.push(`O Umbler informou ${n(total)} conversas ${state === 'open' ? 'abertas' : 'finalizadas'}, mas a lista trouxe ${n(walked)}.`);
+    }
+  }
+  const tested = candidate ? await readTest(c, ref.id, candidate) : 'not_done';
+
+  const ourSectors = await ctx.db.select({ id: sectors.id, name: sectors.name }).from(sectors);
+  const ourUsers = await ctx.db.select({ id: users.id, email: users.email }).from(users);
+  const ourChannels = await ctx.db
+    .select({ id: channels.id, phone: channels.phone, status: channels.status })
+    .from(channels)
+    .orderBy(channels.createdAt);
+  const sectorByName = new Map(ourSectors.map((s) => [fold(s.name), s.id]));
+  const userByEmail = new Map(ourUsers.map((u) => [fold(u.email), u.id]));
+  const channelByPhone = new Map(ourChannels.flatMap((ch) => (ch.phone ? [[normalizePhoneBR(ch.phone), ch.id] as const] : [])));
+
+  const rows = [...byChannel].map(([id, ch]) => {
+    const whatsapp = /whatsapp/i.test(ch.type);
+    const phone = ch.phone ? normalizePhoneBR(ch.phone) : null;
+    return { id, name: ch.name, type: ch.type, phone, whatsapp, chats: ch.chats, same: whatsapp && phone ? channelByPhone.get(phone) : undefined };
+  });
+  // §6.2 + §18.3: a WhatsApp number that is not here (an old number of the office) goes to the official channel: the one
+  // an Umbler number matched, else our oldest connected channel, else our oldest channel.
+  const official = rows.find((r) => r.same)?.same ?? ourChannels.find((ch) => ch.status === 'connected')?.id ?? ourChannels[0]?.id ?? 'none';
+  const channelRows = rows.map(({ same, ...r }) => ({ ...r, proposal: r.whatsapp ? (same ?? official) : 'none' }));
+
+  const members = (org.organizationMembers ?? [])
+    .filter((m) => m._t === 'OrganizationHumanAgentReferenceModel' && m.emailAddress?.trim()) // AI agents stay out (§4)
+    .map((m) => {
+      const email = m.emailAddress!.trim();
+      return {
+        id: m.id, name: m.displayName?.trim() || email, email, active: m.active ?? false, chats: byMember.get(m.id) ?? 0,
+        proposal: userByEmail.get(fold(email)) ?? 'create', // §18.4: no user with that e-mail → an inactive user
+      };
+    });
+
+  const ourTags = new Set((await ctx.db.select({ name: tags.name }).from(tags)).map((t) => fold(t.name)));
+  const ourFields = new Set((await ctx.db.select({ name: customFields.name }).from(customFields)).map((f) => fold(f.name)));
+  const ourAnswers = new Set((await ctx.db.select({ name: quickAnswers.name }).from(quickAnswers)).map((a) => fold(a.name)));
+  const newTags = tagList.filter((t) => !ourTags.has(fold(t.name.trim().slice(0, 30)))).length;
+  const supported = fieldDefs.filter((d) => FIELD_KINDS[d._t]);
+  const newFields = supported.filter((d) => !ourFields.has(fold(d.name))).length;
+  const newAnswers = answers.filter((a) => !ourAnswers.has(fold(a.name))).length;
+
+  const perms = ref.permissions ?? [];
+  const everything = (perms.includes('Owner') || perms.includes('Admin')) && ref.allowedSectors?.allSectorsEnable && ref.allowedChannels?.allChannelsEnable;
+  if (!everything) warnings.unshift('O token é de um usuário sem acesso a tudo: gere o token com o Proprietário.');
+  if (stats.redacted) warnings.push(`${n(stats.redacted)} conversas vêm sem conteúdo para este token.`);
+  if (org.maxDaysMessageHistoric) {
+    warnings.push(`O plano do Umbler mostra só os últimos ${n(org.maxDaysMessageHistoric)} dias de mensagens; as anteriores não vêm.`);
+  }
+  if (tested === 'not_done') warnings.push('Não houve conversa para o teste de leitura; a importação confere as abertas durante a cópia.');
+  const free = await (deps.freeBytes ?? freeBytesOf)(ctx.config.mediaDir);
+  warnings.push(`Espaço livre para arquivos: ${(free / 1024 ** 3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} GB.`);
+
+  const analysis: UmblerAnalysisDto = {
+    organizationId: ref.id,
+    organization: org.name,
+    contacts: contactCounts,
+    chats: {
+      open: stats.open, waiting: stats.waiting, closed: stats.closed,
+      from: Number.isFinite(stats.from) ? new Date(stats.from).toISOString() : null,
+      to: Number.isFinite(stats.to) ? new Date(stats.to).toISOString() : null,
+    },
+    channels: channelRows,
+    sectors: sectorList.map((s) => ({ id: s.id, name: s.name.trim(), proposal: sectorByName.get(fold(s.name)) ?? 'create' })),
+    members,
+    tags: { new: newTags, existing: tagList.length - newTags },
+    customFields: {
+      new: newFields, existing: supported.length - newFields,
+      unsupported: fieldDefs.filter((d) => !FIELD_KINDS[d._t]).map((d) => d.name.trim()),
+    },
+    quickAnswers: { new: newAnswers, existing: answers.length - newAnswers },
+    readTest: tested,
+    warnings,
+  };
+  await ctx.db.update(umblerImports).set({ state: 'analyzed', analysis, progress }).where(eq(umblerImports.id, row.id));
+  console.info('umbler: analyzed', { importId: row.id, contacts: contactCounts.total, chats: stats.open + stats.closed, readTest: tested });
+}
+
+/** One beat (§9.3): the analysis of the 'analyzing' row; an error marks it failed with its §9.4 code. */
+export async function runUmblerJob(ctx: AppCtx, deps: JobDeps): Promise<void> {
+  const [row] = await ctx.db.select().from(umblerImports).where(eq(umblerImports.state, 'analyzing'));
+  if (!row) return;
+  try {
+    await analyzeUmbler(ctx, deps, row);
+  } catch (err) {
+    if (err instanceof Stopped || deps.signal?.aborted) return;
+    const code = err instanceof UmblerError ? err.code : 'unexpected';
+    // ids, the code and the route template only (§3): never text, phone, name, URL or the token
+    console.error('umbler: import stopped', { importId: row.id, code, route: err instanceof UmblerError ? err.route : null, err: errorTag(err) });
+    await ctx.db.update(umblerImports).set({ state: 'failed', error: code }).where(eq(umblerImports.id, row.id));
+  }
+}
+```
+
+- [ ] **Step 5: Run the tests and the type check**
+
+Run: `npm test -w server -- test/importer`
+Expected: PASS.
+
+Run: `npm run typecheck -w server`
+Expected: no errors.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/src/importer/chats.ts server/src/importer/job.ts server/test/importer/world.ts server/test/importer/analyze.test.ts
+git commit -m "feat(server): Analisar do Umbler (counts, proposed mapping, warnings and the read test)" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 6: The match with the WhatsApp history, both ways
+
+§8: an Umbler message and one of our rows are the same message when all of these hold:
+- same contact and same channel, in any chat;
+- same direction and same class: text, media (`image|video|audio|document|sticker`) or other;
+- the same normalized text: no signature line, NFC, `\n`, no spaces at the ends;
+- at most `MATCH_WINDOW_MS` (10 s) apart.
+
+`pairUp` is pure. It pairs one to one in time order, and each item takes the free candidate with the smallest difference, a tie going to the older one. `matchCandidates` reads one side:
+- `'ours'`: rows not imported from Umbler yet;
+- `'umbler'`: imported rows still without a WhatsApp id.
+
+`placeRecords` (the history import and the recovery) uses the second side before inserting. When it finds a twin, it only writes the `external_id` and counts the message as already there. A batch first checks whether any Umbler message exists at all, which is one cheap read, so the history copy costs nothing more before the switch.
+
+**Files:**
+- Create: `server/src/importer/match.ts`
+- Modify: `server/src/history/place.ts` (import; the `umbler` flag; the claim before the insert)
+- Test: `server/test/importer/match.test.ts` (create), `server/test/history/place.test.ts`
+
+**Interfaces:**
+- Consumes: Task 1 `umblerMap`; existing `stripSignature`.
+- Produces: `MATCH_WINDOW_MS`, `Comparable`, `Candidate`, `normalizeText`, `pairUp`, `matchCandidates`, `hasUmblerMessages`, `claimUmblerTwin`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `server/test/importer/match.test.ts`:
+
+```ts
+import { beforeEach, describe, expect, it } from 'vitest';
+import { messages, umblerMap } from '../../src/db/schema.js';
+import { MATCH_WINDOW_MS, matchCandidates, normalizeText, pairUp, type Comparable } from '../../src/importer/match.js';
+import { makeTestCtx, seedBasics } from '../helpers.js';
+import { insertChat, newContact } from '../inbox/fixtures.js';
+
+const at = (s: number) => new Date(Date.UTC(2026, 9, 1, 12, 0, 0) + s * 1000);
+const msg = (o: Partial<Comparable> & { at: Date }): Comparable => ({ direction: 'in', kind: 'text', text: 'Bom dia', ...o });
+
+describe('pairUp (spec 2026-10-21 importar-umbler §8)', () => {
+  it('same direction, class and text within 10 s matches; 11 s, the other direction or another text does not', () => {
+    const ours = [msg({ at: at(10) })];
+    expect(MATCH_WINDOW_MS).toBe(10_000);
+    expect(pairUp([msg({ at: at(0) })], ours)).toEqual([{ row: ours[0], diffMs: 10_000 }]);
+    expect(pairUp([msg({ at: at(-1) })], ours)).toEqual([null]);
+    expect(pairUp([msg({ at: at(10), direction: 'out' })], ours)).toEqual([null]);
+    expect(pairUp([msg({ at: at(10), text: 'Bom dia!' })], ours)).toEqual([null]);
+  });
+
+  it('drops the signature line, CRLF, the spaces at the ends and compares NFC; a GIF image matches a WhatsApp video', () => {
+    expect(normalizeText('*Financeiro - Ana:*\r\nSegue o boleto  ')).toBe('Segue o boleto');
+    const signed = msg({ at: at(0), direction: 'out', text: '*Financeiro - Ana:*\r\nSegue o boleto  ' });
+    expect(pairUp([signed], [msg({ at: at(2), direction: 'out', text: 'Segue o boleto' })])[0]).not.toBeNull();
+    expect(pairUp([msg({ at: at(0), text: 'Sim, João' })], [msg({ at: at(0), text: 'Sim, João' })])[0]).not.toBeNull();
+    const gif = msg({ at: at(0), kind: 'image', text: null });
+    expect(pairUp([gif], [msg({ at: at(1), kind: 'video', text: '' })])[0]).not.toBeNull();
+    expect(pairUp([gif], [msg({ at: at(1), kind: 'text', text: '' })])[0]).toBeNull();
+    // a location or contact card from Umbler compares as WhatsApp's 'unsupported' with no text
+    expect(pairUp([msg({ at: at(0), kind: 'unsupported', text: null })], [msg({ at: at(3), kind: 'unsupported', text: null })])[0]).not.toBeNull();
+  });
+
+  it('one to one in time order: a burst of equal texts pairs up; each takes the nearest free one, a tie the older', () => {
+    const ours = [msg({ at: at(0.5), text: 'ok' }), msg({ at: at(1.2), text: 'ok' })];
+    const pairs = pairUp([msg({ at: at(0), text: 'ok' }), msg({ at: at(1), text: 'ok' })], ours);
+    expect(pairs.map((p) => p?.row)).toEqual([ours[0], ours[1]]);
+    expect(pairUp([msg({ at: at(5), text: 'ok' }), msg({ at: at(5), text: 'ok' }), msg({ at: at(5), text: 'ok' })], [
+      msg({ at: at(7), text: 'ok' }),
+      msg({ at: at(3), text: 'ok' }),
+    ]).map((p) => p?.row.at.getTime())).toEqual([at(3).getTime(), at(7).getTime(), undefined]);
+  });
+});
+
+describe('matchCandidates (spec §8.1)', () => {
+  it("lists the contact's rows on the channel in the window, any chat, never notes; 'ours' are not imported, 'umbler' have no WhatsApp id", async () => {
+    const ctx = await makeTestCtx();
+    const s = await seedBasics(ctx);
+    const contactId = await newContact(ctx);
+    const other = await newContact(ctx);
+    const historyChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed', history: true });
+    const openChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId });
+    const otherChat = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId: other });
+    const row = async (chatId: string, sentAt: Date, extra: Partial<typeof messages.$inferInsert> = {}) => {
+      const [m] = await ctx.db
+        .insert(messages)
+        .values({ chatId, channelId: s.channelId, direction: 'in', kind: 'text', body: 'Bom dia', status: 'read', sentAt, ...extra })
+        .returning({ id: messages.id });
+      return m!.id;
+    };
+    const fromHistory = await row(historyChat, at(0), { externalId: 'wa-1' });
+    const fromOpen = await row(openChat, at(9), { externalId: 'wa-2' });
+    await row(openChat, at(1), { kind: 'note', direction: 'out' });
+    await row(openChat, at(30), { externalId: 'wa-3' }); // outside the window
+    await row(otherChat, at(0), { externalId: 'wa-4' });
+    const imported = await row(historyChat, at(2));
+    const importedWithId = await row(historyChat, at(3), { externalId: 'wa-5' });
+    await ctx.db.insert(umblerMap).values([
+      { kind: 'message', umblerId: 'U1', localId: imported },
+      { kind: 'message', umblerId: 'U2', localId: importedWithId },
+    ]);
+
+    const scope = { contactId, channelId: s.channelId };
+    const ids = async (side: 'ours' | 'umbler') => (await matchCandidates(ctx.db, scope, [{ at: at(5) }], side)).map((c) => c.id).sort();
+    expect(await ids('ours')).toEqual([fromHistory, fromOpen].sort());
+    expect(await ids('umbler')).toEqual([imported]);
+    expect(await matchCandidates(ctx.db, scope, [], 'ours')).toEqual([]);
+  });
+});
+```
+
+In `server/test/history/place.test.ts`, replace
+
+```ts
+import { botRuns, chatEvents, chats, contacts, messageEdits, messages } from '../../src/db/schema.js';
+```
+
+with
+
+```ts
+import { botRuns, chatEvents, chats, contacts, messageEdits, messages, umblerMap } from '../../src/db/schema.js';
+```
+
+and append at the end of the file:
+
+```ts
+describe('placeRecords and rows imported from Umbler (spec 2026-10-21 importar-umbler §8)', () => {
+  it('gives an Umbler row without WhatsApp id its id instead of inserting the same message twice', async () => {
+    const contactId = await newContact(ctx, { phone: PHONE });
+    const chatId = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed' });
+    const [fromUmbler] = await ctx.db
+      .insert(messages)
+      .values({ chatId, channelId: s.channelId, direction: 'in', kind: 'text', body: 'texto um', status: 'read', sentAt: at('2026-10-10T12:00:03Z') })
+      .returning();
+    await ctx.db.insert(umblerMap).values({ kind: 'message', umblerId: 'U1', localId: fromUmbler!.id });
+
+    const r = await place([rec({ id: 'um', at: '2026-10-10T12:00:00Z', text: 'texto um' }), rec({ id: 'dois', at: '2026-10-10T12:00:00Z', text: 'texto dois' })]);
+
+    expect(r.inserted).toBe(1);
+    const rows = await ctx.db.select().from(messages).orderBy(messages.body);
+    expect(rows.map((m) => [m.body, m.externalId, m.chatId === chatId])).toEqual([
+      ['texto dois', 'dois', false], // a new message: the history chat
+      ['texto um', 'um', true], // the Umbler row stays where it is, now with its WhatsApp id
+    ]);
+    // a second copy of the same rows finds the WhatsApp id and changes nothing
+    expect((await place([rec({ id: 'um', at: '2026-10-10T12:00:00Z', text: 'texto um' })])).inserted).toBe(0);
+    expect(await ctx.db.$count(messages)).toBe(2);
+  });
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npm test -w server -- test/importer/match.test.ts test/history/place.test.ts`
+Expected: FAIL. `match.js` does not exist, and the new `placeRecords` test inserts a second "texto um" (`inserted` is 2).
+
+- [ ] **Step 3: Write the match**
+
+Create `server/src/importer/match.ts`:
+
+```ts
+import { and, eq, gte, isNull, lte, ne } from 'drizzle-orm';
+import type { Db, Tx } from '../db/client.js';
+import { chats, messages, umblerMap } from '../db/schema.js';
+import { stripSignature } from '../messages/signature.js';
+
+// Spec 2026-10-21 importar-umbler §8: the Umbler API has no WhatsApp id, so an Umbler message and a WhatsApp-history row
+// are the same message when contact, channel, direction, class and text agree within MATCH_WINDOW_MS. Both directions
+// use this module: the Umbler import (importer/chats.ts) and the WhatsApp history copy (history/place.ts).
+
+/** §8.4, the calibration knob: the report shows the largest difference found. */
+export const MATCH_WINDOW_MS = 10_000;
+const MEDIA = new Set(['image', 'video', 'audio', 'document', 'sticker']);
+
+export interface Comparable {
+  direction: 'in' | 'out';
+  kind: string;
+  text: string | null;
+  at: Date;
+}
+export interface Candidate extends Comparable {
+  id: string;
+  chatId: string;
+  authorId: string | null;
+  mediaPath: string | null;
+}
+
+/** §8.3: the text both sides compare (media without caption = ''). */
+export function normalizeText(text: string | null): string {
+  return stripSignature((text ?? '').normalize('NFC').replace(/\r\n/g, '\n')).trim();
+}
+
+// §8.2-8.3: direction, class (a GIF is an image in Umbler and a video on WhatsApp: both are 'media') and text.
+// ponytail: compares the normalized strings, which is the same test as comparing their SHA-256 (spec §8.3).
+function signature(c: Comparable): string {
+  const cls = c.kind === 'text' ? 'text' : MEDIA.has(c.kind) ? 'media' : 'other';
+  return `${c.direction}|${cls}|${normalizeText(c.text)}`;
+}
+
+/**
+ * §8 one to one: `items` in time order; each takes the free candidate with the same signature and the smallest
+ * |Δt| ≤ MATCH_WINDOW_MS (a tie goes to the older one). The answer is aligned with `items` (null = no match).
+ * ponytail: O(items × candidates) per page (≤ 250 × a few hundred); index candidates by signature if a page gets slow.
+ */
+export function pairUp<C extends Comparable>(items: Comparable[], candidates: C[]): Array<{ row: C; diffMs: number } | null> {
+  const free = candidates.map((row) => ({ row, sig: signature(row), used: false }));
+  return items.map((item) => {
+    const sig = signature(item);
+    let best: (typeof free)[number] | null = null;
+    let bestDiff = Number.POSITIVE_INFINITY;
+    for (const f of free) {
+      if (f.used || f.sig !== sig) continue;
+      const diff = Math.abs(f.row.at.getTime() - item.at.getTime());
+      if (diff > MATCH_WINDOW_MS) continue;
+      if (diff < bestDiff || (diff === bestDiff && best && f.row.at < best.row.at)) {
+        best = f;
+        bestDiff = diff;
+      }
+    }
+    if (!best) return null;
+    best.used = true;
+    return { row: best.row, diffMs: bestDiff };
+  });
+}
+
+/**
+ * §8.1-8.2: the contact's rows on the channel, in any of its chats, in [first - 10 s, last + 10 s], notes left out.
+ * 'ours': rows not imported from Umbler (the Umbler import looks for them). 'umbler': rows imported from Umbler that have
+ * no WhatsApp id yet (the WhatsApp history copy looks for them).
+ */
+export async function matchCandidates(
+  db: Db | Tx,
+  scope: { contactId: string; channelId: string },
+  items: Array<{ at: Date }>,
+  side: 'ours' | 'umbler',
+): Promise<Candidate[]> {
+  if (items.length === 0) return [];
+  const times = items.map((i) => i.at.getTime());
+  const where = and(
+    eq(chats.contactId, scope.contactId),
+    eq(messages.channelId, scope.channelId),
+    ne(messages.kind, 'note'),
+    gte(messages.sentAt, new Date(Math.min(...times) - MATCH_WINDOW_MS)),
+    lte(messages.sentAt, new Date(Math.max(...times) + MATCH_WINDOW_MS)),
+  );
+  const imported = and(eq(umblerMap.kind, 'message'), eq(umblerMap.localId, messages.id));
+  const query = db
+    .select({
+      id: messages.id, chatId: messages.chatId, direction: messages.direction, kind: messages.kind, text: messages.body,
+      at: messages.sentAt, authorId: messages.authorId, mediaPath: messages.mediaPath,
+    })
+    .from(messages)
+    .innerJoin(chats, eq(chats.id, messages.chatId));
+  return side === 'ours'
+    ? await query.leftJoin(umblerMap, imported).where(and(where, isNull(umblerMap.localId)))
+    : await query.innerJoin(umblerMap, imported).where(and(where, isNull(messages.externalId)));
+}
+
+/** Any message imported from Umbler at all: without one, the history copy skips the reverse match (§8, one cheap read per batch). */
+export async function hasUmblerMessages(db: Db | Tx): Promise<boolean> {
+  const [row] = await db.select({ id: umblerMap.localId }).from(umblerMap).where(eq(umblerMap.kind, 'message')).limit(1);
+  return row !== undefined;
+}
+
+/**
+ * §8 the other way: a WhatsApp history message that is an Umbler row only gives it its WhatsApp id (counted as already
+ * there). Covers a QR read after the switch, when the phone sends the last ~3.5 months again. True when it claimed one.
+ */
+export async function claimUmblerTwin(
+  tx: Tx,
+  scope: { contactId: string; channelId: string },
+  ev: Comparable & { externalId: string },
+): Promise<boolean> {
+  const [pair] = pairUp([ev], await matchCandidates(tx, scope, [ev], 'umbler'));
+  if (!pair) return false;
+  await tx.update(messages).set({ externalId: ev.externalId }).where(eq(messages.id, pair.row.id));
+  return true;
+}
+```
+
+- [ ] **Step 4: Use it in `placeRecords`**
+
+In `server/src/history/place.ts`, replace
+
+```ts
+import { chats, deletedChats, messages } from '../db/schema.js';
+import { getDefaultSectorId } from '../inbox/chats.js';
+```
+
+with
+
+```ts
+import { chats, deletedChats, messages } from '../db/schema.js';
+import { claimUmblerTwin, hasUmblerMessages } from '../importer/match.js';
+import { getDefaultSectorId } from '../inbox/chats.js';
+```
+
+replace
+
+```ts
+    const deletedUntil = new Map(tombs.map((t) => [t.contactId, t.until]));
+```
+
+with
+
+```ts
+    const deletedUntil = new Map(tombs.map((t) => [t.contactId, t.until]));
+    // spec 2026-10-21 importar-umbler §8: rows copied from Umbler have no WhatsApp id; this copy gives them one
+    const umbler = await hasUmblerMessages(tx);
+```
+
+and replace
+
+```ts
+      const until = deletedUntil.get(contact.id);
+      if (until && ev.sentAt <= until) continue;
+```
+
+with
+
+```ts
+      const until = deletedUntil.get(contact.id);
+      if (until && ev.sentAt <= until) continue;
+      const twin = { direction: ev.direction, kind: ev.kind, text: ev.body, at: ev.sentAt, externalId: ev.externalId };
+      if (umbler && (await claimUmblerTwin(tx, { contactId: contact.id, channelId: channel.id }, twin))) continue;
+```
+
+- [ ] **Step 5: Run the tests and the type check**
+
+Run: `npm test -w server -- test/importer test/history`
+Expected: PASS.
+
+Run: `npm run typecheck -w server`
+Expected: no errors.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/src/importer/match.ts server/src/history/place.ts server/test/importer/match.test.ts server/test/history/place.test.ts
+git commit -m "feat(server): match Umbler messages with the WhatsApp history, and give Umbler rows their WhatsApp id" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 7: One Umbler message as one of our rows (`toIncoming`)
+
+The §7.7 mapping is a pure function, tested without a database.
+- Direction: the contact → `in`; `Member`, `Bot` and `External` (the office's phone) → `out`.
+- Status: `Read`/`Played` → `read`, `Received` → `delivered`, `Failed`/`Error` → `failed`, the rest → `sent`.
+- Notes: `isPrivate` → `note`, `out`, `sent`.
+- Text: an `out` message with `prefix` → `formatSignature(content, prefix)`. Media: `file.caption ?? content`.
+- Types: `Gif` → image, `File` → document; replies and a bot question with text → text; payment, order, poll, carousel, call attempt and unsupported → `unsupported` with `content`.
+- Location and contact card → text (decision §7.7). `matchKind`/`matchText` say how WhatsApp stores them (§8).
+- Reactions: the newest of each side.
+- Reply id, deleted, edited.
+- `Redacted` → `unsupported` with no text.
+
+Timeline items and loose `Reaction` items are no message at all.
+
+**Files:**
+- Modify: `server/src/importer/chats.ts` (imports; append the §7.7 section)
+- Test: `server/test/importer/incoming.test.ts` (create)
+
+**Interfaces:**
+- Consumes: Task 3 `UmblerMessage`; existing `formatSignature`, `messages` (for the `kind`/`status` types).
+- Produces: `Incoming`, `toIncoming`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `server/test/importer/incoming.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest';
+import { toIncoming } from '../../src/importer/chats.js';
+import type { UmblerMessage } from '../../src/importer/umbler.js';
+import { umblerMessage } from '../fakes/umbler-api.js';
+
+const AT = '2026-09-01T12:00:00Z';
+const m = (over: Record<string, unknown> = {}) => umblerMessage('U1', AT, over) as unknown as UmblerMessage;
+const file = (over: Record<string, unknown> = {}) => ({
+  url: 'https://utalk-wamedia.s3.amazonaws.com/x/y/z', contentType: 'image/jpeg', originalName: 'foto.jpg', originalSizeBytes: 1234,
+  caption: null, failDownload: false, ...over,
+});
+
+describe('toIncoming (spec 2026-10-21 importar-umbler §7.7)', () => {
+  it('direction and status: the contact is in; Member, Bot and External (the phone) are out', () => {
+    expect(toIncoming(m())).toMatchObject({ umblerId: 'U1', at: new Date(AT), direction: 'in', kind: 'text', body: 'texto U1', status: 'read', bot: false });
+    expect(toIncoming(m({ source: 'Member', sentByOrganizationMember: { id: 'M_ANA' } }))).toMatchObject({ direction: 'out', authorUmblerId: 'M_ANA' });
+    expect(toIncoming(m({ source: 'Bot' }))).toMatchObject({ direction: 'out', bot: true, authorUmblerId: null });
+    expect(toIncoming(m({ source: 'External' }))).toMatchObject({ direction: 'out', authorUmblerId: null });
+    const status = (messageState: string) => toIncoming(m({ messageState }))!.status;
+    expect(['Read', 'Played', 'Received', 'Failed', 'Error', 'Sent', 'Processing'].map(status)).toEqual([
+      'read', 'read', 'delivered', 'failed', 'failed', 'sent', 'sent',
+    ]);
+  });
+
+  it('text: an out message with prefix gets the signature line the client received; media: the caption wins', () => {
+    expect(toIncoming(m({ source: 'Member', prefix: 'Financeiro - Ana', content: 'Segue o boleto' }))!.body).toBe('*Financeiro - Ana:*\nSegue o boleto');
+    expect(toIncoming(m({ prefix: 'Maria', content: 'Oi' }))!.body).toBe('Oi'); // only the office signs
+    expect(toIncoming(m({ messageType: 'Image', content: 'texto', file: file({ caption: 'legenda' }) }))).toMatchObject({
+      kind: 'image', body: 'legenda', matchKind: 'image', matchText: 'legenda',
+      file: { url: 'https://utalk-wamedia.s3.amazonaws.com/x/y/z', mime: 'image/jpeg', name: 'foto.jpg', size: 1234 },
+    });
+    expect(toIncoming(m({ messageType: 'Image', content: 'só content', file: file() }))!.body).toBe('só content');
+    expect(toIncoming(m({ messageType: 'Image', file: file({ failDownload: true }) }))!.file!.url).toBeNull();
+  });
+
+  it('types: Gif is an image, File a document, replies and a bot question with text are text, the rest unsupported', () => {
+    const kind = (messageType: string, over: Record<string, unknown> = {}) => toIncoming(m({ messageType, file: file(), ...over }))?.kind;
+    expect(['Text', 'Url', 'ListReply', 'ButtonReply', 'QuickReply'].map((t) => kind(t))).toEqual(['text', 'text', 'text', 'text', 'text']);
+    expect(['Image', 'Gif', 'Video', 'Audio', 'Sticker', 'File'].map((t) => kind(t))).toEqual(['image', 'image', 'video', 'audio', 'sticker', 'document']);
+    expect(kind('List', { content: 'Escolha uma opção' })).toBe('text');
+    expect(kind('List', { content: null })).toBe('unsupported');
+    expect(['Payment', 'Order', 'Poll', 'Carousel', 'CallAttempt', 'Unsupported'].map((t) => kind(t))).toEqual(Array(6).fill('unsupported'));
+    expect(toIncoming(m({ messageType: 'Poll', content: 'Qual horário?' }))).toMatchObject({ body: 'Qual horário?', file: null });
+  });
+
+  it('a location and a contact card become text (decision §7.7), and compare as WhatsApp stores them (§8)', () => {
+    expect(toIncoming(m({ messageType: 'Location', location: { latitude: '-15.6', longitude: '-56.1', name: 'Escritório', address: null } }))).toMatchObject({
+      kind: 'text', body: 'Localização: Escritório https://maps.google.com/?q=-15.6,-56.1', matchKind: 'unsupported', matchText: null,
+    });
+    expect(toIncoming(m({ messageType: 'Location', location: { latitude: '1', longitude: '2' } }))!.body).toBe('Localização: https://maps.google.com/?q=1,2');
+    expect(toIncoming(m({ messageType: 'Contact', contacts: [{ name: 'Dr. Paulo', phoneNumbers: ['+55 65 3322-1100', '+55 65 99999-0000'] }] }))).toMatchObject({
+      kind: 'text', body: 'Contato: Dr. Paulo +55 65 3322-1100 +55 65 99999-0000', matchKind: 'unsupported',
+    });
+  });
+
+  it('a note is out and sent, and never compares with WhatsApp; reactions keep the newest of each side', () => {
+    expect(toIncoming(m({ isPrivate: true, source: 'Member', content: 'Ligar amanhã', messageState: 'Received' }))).toMatchObject({
+      kind: 'note', direction: 'out', status: 'sent', body: 'Ligar amanhã', matchKind: 'note',
+    });
+    const reactions = [
+      { emoji: '👍', source: 'Contact', eventAtUTC: '2026-09-01T12:01:00Z' },
+      { emoji: '❤️', source: 'Contact', eventAtUTC: '2026-09-01T12:03:00Z' },
+      { emoji: '🙏', source: 'External', eventAtUTC: '2026-09-01T12:02:00Z' },
+    ];
+    expect(toIncoming(m({ reactions }))).toMatchObject({ reaction: '❤️', officeReaction: '🙏' });
+    expect(toIncoming(m({ inReplyTo: { id: 'U0', chatId: 'X' } }))!.replyUmblerId).toBe('U0');
+  });
+
+  it('deleted, edited and redacted; timeline items and loose reactions are not messages', () => {
+    expect(toIncoming(m({ messageState: 'Deleted' }))).toMatchObject({ deletedAt: new Date(AT), body: 'texto U1' });
+    expect(toIncoming(m({ messageState: 'Edited', latestEdit: { senderAtUTC: '2026-09-01T12:05:00Z' } }))!.editedAt).toEqual(
+      new Date('2026-09-01T12:05:00Z'),
+    );
+    expect(toIncoming(m({ messageState: 'Edited' }))!.editedAt).toEqual(new Date(AT));
+    expect(toIncoming(m({ messageState: 'Redacted', messageType: 'Image', file: file() }))).toMatchObject({
+      kind: 'unsupported', body: null, redacted: true, file: null,
+    });
+    expect(toIncoming(m({ _t: 'ChatClosedMetadataModel' }))).toBeNull();
+    expect(toIncoming(m({ messageType: 'Reaction' }))).toBeNull();
+    expect(toIncoming(m({ _t: 'SentMessageModel' }))).not.toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npm test -w server -- test/importer/incoming.test.ts`
+Expected: FAIL. `toIncoming` is not exported by `chats.ts`.
+
+- [ ] **Step 3: Map the message**
+
+In `server/src/importer/chats.ts`, replace
+
+```ts
+import type { Query, UmblerClient, UmblerMessage } from './umbler.js';
+```
+
+with
+
+```ts
+import { messages } from '../db/schema.js';
+import { formatSignature } from '../messages/signature.js';
+import type { Query, UmblerClient, UmblerMessage } from './umbler.js';
+```
+
+and append:
+
+```ts
+// ---------- §7.7: one Umbler message as one of our rows ----------
+
+type Kind = (typeof messages.$inferSelect)['kind'];
+type Status = (typeof messages.$inferSelect)['status'];
+
+export interface Incoming {
+  umblerId: string;
+  at: Date;
+  direction: 'in' | 'out';
+  kind: Kind;
+  body: string | null;
+  /** §8.2: what the WhatsApp history stored for it (a location or a contact card is 'unsupported' with no text there) */
+  matchKind: Kind;
+  matchText: string | null;
+  authorUmblerId: string | null;
+  bot: boolean;
+  status: Status;
+  reaction: string | null;
+  officeReaction: string | null;
+  replyUmblerId: string | null;
+  deletedAt: Date | null;
+  editedAt: Date | null;
+  redacted: boolean;
+  file: { url: string | null; mime: string | null; name: string | null; size: number | null } | null;
+}
+
+const KEPT = new Set(['MessageModel', 'SentMessageModel']);
+const STATUS: Record<string, Status> = { Read: 'read', Played: 'read', Received: 'delivered', Failed: 'failed', Error: 'failed' };
+const TEXT_TYPES = new Set(['Text', 'Url', 'ListReply', 'ButtonReply', 'QuickReply']);
+const MEDIA_TYPES: Record<string, Kind> = { Image: 'image', Gif: 'image', Video: 'video', Audio: 'audio', Sticker: 'sticker', File: 'document' };
+
+function latestReaction(m: UmblerMessage, sources: string[]): string | null {
+  const list = (m.reactions ?? []).filter((r) => sources.includes(r.source ?? ''));
+  list.sort((a, b) => Date.parse(a.eventAtUTC) - Date.parse(b.eventAtUTC));
+  return list.at(-1)?.emoji ?? null;
+}
+
+function locationText(l: NonNullable<UmblerMessage['location']>): string {
+  const label = (l.name || l.address || '').trim();
+  return `Localização: ${label ? `${label} ` : ''}https://maps.google.com/?q=${l.latitude},${l.longitude}`;
+}
+
+function contactText(list: NonNullable<UmblerMessage['contacts']>): string {
+  return list.map((c) => ['Contato:', c.name?.trim(), ...(c.phoneNumbers ?? [])].filter(Boolean).join(' ')).join('\n');
+}
+
+/** §7.7; null for what is never a message of its own (timeline items, loose reactions). */
+export function toIncoming(m: UmblerMessage): Incoming | null {
+  if (!KEPT.has(m._t) || m.messageType === 'Reaction') return null;
+  const at = new Date(m.eventAtUTC);
+  const type = m.messageType ?? 'Unsupported';
+  const content = m.content ?? null;
+  const note = m.isPrivate === true;
+  const redacted = !note && m.messageState === 'Redacted';
+  const direction = note || m.source !== 'Contact' ? 'out' : 'in'; // Member, Bot and External (the phone) are the office
+  let kind: Kind;
+  let body: string | null;
+  let asStored: Kind | null = null; // how the WhatsApp history stores it, when that differs
+  if (note) {
+    kind = 'note';
+    body = content;
+  } else if (redacted) {
+    kind = 'unsupported';
+    body = null;
+  } else if (type === 'Location' && m.location) {
+    kind = 'text';
+    body = locationText(m.location);
+    asStored = 'unsupported';
+  } else if (type === 'Contact' && m.contacts?.length) {
+    kind = 'text';
+    body = contactText(m.contacts);
+    asStored = 'unsupported';
+  } else if (TEXT_TYPES.has(type) || (type === 'List' && content)) {
+    kind = 'text';
+    // the signature line the client received, as this system stores its own sends
+    body = direction === 'out' && m.prefix && content !== null ? formatSignature(content, m.prefix) : content;
+  } else if (MEDIA_TYPES[type]) {
+    kind = MEDIA_TYPES[type]!;
+    body = m.file?.caption ?? content;
+  } else {
+    kind = 'unsupported'; // Payment, Order, Poll, Carousel, CallAttempt, Unsupported
+    body = content;
+  }
+  const media = !note && !redacted && MEDIA_TYPES[type] !== undefined;
+  return {
+    umblerId: m.id,
+    at,
+    direction,
+    kind,
+    body,
+    matchKind: asStored ?? kind,
+    matchText: asStored ? null : body,
+    authorUmblerId: m.sentByOrganizationMember?.id ?? null,
+    bot: m.source === 'Bot',
+    status: note ? 'sent' : (STATUS[m.messageState ?? ''] ?? 'sent'),
+    reaction: latestReaction(m, ['Contact']),
+    officeReaction: latestReaction(m, ['Member', 'External']),
+    replyUmblerId: m.inReplyTo?.id ?? null,
+    deletedAt: m.messageState === 'Deleted' ? at : null,
+    editedAt: m.messageState === 'Edited' ? new Date(m.latestEdit?.senderAtUTC ?? m.eventAtUTC) : null,
+    redacted,
+    file: media
+      ? {
+          url: m.file?.failDownload ? null : (m.file?.url ?? null),
+          mime: m.file?.contentType ?? null,
+          name: m.file?.originalName ?? null,
+          size: m.file?.originalSizeBytes ?? null,
+        }
+      : null,
+  };
+}
+
+const byTime = (a: Incoming, b: Incoming) => a.at.getTime() - b.at.getTime() || a.umblerId.localeCompare(b.umblerId);
+```
+
+- [ ] **Step 4: Run the tests and the type check**
+
+Run: `npm test -w server -- test/importer/incoming.test.ts`
+Expected: PASS.
+
+Run: `npm run typecheck -w server`
+Expected: no errors.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/src/importer/chats.ts server/test/importer/incoming.test.ts
+git commit -m "feat(server): map an Umbler message to our message row (types, signature, notes, reactions, location, contact)" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 8: Copy one chat: finished, open, joined, and its files
+
+`importChat` copies one Umbler chat page by page (`Take=250`).
+
+**What is skipped, before any message call:**
+- a channel set to "Não importar";
+- a chat whose `umbler_map` row points at a chat that is gone, which was deleted here and never comes back;
+- a contact with no phone nor LID;
+- a finished closed chat (§9.2).
+
+A contact that only appears in a chat is created from `chat.contact` (§7.4).
+
+**How each page is written (§7.8):**
+1. Decide, reading only: what is mapped already, and what §8 matches. The match is Task 9; this task leaves it empty.
+2. Download the files of the new rows, and of the mapped rows whose file was unavailable. They go outside any transaction, 4 at a time, with the free space checked before each one.
+3. Write the page in one transaction:
+   - the chat, the first time;
+   - the rows and their `umbler_map` rows;
+   - the summary;
+   - the counters.
+
+**The chat, the first time (§7.6):**
+- Open, with no open chat of the contact here: open, in the mapped sector, owned by the mapped user only if active, keeping `waiting`, `waiting_since`, `private` and `unread`.
+- Open, with an open chat of the contact here: **join** it (decision). Ours keeps its sector, owner, privacy and `waiting`; `unread` adds up; the tags are united.
+- Finished: closed, with the original dates, the sector and owner (inactive too), `private`, and the `closed` event at `closedAtUTC` by `closedBy`.
+
+**When the chat is complete:**
+- the `waiting_since` fallback (the last contact message);
+- `umbler_imported` at `createdAtUTC`, once;
+- `done_at`, unless a file failed for now;
+- an open chat publishes `chat.updated` once.
+
+**A second run (§9.2):**
+- A finished open chat is read again from its last imported message − 1 ms.
+- An unfinished chat is read from the start. What is mapped is dropped, and its unavailable files are tried again.
+- The state, sector, owner and tags of an imported chat never change.
+
+A tombstone (`deleted_chats`) keeps out a new chat's messages up to `until`.
+
+**Files:**
+- Modify: `server/src/importer/chats.ts` (imports; append the files and chats sections)
+- Test: `server/test/importer/chats.test.ts` (create)
+
+**Interfaces:**
+- Consumes:
+  - Task 4 `upsertContact`; Task 7 `toIncoming`; Task 6 `Candidate`;
+  - Task 3 `maps`, `saveProgress`, `checkStop`, `isGone`, `UmblerError`;
+  - existing `messagePreview`, `saveMedia`, `stripSignature`.
+- Produces: `MIN_FREE_BYTES`, `importChat`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `server/test/importer/chats.test.ts`:
+
+```ts
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { and, asc, eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  botRuns, chatEvents, chatTags, chats, contacts, deletedChats, messages, sectors, tags, umblerMap, users,
+} from '../../src/db/schema.js';
+import { importChat } from '../../src/importer/chats.js';
+import { UmblerError, importCatalog, type ImportRun } from '../../src/importer/umbler.js';
+import { PDF, umblerChat, umblerMessage } from '../fakes/umbler-api.js';
+import { importWorld, runFor, type World } from './world.js';
+
+let w: World;
+let run: ImportRun;
+beforeEach(async () => {
+  w = await importWorld();
+  run = await runFor(w);
+  await importCatalog(run);
+});
+afterEach(async () => {
+  expect(w.fake.problems()).toEqual([]);
+  await w.fake.close();
+});
+
+type Obj = Record<string, unknown>;
+/** Puts a chat and its messages in the fake Umbler. */
+function given(chat: Obj, list: Obj[]): Obj {
+  w.fake.world.chats.push(chat);
+  w.fake.world.messages[chat.id as string] = list;
+  return chat;
+}
+const localOf = async (umblerId: string) =>
+  (await w.ctx.db.select().from(umblerMap).where(and(eq(umblerMap.kind, 'chat'), eq(umblerMap.umblerId, umblerId))))[0];
+const chatOf = async (umblerId: string) => {
+  const m = await localOf(umblerId);
+  return m ? (await w.ctx.db.select().from(chats).where(eq(chats.id, m.localId)))[0] : undefined;
+};
+const rowsOf = (chatId: string) => w.ctx.db.select().from(messages).where(eq(messages.chatId, chatId)).orderBy(asc(messages.sentAt));
+const eventsOf = (chatId: string) => w.ctx.db.select().from(chatEvents).where(eq(chatEvents.chatId, chatId)).orderBy(asc(chatEvents.createdAt));
+const userId = async (email: string) => (await w.ctx.db.select().from(users).where(eq(users.email, email)))[0]!.id;
+const sectorId = async (name: string) => (await w.ctx.db.select().from(sectors).where(eq(sectors.name, name)))[0]!.id;
+const tagId = async (name: string) => (await w.ctx.db.select().from(tags).where(eq(tags.name, name)))[0]!.id;
+const relativeCalls = () => w.fake.calls(/relative-messages/);
+const file = (name: string, over: Obj = {}) => ({
+  url: w.fake.fileUrl(name), contentType: 'application/pdf', originalName: name, originalSizeBytes: PDF.length, caption: null, failDownload: false,
+  ...over,
+});
+
+describe('a finished chat (spec 2026-10-21 importar-umbler §7.6, §7.7)', () => {
+  it('lands in Finalizados with its dates, sector, owner (inactive too), privacy, tags, messages and the closed event', async () => {
+    const chat = given(
+      umblerChat({
+        open: false, createdAtUTC: '2026-08-01T10:00:00Z', closedAtUTC: '2026-08-01T11:00:00Z', sector: { id: 'SEC3' },
+        organizationMember: { id: 'M_CARLA' }, private: true, tags: [{ id: 'TAG1' }], closedBy: { id: 'M_ANA' },
+      }),
+      [
+        umblerMessage('U1', '2026-08-01T10:00:00Z', { content: 'Bom dia, preciso de ajuda', messageState: 'Read' }),
+        umblerMessage('U2', '2026-08-01T10:01:00Z', {
+          source: 'Member', sentByOrganizationMember: { id: 'M_CARLA' }, prefix: 'Trabalhista - Carla', content: 'Claro!',
+          inReplyTo: { id: 'U1' }, messageState: 'Received', reactions: [{ emoji: '👍', source: 'Contact', eventAtUTC: '2026-08-01T10:02:00Z' }],
+        }),
+        umblerMessage('U3', '2026-08-01T10:03:00Z', { isPrivate: true, source: 'Member', sentByOrganizationMember: { id: 'M_ANA' }, content: 'Cliente antigo' }),
+        umblerMessage('U4', '2026-08-01T10:04:00Z', { content: 'apaguei', messageState: 'Deleted' }),
+        umblerMessage('U5', '2026-08-01T10:05:00Z', { source: 'Bot', content: 'Atendimento encerrado.' }),
+      ],
+    );
+
+    expect(await importChat(run, chat as never, 'closed')).toBe(true);
+
+    const local = (await chatOf(chat.id as string))!;
+    const carla = await userId('carla@antigo.test');
+    expect(local).toMatchObject({
+      state: 'closed', history: false, sectorId: await sectorId('Trabalhista'), ownerId: carla, private: true, unread: 0, waiting: false,
+      triagePending: false, createdAt: new Date('2026-08-01T10:00:00Z'), closedAt: new Date('2026-08-01T11:00:00Z'),
+      lastMessageAt: new Date('2026-08-01T10:05:00Z'), lastMessagePreview: 'Atendimento encerrado.',
+    });
+    expect((await w.ctx.db.select().from(chatTags).where(eq(chatTags.chatId, local.id))).map((t) => t.tagId)).toEqual([await tagId('Cliente')]);
+    const rows = await rowsOf(local.id);
+    expect(rows.map(({ direction, kind, body, authorId, status, externalId }) => ({ direction, kind, body, authorId, status, externalId }))).toEqual([
+      { direction: 'in', kind: 'text', body: 'Bom dia, preciso de ajuda', authorId: null, status: 'read', externalId: null },
+      { direction: 'out', kind: 'text', body: '*Trabalhista - Carla:*\nClaro!', authorId: carla, status: 'delivered', externalId: null },
+      { direction: 'out', kind: 'note', body: 'Cliente antigo', authorId: w.s.agentA.id, status: 'sent', externalId: null },
+      { direction: 'in', kind: 'text', body: 'apaguei', authorId: null, status: 'sent', externalId: null },
+      { direction: 'out', kind: 'text', body: 'Atendimento encerrado.', authorId: null, status: 'read', externalId: null },
+    ]);
+    expect(rows[1]).toMatchObject({ replyToId: rows[0]!.id, reaction: '👍', sentAt: new Date('2026-08-01T10:01:00Z') });
+    expect(rows[3]).toMatchObject({ deletedAt: new Date('2026-08-01T10:04:00Z'), deletedSource: 'contact' });
+    expect((await eventsOf(local.id)).map(({ kind, data, authorId, createdAt }) => ({ kind, data, authorId, createdAt }))).toEqual([
+      { kind: 'umbler_imported', data: { count: 5 }, authorId: null, createdAt: new Date('2026-08-01T10:00:00Z') },
+      { kind: 'closed', data: {}, authorId: w.s.agentA.id, createdAt: new Date('2026-08-01T11:00:00Z') },
+    ]);
+    expect((await localOf(chat.id as string))!.doneAt).not.toBeNull();
+    expect(run.progress.messages).toMatchObject({ total: 5, notes: 1, bot: 1, unknownAuthor: 0 });
+    expect(run.progress.chats.closed).toBe(1);
+    expect(w.ctx.hub.events.filter((e) => e.type === 'chat')).toEqual([]); // closed chats never publish
+    expect(await w.ctx.db.$count(contacts, eq(contacts.phone, '5565999998888'))).toBe(1); // created from chat.contact
+  });
+});
+
+describe('an open chat (§7.6)', () => {
+  it('keeps sector, active owner, waiting and unread; waiting_since falls back to the last contact message; publishes once', async () => {
+    const chat = given(umblerChat({ waiting: true, waitingSinceUTC: null, totalUnread: 2 }), [
+      umblerMessage('U1', '2026-10-20T10:00:00Z'),
+      umblerMessage('U2', '2026-10-20T10:01:00Z', { source: 'Member', sentByOrganizationMember: { id: 'M_ANA' } }),
+      umblerMessage('U3', '2026-10-20T10:02:00Z'),
+    ]);
+    const inactive = given(
+      umblerChat({
+        organizationMember: { id: 'M_CARLA' }, waiting: true, waitingSinceUTC: '2026-10-20T09:00:00Z',
+        contact: { id: 'C2', name: 'João Teste', phoneNumber: '5565988887777', lid: null },
+      }),
+      [umblerMessage('U9', '2026-10-20T09:00:00Z')],
+    );
+
+    await importChat(run, chat as never, 'open');
+    await importChat(run, inactive as never, 'open');
+
+    const local = (await chatOf(chat.id as string))!;
+    expect(local).toMatchObject({
+      state: 'open', sectorId: w.s.sectorA, ownerId: w.s.agentA.id, waiting: true, waitingSince: new Date('2026-10-20T10:02:00Z'),
+      unread: 2, private: false, triagePending: false, history: false, closedAt: null,
+    });
+    expect(await chatOf(inactive.id as string)).toMatchObject({ ownerId: null, waitingSince: new Date('2026-10-20T09:00:00Z') }); // to the queue
+    expect(w.ctx.hub.events.filter((e) => e.type === 'chat' && e.chatId === local.id)).toHaveLength(1);
+    expect(run.progress.chats).toMatchObject({ openCreated: 2, openMerged: 0 });
+    expect(w.ctx.wa.sent).toEqual([]); // no WhatsApp send, no triage, no bot
+    expect(await w.ctx.db.$count(botRuns)).toBe(0);
+  });
+
+  it("joins the contact's open chat here (decision §7.6): it stays the current one, unread adds up, tags unite", async () => {
+    const [maria] = await w.ctx.db.insert(contacts).values({ phone: '5565999998888', name: 'Maria' }).returning();
+    const [ours] = await w.ctx.db
+      .insert(chats)
+      .values({ contactId: maria!.id, channelId: w.s.channelId, sectorId: w.s.sectorB, ownerId: w.s.agentB.id, unread: 1, lastMessageAt: new Date('2026-10-21T08:00:00Z') })
+      .returning();
+    await w.ctx.db.insert(chatTags).values({ chatId: ours!.id, tagId: await tagId('Prospecção') });
+    const chat = given(umblerChat({ tags: [{ id: 'TAG1' }], totalUnread: 2, waiting: true, private: true }), [
+      umblerMessage('U1', '2026-10-20T10:00:00Z'),
+      umblerMessage('U2', '2026-10-20T10:01:00Z'),
+    ]);
+
+    await importChat(run, chat as never, 'open');
+
+    const local = (await chatOf(chat.id as string))!;
+    expect(local).toMatchObject({ id: ours!.id, sectorId: w.s.sectorB, ownerId: w.s.agentB.id, waiting: false, private: false, unread: 3 });
+    expect(local.lastMessageAt).toEqual(new Date('2026-10-20T10:01:00Z')); // the newest message it has
+    expect((await w.ctx.db.select().from(chatTags).where(eq(chatTags.chatId, ours!.id))).map((t) => t.tagId).sort()).toEqual(
+      [await tagId('Cliente'), await tagId('Prospecção')].sort(),
+    );
+    expect((await eventsOf(ours!.id)).map((e) => [e.kind, e.data])).toEqual([['umbler_imported', { count: 2, merged: true }]]);
+    expect(run.progress.chats).toMatchObject({ openCreated: 0, openMerged: 1 });
+  });
+});
+
+describe('files (§7.8)', () => {
+  it('downloads up to 4 at a time without Authorization; gone, missing or no link → unavailable; a temporary failure is retried later', async () => {
+    for (const name of ['a.pdf', 'b.pdf', 'c.pdf', 'd.pdf', 'e.pdf']) w.fake.world.files[name] = { body: PDF, mime: 'application/pdf', delayMs: 30 };
+    w.fake.world.files['proibido.pdf'] = { body: PDF, mime: 'application/pdf', status: 403 };
+    w.fake.faults.push({ path: /^\/s3\/e\.pdf$/, status: 500, times: 4 });
+    const doc = (id: string, minute: number, f: Obj) =>
+      umblerMessage(id, `2026-08-01T10:0${minute}:00Z`, { messageType: 'File', content: null, file: f });
+    const chat = given(umblerChat({ open: false, closedAtUTC: '2026-08-01T11:00:00Z' }), [
+      doc('U1', 1, file('a.pdf')), doc('U2', 2, file('b.pdf')), doc('U3', 3, file('c.pdf')), doc('U4', 4, file('d.pdf')),
+      doc('U5', 5, file('proibido.pdf')), doc('U6', 6, file('sumiu.pdf')), doc('U7', 7, file('x.pdf', { failDownload: true })),
+      doc('U8', 8, file('e.pdf')),
+    ]);
+
+    await importChat(run, chat as never, 'closed');
+
+    const local = (await chatOf(chat.id as string))!;
+    const rows = await rowsOf(local.id);
+    expect(rows.map((r) => [r.kind, r.mediaName, r.mediaStatus, r.mediaPath !== null])).toEqual([
+      ['document', 'a.pdf', null, true], ['document', 'b.pdf', null, true], ['document', 'c.pdf', null, true], ['document', 'd.pdf', null, true],
+      ['document', 'proibido.pdf', 'expired', false], ['document', 'sumiu.pdf', 'expired', false], ['document', 'x.pdf', 'expired', false],
+      ['document', 'e.pdf', 'expired', false],
+    ]);
+    expect(await readFile(join(w.ctx.config.mediaDir, rows[0]!.mediaPath!))).toEqual(PDF);
+    expect(rows[0]).toMatchObject({ mediaMime: 'application/pdf', mediaSize: PDF.length });
+    expect(rows[0]!.mediaSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(w.fake.stats.maxConcurrentFiles).toBeLessThanOrEqual(4);
+    expect(run.progress.files).toEqual({ saved: 4, bytes: 4 * PDF.length, expired: 4 });
+    expect((await localOf(chat.id as string))!.doneAt).toBeNull(); // e.pdf failed for now: not done
+
+    await importChat(run, chat as never, 'closed'); // a new run: reads the chat again and retries the unavailable ones
+    expect((await rowsOf(local.id)).map((r) => r.mediaStatus)).toEqual([null, null, null, null, 'expired', 'expired', 'expired', null]);
+    expect(run.progress.files).toEqual({ saved: 5, bytes: 5 * PDF.length, expired: 3 });
+    expect((await localOf(chat.id as string))!.doneAt).not.toBeNull();
+    expect(await w.ctx.db.$count(messages)).toBe(8);
+  });
+
+  it('stops with disk_full below 2 GB, before the file', async () => {
+    w.free.bytes = 1024 ** 3;
+    const chat = given(umblerChat({ open: false, closedAtUTC: '2026-08-01T11:00:00Z' }), [
+      umblerMessage('U1', '2026-08-01T10:00:00Z', { messageType: 'File', file: file('a.pdf') }),
+    ]);
+    const err = await importChat(run, chat as never, 'closed').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UmblerError);
+    expect(err).toMatchObject({ code: 'disk_full' });
+    expect(w.fake.calls(/^\/s3\//)).toEqual([]);
+    expect(await chatOf(chat.id as string)).toBeUndefined();
+  });
+});
+
+describe('what is skipped (§7.3, §7.6)', () => {
+  it('channel "Não importar", no message at all, no phone nor LID, the tombstone, and a chat deleted here', async () => {
+    const web = given(umblerChat({ channel: { _t: 'ChatWebsiteWidgetChannelReferenceModel', id: 'CH_WEB', name: 'Site' } }), [
+      umblerMessage('W1', '2026-08-01T10:00:00Z'),
+    ]);
+    const empty = given(umblerChat(), []);
+    const nobody = given(umblerChat({ contact: { id: 'C4', name: 'Sem Número', phoneNumber: null, lid: null } }), [umblerMessage('N1', '2026-08-01T10:00:00Z')]);
+    expect(await importChat(run, web as never, 'open')).toBe(false);
+    expect(await importChat(run, empty as never, 'open')).toBe(true);
+    expect(await importChat(run, nobody as never, 'open')).toBe(false);
+    expect(relativeCalls().map((r) => r.path)).toEqual([`/api/v1/chats/${empty.id}/relative-messages/`]);
+    expect(await chatOf(empty.id as string)).toBeUndefined();
+
+    // a chat an admin deleted here: messages up to the tombstone stay out of a new chat
+    const [maria] = await w.ctx.db.select().from(contacts).where(eq(contacts.phone, '5565999998888'));
+    await w.ctx.db.insert(deletedChats).values({ contactId: maria!.id, channelId: w.s.channelId, until: new Date('2026-08-01T10:30:00Z'), deletedAt: new Date() });
+    const after = given(umblerChat({ open: false, closedAtUTC: '2026-08-01T12:00:00Z' }), [
+      umblerMessage('T1', '2026-08-01T10:00:00Z'),
+      umblerMessage('T2', '2026-08-01T11:00:00Z'),
+    ]);
+    await importChat(run, after as never, 'closed');
+    const local = (await chatOf(after.id as string))!;
+    expect((await rowsOf(local.id)).map((r) => r.body)).toEqual(['texto T2']);
+
+    await w.ctx.db.delete(chats).where(eq(chats.id, local.id)); // deleted here: never comes back
+    expect(await importChat(run, after as never, 'closed')).toBe(false);
+    expect(await w.ctx.db.$count(chats, eq(chats.id, local.id))).toBe(0);
+    expect(run.progress.chats).toMatchObject({ skippedChannel: 1, skippedEmpty: 1, skippedNoAddress: 1, skippedDeleted: 1, closed: 1 });
+  });
+});
+
+describe('a second run (§9.2)', () => {
+  it('a finished closed chat costs no call; an open one is read again from its last message - 1 ms and only adds what is new', async () => {
+    const done = given(umblerChat({ open: false, closedAtUTC: '2026-08-01T11:00:00Z' }), [umblerMessage('D1', '2026-08-01T10:00:00Z')]);
+    await importChat(run, done as never, 'closed');
+    expect(await importChat(run, done as never, 'closed')).toBe(false);
+    expect(relativeCalls()).toHaveLength(1);
+
+    const open = given(umblerChat({ contact: { id: 'C2', name: 'João Teste', phoneNumber: '5565988887777', lid: null } }), [
+      umblerMessage('O1', '2026-10-20T10:00:00Z'),
+    ]);
+    await importChat(run, open as never, 'open');
+    w.fake.world.messages[open.id as string]!.push(umblerMessage('O2', '2026-10-20T10:05:00Z'));
+    open.sector = { id: 'SEC1' }; // changed in Umbler meanwhile: a new run never changes an imported chat
+    await importChat(run, open as never, 'open');
+
+    const local = (await chatOf(open.id as string))!;
+    expect((await rowsOf(local.id)).map((r) => r.body)).toEqual(['texto O1', 'texto O2']);
+    expect(local.sectorId).toBe(w.s.sectorA);
+    expect(relativeCalls().at(-1)!.query.get('FromEventUTC')).toBe('2026-10-20T09:59:59.999Z');
+    expect((await eventsOf(local.id)).filter((e) => e.kind === 'umbler_imported')).toHaveLength(1);
+  });
+
+  it('reads 250 at a time, the next page from the last eventAtUTC - 1 ms, dropping ids it has seen', async () => {
+    const list = Array.from({ length: 260 }, (_, i) => umblerMessage(`P${i}`, new Date(Date.UTC(2026, 7, 1, 10, 0, 0) + i * 1000).toISOString()));
+    const chat = given(umblerChat({ open: false, closedAtUTC: '2026-08-01T12:00:00Z' }), list);
+    await importChat(run, chat as never, 'closed');
+    expect(relativeCalls().map((r) => [r.query.get('FromEventUTC'), r.query.get('Take')])).toEqual([
+      ['2000-01-01T00:00:00.000Z', '250'],
+      ['2026-08-01T10:04:08.999Z', '250'],
+    ]);
+    expect(await w.ctx.db.$count(messages)).toBe(260);
+    expect(run.progress.messages.total).toBe(260);
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npm test -w server -- test/importer/chats.test.ts`
+Expected: FAIL. `importChat` is not exported by `chats.ts`.
+
+- [ ] **Step 3: Copy the chat**
+
+In `server/src/importer/chats.ts`, replace
+
+```ts
+import { messages } from '../db/schema.js';
+import { formatSignature } from '../messages/signature.js';
+import type { Query, UmblerClient, UmblerMessage } from './umbler.js';
+```
+
+with
+
+```ts
+import { randomUUID } from 'node:crypto';
+import { and, count, desc, eq, inArray, isNull, max, min, ne, sql } from 'drizzle-orm';
+import type { Tx } from '../db/client.js';
+import { chatEvents, chatTags, chats, contacts, deletedChats, messages, umblerMap } from '../db/schema.js';
+import { messagePreview } from '../messages/dto.js';
+import { saveMedia } from '../messages/media.js';
+import { formatSignature, stripSignature } from '../messages/signature.js';
+import type { Candidate } from './match.js';
+import {
+  UmblerError, checkStop, isGone, maps, saveProgress, upsertContact, type ImportRun, type Query, type UmblerChat, type UmblerClient,
+  type UmblerMessage,
+} from './umbler.js';
+```
+
+and append:
+
+```ts
+// ---------- files (§7.8) ----------
+
+const FILE_CONCURRENCY = 4;
+/** §7.8: below this, the import stops with disk_full before the next file. */
+export const MIN_FREE_BYTES = 2 * 1024 ** 3;
+
+type Saved = { path: string; size: number; sha256: string; mime: string };
+type FileOutcome = Saved | 'expired' | 'temporary';
+interface FileJob { key: string; file: NonNullable<Incoming['file']> }
+
+const isSaved = (f: FileOutcome | undefined): f is Saved => typeof f === 'object';
+const mediaOf = (s: Saved) => ({ mediaPath: s.path, mediaSize: s.size, mediaSha256: s.sha256, mediaMime: s.mime, mediaStatus: null });
+
+/** Up to 4 downloads at a time, outside any transaction; the free space is checked before each file. */
+async function downloadFiles(run: ImportRun, jobs: FileJob[]): Promise<Map<string, FileOutcome>> {
+  const out = new Map<string, FileOutcome>();
+  const dir = run.ctx.config.mediaDir;
+  let next = 0;
+  let full = false;
+  async function worker(): Promise<void> {
+    while (!full && next < jobs.length) {
+      const job = jobs[next++]!;
+      if (!job.file.url) {
+        out.set(job.key, 'expired'); // no link, or Umbler itself failed to download it
+        continue;
+      }
+      if ((await run.freeBytes(dir)) < MIN_FREE_BYTES) {
+        full = true;
+        throw new UmblerError('disk_full');
+      }
+      const got = await run.client.file(job.file.url);
+      if ('failed' in got) {
+        out.set(job.key, got.failed === 'gone' ? 'expired' : 'temporary');
+        continue;
+      }
+      const mime = job.file.mime || got.mime;
+      out.set(job.key, { ...(await saveMedia(dir, got.data, mime, job.file.name)), mime });
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(FILE_CONCURRENCY, jobs.length) }, worker));
+  return out;
+}
+
+// ---------- chats (§7.6) ----------
+
+interface ChatRun {
+  state: 'open' | 'closed';
+  localId: string | null; // our chat: created, joined (merged) or mapped by an earlier run
+  merged: boolean;
+  contactId: string;
+  channelId: string;
+  until: Date | null; // deleted_chats tombstone of a new chat (§7.6)
+  temporary: boolean; // a file failed for now: no done_at, so a new run retries it (§7.8)
+}
+
+/** The contact of the chat: mapped, or created from chat.contact (§7.4). Null = skip (deleted here, or no phone nor LID). */
+async function contactOf(run: ImportRun, chat: UmblerChat): Promise<string | null> {
+  const { db } = run.ctx;
+  const p = run.progress;
+  const [mapped] = await db
+    .select({ localId: umblerMap.localId })
+    .from(umblerMap)
+    .where(and(eq(umblerMap.kind, 'contact'), eq(umblerMap.umblerId, chat.contact.id)));
+  if (mapped) {
+    const [found] = await db.select({ id: contacts.id }).from(contacts).where(eq(contacts.id, mapped.localId));
+    if (!found) p.chats.skippedDeleted += 1; // the contact was deleted here: it does not come back
+    return found?.id ?? null;
+  }
+  const id = await db.transaction(async (tx) => {
+    const created = await upsertContact(tx, chat.contact, p.contacts);
+    await saveProgress(tx, run);
+    return created;
+  });
+  if (!id) p.chats.skippedNoAddress += 1;
+  return id;
+}
+
+async function lastImportedAt(run: ImportRun, chatId: string): Promise<Date | null> {
+  const [row] = await run.ctx.db
+    .select({ at: max(messages.sentAt) })
+    .from(messages)
+    .innerJoin(umblerMap, and(eq(umblerMap.kind, 'message'), eq(umblerMap.localId, messages.id)))
+    .where(eq(messages.chatId, chatId));
+  return row?.at ?? null;
+}
+
+/** §7.6: a new open chat (or the contact's open chat here: join), or a closed one in Finalizados with its `closed` event. */
+async function createChat(tx: Tx, run: ImportRun, chat: UmblerChat, st: ChatRun): Promise<string> {
+  const m = maps(run);
+  const p = run.progress;
+  const sectorId = (chat.sector && m.sectors[chat.sector.id]) || m.defaultSector;
+  const member = chat.organizationMember ? m.members[chat.organizationMember.id] : undefined;
+  const createdAt = new Date(chat.createdAtUTC);
+  const base = {
+    id: randomUUID(), contactId: st.contactId, channelId: st.channelId, sectorId, private: chat.private ?? false,
+    triagePending: false, history: false, createdAt,
+  };
+  let chatId: string;
+  if (st.state === 'open') {
+    const [row] = await tx
+      .insert(chats)
+      .values({
+        ...base,
+        ownerId: member?.active ? member.id : null, // inactive or "Sem atendente": the sector's queue
+        state: 'open',
+        waiting: chat.waiting ?? false,
+        waitingSince: chat.waiting && chat.waitingSinceUTC ? new Date(chat.waitingSinceUTC) : null,
+        unread: chat.totalUnread ?? 0,
+      })
+      .onConflictDoNothing() // chats_one_open_per_contact_channel
+      .returning({ id: chats.id });
+    if (row) {
+      chatId = row.id;
+      p.chats.openCreated += 1;
+    } else {
+      // decision §7.6: join. The chat here stays the current one (sector, owner, privacy, waiting); unread adds up.
+      const [open] = await tx
+        .select({ id: chats.id })
+        .from(chats)
+        .where(and(eq(chats.contactId, st.contactId), eq(chats.channelId, st.channelId), eq(chats.state, 'open')));
+      if (!open) throw new Error('umbler: open chat insert conflicted but none was found');
+      chatId = open.id;
+      await tx.update(chats).set({ unread: sql`${chats.unread} + ${chat.totalUnread ?? 0}` }).where(eq(chats.id, chatId));
+      st.merged = true;
+      p.chats.openMerged += 1;
+    }
+  } else {
+    const closedAt = chat.closedAtUTC ? new Date(chat.closedAtUTC) : createdAt;
+    const [row] = await tx
+      .insert(chats)
+      .values({ ...base, ownerId: member?.id ?? null, state: 'closed', waiting: false, unread: 0, closedAt })
+      .returning({ id: chats.id });
+    chatId = row!.id;
+    const closedBy = (chat.closedBy && m.members[chat.closedBy.id]?.id) || null;
+    // "Conversa finalizada por X" at the original time (addEvent would stamp clock_timestamp())
+    await tx.insert(chatEvents).values({ id: randomUUID(), chatId, kind: 'closed', data: {}, authorId: closedBy, createdAt: closedAt });
+    p.chats.closed += 1;
+  }
+  const tagIds = [...new Set((chat.tags ?? []).flatMap((t) => (m.tags[t.id] ? [m.tags[t.id]!] : [])))];
+  if (tagIds.length) await tx.insert(chatTags).values(tagIds.map((tagId) => ({ chatId, tagId }))).onConflictDoNothing();
+  await tx.insert(umblerMap).values({ kind: 'chat', umblerId: chat.id, localId: chatId });
+  return chatId;
+}
+
+/**
+ * last_message_at / preview from the newest message that is not a note. A WhatsApp-history chat also spans its
+ * messages, and is deleted when a match took its last one (§8).
+ */
+async function refreshChat(tx: Tx, chatId: string): Promise<'removed' | 'open' | 'closed'> {
+  const [chat] = await tx.select({ state: chats.state, history: chats.history }).from(chats).where(eq(chats.id, chatId));
+  if (!chat) return 'removed';
+  const [last] = await tx
+    .select({ kind: messages.kind, body: messages.body, direction: messages.direction, sentAt: messages.sentAt })
+    .from(messages)
+    .where(and(eq(messages.chatId, chatId), ne(messages.kind, 'note')))
+    .orderBy(desc(messages.sentAt))
+    .limit(1);
+  const patch: Partial<typeof chats.$inferInsert> = {
+    lastMessageAt: last?.sentAt ?? null,
+    // the preview is unsigned, as for this system's own sends
+    lastMessagePreview: last ? messagePreview(last.kind, last.direction === 'out' && last.body ? stripSignature(last.body) : last.body) : null,
+  };
+  if (chat.history) {
+    const [span] = await tx.select({ first: min(messages.sentAt), last: max(messages.sentAt) }).from(messages).where(eq(messages.chatId, chatId));
+    if (!span?.first) {
+      await tx.delete(chats).where(eq(chats.id, chatId));
+      return 'removed';
+    }
+    patch.createdAt = span.first;
+    patch.closedAt = span.last;
+  }
+  await tx.update(chats).set(patch).where(eq(chats.id, chatId));
+  return chat.state;
+}
+
+async function replyOf(tx: Tx, i: Incoming, page: Map<string, string>): Promise<string | null> {
+  if (!i.replyUmblerId) return null;
+  const here = page.get(i.replyUmblerId);
+  if (here) return here;
+  const [row] = await tx
+    .select({ id: messages.id })
+    .from(umblerMap)
+    .innerJoin(messages, eq(messages.id, umblerMap.localId))
+    .where(and(eq(umblerMap.kind, 'message'), eq(umblerMap.umblerId, i.replyUmblerId)));
+  return row?.id ?? null; // §7.7: quoted message imported already (any chat), else none
+}
+
+/** §7.8 (1) decide reading only, (2) download outside any transaction, (3) write the page in one transaction. */
+async function placePage(run: ImportRun, chat: UmblerChat, st: ChatRun, all: Incoming[]): Promise<void> {
+  const { ctx } = run;
+  const m = maps(run);
+  const p = run.progress;
+  const known = new Set(run.analysis.members.map((x) => x.id));
+  const items = !st.localId && st.until ? all.filter((i) => i.at > st.until!) : all; // tombstone: only for a new chat
+  if (items.length === 0) return;
+
+  // (1) what is in umbler_map already (a gone local row stays gone), and what §8 matches
+  const mappedRows = await ctx.db
+    .select({ umblerId: umblerMap.umblerId, id: messages.id, mediaPath: messages.mediaPath, mediaStatus: messages.mediaStatus })
+    .from(umblerMap)
+    .leftJoin(messages, eq(messages.id, umblerMap.localId))
+    .where(and(eq(umblerMap.kind, 'message'), inArray(umblerMap.umblerId, items.map((i) => i.umblerId))));
+  const mapped = new Map(mappedRows.map((r) => [r.umblerId, r]));
+  const fresh = items.filter((i) => !mapped.has(i.umblerId));
+  const match = new Map<string, { row: Candidate; diffMs: number }>(); // the §8 match with the WhatsApp history: next task
+
+  // (2) files: new rows, matched rows without a file (§7.8 "ganho"), and mapped rows whose file was unavailable
+  const jobs: FileJob[] = [];
+  for (const i of fresh) if (i.file && !match.get(i.umblerId)?.row.mediaPath) jobs.push({ key: i.umblerId, file: i.file });
+  const retry = items.filter((i) => {
+    const r = mapped.get(i.umblerId);
+    return i.file?.url && r?.id && !r.mediaPath && r.mediaStatus === 'expired';
+  });
+  for (const i of retry) jobs.push({ key: i.umblerId, file: i.file! });
+  if (fresh.length === 0 && retry.length === 0) return; // a page read again on a new run: nothing to write
+  const files = await downloadFiles(run, jobs);
+  if ([...files.values()].includes('temporary')) st.temporary = true;
+
+  // (3) one transaction for the page
+  const removed: string[] = [];
+  const openSources: string[] = [];
+  await ctx.db.transaction(async (tx) => {
+    st.localId ??= await createChat(tx, run, chat, st);
+    const chatId = st.localId;
+    const page = new Map<string, string>();
+    const sources = new Set<string>();
+    for (const i of fresh) {
+      let author: string | null = null;
+      if (i.authorUmblerId) {
+        author = m.members[i.authorUmblerId]?.id ?? null;
+        if (!known.has(i.authorUmblerId)) p.messages.unknownAuthor += 1; // removed from Umbler, or an AI agent (§7.2)
+      }
+      const file = files.get(i.umblerId);
+      const pair = match.get(i.umblerId);
+      let id: string;
+      if (pair) {
+        // §8: nothing is inserted; our row keeps its id, WhatsApp id, status and file, and moves to the imported chat
+        id = pair.row.id;
+        await tx
+          .update(messages)
+          .set({
+            chatId,
+            authorId: pair.row.authorId ?? author,
+            ...(i.matchKind !== i.kind ? { kind: i.kind, body: i.body } : {}), // location / contact card: the §7.7 text
+            ...(isSaved(file) ? mediaOf(file) : {}),
+          })
+          .where(eq(messages.id, id));
+        if (pair.row.chatId !== chatId) sources.add(pair.row.chatId);
+        p.messages.matched += 1;
+        p.messages.maxMatchDiffMs = Math.max(p.messages.maxMatchDiffMs, pair.diffMs);
+      } else {
+        id = randomUUID();
+        await tx.insert(messages).values({
+          id, chatId, channelId: st.channelId, direction: i.direction, kind: i.kind, body: i.body,
+          mediaName: i.file?.name ?? null,
+          mediaMime: i.file ? (isSaved(file) ? file.mime : i.file.mime) : null,
+          mediaSize: i.file ? (isSaved(file) ? file.size : i.file.size) : null,
+          mediaPath: isSaved(file) ? file.path : null,
+          mediaSha256: isSaved(file) ? file.sha256 : null,
+          mediaStatus: i.file && !isSaved(file) ? 'expired' : null, // "Arquivo não está mais disponível…"
+          authorId: author, replyToId: await replyOf(tx, i, page), externalId: null,
+          reaction: i.reaction, officeReaction: i.officeReaction, status: i.status,
+          deletedAt: i.deletedAt, deletedSource: i.deletedAt ? (i.direction === 'in' ? 'contact' : 'office') : null,
+          editedAt: i.editedAt, sentAt: i.at, createdAt: i.at,
+        });
+      }
+      await tx.insert(umblerMap).values({ kind: 'message', umblerId: i.umblerId, localId: id }).onConflictDoNothing();
+      page.set(i.umblerId, id);
+      p.messages.total += 1;
+      if (i.kind === 'note') p.messages.notes += 1;
+      if (i.bot) p.messages.bot += 1;
+      if (i.redacted) p.messages.redacted += 1;
+      if (isSaved(file)) {
+        p.files.saved += 1;
+        p.files.bytes += file.size;
+      } else if (i.file && !(pair?.row.mediaPath)) {
+        p.files.expired += 1;
+      }
+    }
+    for (const i of retry) {
+      const file = files.get(i.umblerId);
+      if (!isSaved(file)) continue;
+      await tx.update(messages).set(mediaOf(file)).where(and(eq(messages.id, mapped.get(i.umblerId)!.id!), isNull(messages.mediaPath)));
+      p.files.saved += 1;
+      p.files.bytes += file.size;
+      p.files.expired -= 1;
+    }
+    await refreshChat(tx, chatId);
+    for (const id of sources) {
+      const r = await refreshChat(tx, id);
+      if (r === 'removed') removed.push(id);
+      else if (r === 'open') openSources.push(id);
+    }
+    await saveProgress(tx, run);
+  });
+  for (const id of removed) ctx.hub.publishChatRemoved(id);
+  for (const id of openSources) await ctx.hub.publishChat(id);
+}
+
+/** The first time the chat is complete: the waiting_since fallback (§7.6) and "Conversa importada do Umbler Talk". */
+async function finishChat(run: ImportRun, chat: UmblerChat, st: ChatRun): Promise<void> {
+  const { ctx } = run;
+  if (!st.localId) {
+    run.progress.chats.skippedEmpty += 1; // no message at all (§7.6)
+    await saveProgress(ctx.db, run);
+    return;
+  }
+  const chatId = st.localId;
+  await ctx.db.transaction(async (tx) => {
+    const [event] = await tx
+      .select({ id: chatEvents.id })
+      .from(chatEvents)
+      .where(and(eq(chatEvents.chatId, chatId), eq(chatEvents.kind, 'umbler_imported')));
+    if (!event) {
+      if (st.state === 'open' && !st.merged) {
+        const lastIn = sql`(select max(${messages.sentAt}) from ${messages} where ${messages.chatId} = ${chatId} and ${messages.direction} = 'in')`;
+        await tx.update(chats).set({ waitingSince: lastIn }).where(and(eq(chats.id, chatId), eq(chats.waiting, true), isNull(chats.waitingSince)));
+      }
+      const [{ n }] = await tx
+        .select({ n: count() })
+        .from(umblerMap)
+        .innerJoin(messages, eq(messages.id, umblerMap.localId))
+        .where(and(eq(umblerMap.kind, 'message'), eq(messages.chatId, chatId)));
+      await tx.insert(chatEvents).values({
+        id: randomUUID(), chatId, kind: 'umbler_imported', data: st.merged ? { count: n, merged: true } : { count: n },
+        authorId: null, createdAt: new Date(chat.createdAtUTC),
+      });
+    }
+    if (!st.temporary) {
+      await tx.update(umblerMap).set({ doneAt: new Date() }).where(and(eq(umblerMap.kind, 'chat'), eq(umblerMap.umblerId, chat.id)));
+    }
+  });
+  if (st.state === 'open') await ctx.hub.publishChat(chatId); // §7.6: it shows up in the Entrada; closed ones never publish
+}
+
+/**
+ * §7.6: copies one Umbler chat page by page (Take=250). Returns false when it made no message call (channel "Não
+ * importar", deleted here, no phone nor LID, or a finished closed chat).
+ */
+export async function importChat(run: ImportRun, chat: UmblerChat, state: 'open' | 'closed'): Promise<boolean> {
+  const { ctx } = run;
+  const p = run.progress;
+  const channelId = run.mapping.channels[chat.channel.id];
+  if (!channelId || channelId === 'none') {
+    p.chats.skippedChannel += 1;
+    return false;
+  }
+  const [mapped] = await ctx.db
+    .select()
+    .from(umblerMap)
+    .where(and(eq(umblerMap.kind, 'chat'), eq(umblerMap.umblerId, chat.id)));
+  if (mapped) {
+    const [local] = await ctx.db.select({ id: chats.id }).from(chats).where(eq(chats.id, mapped.localId));
+    if (!local) {
+      p.chats.skippedDeleted += 1; // deleted here: never comes back
+      return false;
+    }
+    if (mapped.doneAt && state === 'closed') return false; // §9.2: no message call
+  }
+  const contactId = await contactOf(run, chat);
+  if (!contactId) return false;
+  const [tomb] = mapped
+    ? []
+    : await ctx.db
+        .select({ until: max(deletedChats.until) })
+        .from(deletedChats)
+        .where(and(eq(deletedChats.contactId, contactId), eq(deletedChats.channelId, channelId)));
+  const st: ChatRun = {
+    state, localId: mapped?.localId ?? null, merged: false, contactId, channelId, until: tomb?.until ?? null, temporary: false,
+  };
+  // §9.2: a finished open chat is read again from its last imported message - 1 ms; an unfinished one from the start
+  // (what is mapped is dropped, and its unavailable files are tried again)
+  const last = mapped?.doneAt ? await lastImportedAt(run, mapped.localId) : null;
+  let from = last ? new Date(last.getTime() - 1) : new Date(FIRST_EVENT);
+  const seen = new Set<string>();
+  for (;;) {
+    checkStop(run);
+    let page: MessagePage;
+    try {
+      page = await fetchMessagePage(run.client, run.org, chat.id, from);
+    } catch (err) {
+      if (!isGone(err)) throw err;
+      p.gone += 1; // deleted in Umbler during the copy
+      return true;
+    }
+    if (page.hasMessagesBeforeAllowedOrganizationPlan) p.planLimited = true;
+    const list = page.messages ?? [];
+    const fresh = list.filter((x) => !seen.has(x.id));
+    for (const x of fresh) seen.add(x.id);
+    const items = fresh.map(toIncoming).filter((i): i is Incoming => i !== null).sort(byTime);
+    await placePage(run, chat, st, items);
+    // the limit may or may not be inclusive: next page from the last one - 1 ms, ids already seen dropped (§4)
+    if (list.length < MESSAGES_TAKE || fresh.length === 0) break;
+    from = new Date(Math.max(...list.map((x) => Date.parse(x.eventAtUTC))) - 1);
+  }
+  await finishChat(run, chat, st);
+  return true;
+}
+```
+
+- [ ] **Step 4: Run the tests and the type check**
+
+Run: `npm test -w server -- test/importer`
+Expected: PASS.
+
+Run: `npm run typecheck -w server`
+Expected: no errors.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/src/importer/chats.ts server/test/importer/chats.test.ts
+git commit -m "feat(server): copy an Umbler chat (finished, open or joined) with its messages and files" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
