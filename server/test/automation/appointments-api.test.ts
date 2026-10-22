@@ -1,3 +1,5 @@
+// Reminder days are office-zone days: must not depend on the host zone. Set before anything reads the zone.
+process.env.TZ = 'Asia/Tokyo';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';

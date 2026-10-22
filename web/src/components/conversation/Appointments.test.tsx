@@ -152,6 +152,7 @@ describe('AppointmentDialog (spec 2026-10-21 compromissos §3.1–3.3)', () => {
     renderUi(<AppointmentDialog onClose={onClose} />);
     const client = await screen.findByLabelText('Cliente');
     expect(client.getAttribute('placeholder')).toBe('Nome ou telefone');
+    expect(screen.queryByText(/Vai sair assim/)).toBeNull(); // no client yet: nothing to fill {nome} with
     fireEvent.change(client, { target: { value: 'M' } });
     fireEvent.change(screen.getByLabelText('Título'), { target: { value: 'Retorno de documento' } });
     fireEvent.change(when(), { target: { value: '2026-10-25T14:00' } });
@@ -189,6 +190,17 @@ describe('AppointmentDialog (spec 2026-10-21 compromissos §3.1–3.3)', () => {
   });
 });
 
+describe('AppointmentDialog defaults error', () => {
+  it('offers Fechar when the default reminders fail to load', async () => {
+    stubFetch({});
+    const onClose = vi.fn();
+    renderUi(<AppointmentDialog chatId="c1" contactName="Maria Cliente" onClose={onClose} />);
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar' }));
+    expect(onClose).toHaveBeenCalled();
+  });
+});
+
 describe('ChatAppointmentsDialog (spec §3.4)', () => {
   it('lists the contact’s upcoming appointments, with Editar/Cancelar only where allowed, and cancels after confirming', async () => {
     stubFetch({
@@ -219,5 +231,16 @@ describe('ChatAppointmentsDialog (spec §3.4)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Novo compromisso' }));
     expect(await screen.findByRole('dialog', { name: 'Novo compromisso' })).toBeTruthy();
     expect(await screen.findByRole('group', { name: 'Lembrete 1' })).toBeTruthy();
+  });
+
+  it('Esc (a cancelable cancel event) on the inner form closes only it; "Compromissos de …" stays open', async () => {
+    stubFetch({ 'GET /api/chats/c1/appointments': [], 'GET /api/settings/appointment-reminders': DEFAULT_APPOINTMENT_REMINDERS });
+    renderUi(<ChatAppointmentsDialog chat={CHAT} onClose={() => {}} />);
+    await screen.findByText('Nenhum compromisso marcado com este cliente.');
+    fireEvent.click(screen.getByRole('button', { name: 'Novo compromisso' }));
+    const inner = await screen.findByRole('dialog', { name: 'Novo compromisso' });
+    expect(fireEvent(inner, new Event('cancel', { bubbles: true, cancelable: true }))).toBe(false); // preventDefault was called
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Novo compromisso' })).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Compromissos de Maria Cliente' })).toBeTruthy();
   });
 });

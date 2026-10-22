@@ -203,19 +203,20 @@ async function recalcReminders(tx: Tx, a: AppointmentRow, name: string | null, n
     .where(eq(appointmentReminders.appointmentId, a.id));
   for (const { r, scheduledId, status, sendAt: oldSendAt } of rows) {
     if (scheduledId && status !== 'pending') continue; // out or going out: history, and it must not block the edit
-    const problem = reminderTextProblem(r.text, name); // the contact may have lost its name since (decision 6)
-    if (problem) throw badRequest(problem);
     const sendAt = reminderSendAt(a.startsAt, r.amount, r.unit);
-    const body = filled(r.text, a, name);
     const fits = !scheduleTimeProblem(sendAt, now);
-    if (!scheduledId) {
-      // decision 9: the appointment's author and signature, also when an admin edits
-      if (fits) await tx.insert(scheduledMessages).values({ chatId: a.chatId, authorId: a.authorId, body, signature: a.signature, sendAt, reminderId: r.id });
+    const stillPending = scheduledId ? and(eq(scheduledMessages.id, scheduledId), eq(scheduledMessages.status, 'pending')) : undefined;
+    const write = fits || (!!scheduledId && sendAt.getTime() === oldSendAt!.getTime());
+    if (!write) {
+      if (stillPending) await tx.delete(scheduledMessages).where(stillPending); // back to "Não criado"; nothing points at a row that never went out
       continue;
     }
-    const stillPending = and(eq(scheduledMessages.id, scheduledId), eq(scheduledMessages.status, 'pending'));
-    if (fits || sendAt.getTime() === oldSendAt!.getTime()) await tx.update(scheduledMessages).set({ sendAt, body }).where(stillPending);
-    else await tx.delete(scheduledMessages).where(stillPending); // back to "Não criado"; nothing points at a row that never went out
+    const problem = reminderTextProblem(r.text, name); // only what will be written needs the name (decision 6)
+    if (problem) throw badRequest(problem);
+    const body = filled(r.text, a, name);
+    // decision 9: the appointment's author and signature, also when an admin edits
+    if (!stillPending) await tx.insert(scheduledMessages).values({ chatId: a.chatId, authorId: a.authorId, body, signature: a.signature, sendAt, reminderId: r.id });
+    else await tx.update(scheduledMessages).set({ sendAt, body }).where(stillPending);
   }
 }
 

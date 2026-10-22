@@ -193,9 +193,16 @@ export function AppointmentDialog(props: DialogProps) {
     return (
       <Modal title={dialogTitle} onCancel={props.onClose}>
         {defaults.isError ? (
-          <p role="alert" className={fieldError}>
-            {errorMessage(defaults.error)}
-          </p>
+          <>
+            <p role="alert" className={fieldError}>
+              {errorMessage(defaults.error)}
+            </p>
+            <div className="mt-4 flex justify-end">
+              <button type="button" className={button('secondary')} onClick={props.onClose}>
+                Fechar
+              </button>
+            </div>
+          </>
         ) : (
           <p className="text-sm text-muted">Carregando…</p>
         )}

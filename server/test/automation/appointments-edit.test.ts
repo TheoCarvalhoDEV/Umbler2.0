@@ -1,9 +1,11 @@
+// Reminder days are office-zone days: must not depend on the host zone. Set before anything reads the zone.
+process.env.TZ = 'Asia/Tokyo';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_APPOINTMENT_REMINDERS, type AppointmentDto } from '@talk/shared';
 import { APPOINTMENT_CANCELED } from '../../src/automation/appointments.js';
-import { contacts, scheduledMessages } from '../../src/db/schema.js';
+import { appointments, contacts, scheduledMessages } from '../../src/db/schema.js';
 import { seedChat } from '../chats/seed.js';
 import { enableSeeAll, loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 import { eventsOf } from '../inbox/fixtures.js';
@@ -110,7 +112,9 @@ describe('PATCH /api/appointments/:id (spec 2026-10-21 compromissos §3.3)', () 
     const [row] = await scheduled();
     await patch(a.id, { note: 'Levar RG' });
     expect((await scheduled())[0]).toEqual(row);
+    ctx.hub.events.length = 0;
     await patch(a.id, { title: 'Perícia' });
+    expect(ctx.hub.events).toContainEqual({ type: 'chat', chatId });
     expect((await scheduled())[0]).toMatchObject({
       id: row!.id, sendAt: row!.sendAt,
       body: 'Olá, Maria Cliente! Lembramos do seu compromisso (Perícia) no dia 17/10/2026, às 09:00 (horário de Cuiabá). Qualquer dúvida, é só responder esta mensagem.',
@@ -122,12 +126,21 @@ describe('PATCH /api/appointments/:id (spec 2026-10-21 compromissos §3.3)', () 
     ]);
   });
 
+  it('a {nome} reminder that is "Não criado" does not block an edit that writes nothing for it', async () => {
+    const a = await create({ startsAt: after(DAY + 30 * MIN), reminders: [TWO_DAYS] }); // "2 dias antes" ({nome}) is already past
+    expect(a.reminders[0]!.status).toBe('skipped');
+    await ctx.db.update(contacts).set({ name: null }).where(eq(contacts.id, a.contact.id));
+    expect((await patch(a.id, { title: 'Perícia' })).statusCode).toBe(200);
+  });
+
   it('a contact that lost its name refuses a recalculation that needs {nome}, but reminders already out never block it (controller ruling)', async () => {
     const a = await create();
     const [first, second] = await scheduled();
     await ctx.db.update(contacts).set({ name: null }).where(eq(contacts.id, a.contact.id));
     await setStatus(first!.id, 'sent');
     expect((await patch(a.id, { title: 'Perícia' })).statusCode).toBe(400); // the pending one would say "Olá, !"
+    const [still] = await ctx.db.select().from(appointments).where(eq(appointments.id, a.id));
+    expect(still!.title).toBe('Audiência'); // the refused edit rolled back
     await setStatus(second!.id, 'sent');
     expect((await patch(a.id, { title: 'Perícia' })).statusCode).toBe(200);
   });
