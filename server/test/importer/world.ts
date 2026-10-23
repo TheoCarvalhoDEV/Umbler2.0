@@ -1,5 +1,7 @@
+import { eq } from 'drizzle-orm';
 import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerMappingDto } from '@talk/shared';
 import { umblerImports } from '../../src/db/schema.js';
+import { emptyProgress, runUmblerJob, type JobDeps, type UmblerImportRow } from '../../src/importer/job.js';
 import { createUmblerClient, type ImportRun, type UmblerClient } from '../../src/importer/umbler.js';
 import { ORG, startFakeUmbler, type FakeUmbler } from '../fakes/umbler-api.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
@@ -83,4 +85,17 @@ export async function runFor(w: World, opts: { analysis?: UmblerAnalysisDto; map
     sleep: async (ms) => void w.sleeps.push(ms),
     freeBytes: async () => w.free.bytes,
   };
+}
+
+export const depsOf = (w: World): JobDeps => ({ client: w.client, sleep: async (ms) => void w.sleeps.push(ms), freeBytes: async () => w.free.bytes });
+
+export async function rowOf(w: World, id: string): Promise<UmblerImportRow> {
+  return (await w.ctx.db.select().from(umblerImports).where(eq(umblerImports.id, id)))[0]!;
+}
+
+/** "Analisar" as the worker runs it: a new 'analyzing' row and one job beat. */
+export async function analyze(w: World): Promise<UmblerImportRow> {
+  const [row] = await w.ctx.db.insert(umblerImports).values({ state: 'analyzing', progress: emptyProgress() }).returning();
+  await runUmblerJob(w.ctx, depsOf(w));
+  return rowOf(w, row!.id);
 }
