@@ -76,6 +76,17 @@ describe('Umbler client (spec 2026-10-21 importar-umbler §9.4)', () => {
     expect(waits()).toEqual([2000, 10_000, 30_000]);
   });
 
+  it('a body cut mid-read is a network error: retried after 2, 10 and 30 s, then umbler_unavailable; one cut then 200 goes on', async () => {
+    fake.faults.push({ path: /\/sectors\/$/, status: 200, cut: true });
+    await expect(client.get('/v1/sectors/', q)).resolves.toHaveLength(3);
+    expect(waits()).toEqual([2000]);
+
+    sleeps.length = 0;
+    fake.faults.push({ path: /\/channels\/$/, status: 200, cut: true, times: 4 });
+    await expect(client.get('/v1/channels/', q)).rejects.toMatchObject({ code: 'umbler_unavailable', status: null });
+    expect(waits()).toEqual([2000, 10_000, 30_000]);
+  });
+
   it("never follows a redirect (redirect: 'error'): the token stays at app-utalk", async () => {
     fake.faults.push({ path: /\/sectors\/$/, status: 302, location: `${fake.baseUrl}/elsewhere`, times: 4 });
     await expect(client.get('/v1/sectors/', q)).rejects.toMatchObject({ code: 'umbler_unavailable', status: null });

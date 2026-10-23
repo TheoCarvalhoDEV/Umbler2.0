@@ -11,7 +11,7 @@ type Obj = Record<string, unknown>;
 
 export interface FakeRequest { method: string; path: string; query: URLSearchParams; auth: string | null }
 /** The next `times` (default 1) requests whose path matches answer `status`; Infinity = always. */
-export interface Fault { path: RegExp; status: number; times?: number; retryAfter?: string; location?: string }
+export interface Fault { path: RegExp; status: number; times?: number; retryAfter?: string; location?: string; cut?: boolean }
 export interface FakeFile { body: Buffer; mime: string; status?: number; delayMs?: number }
 
 export interface UmblerWorld {
@@ -185,6 +185,13 @@ export async function startFakeUmbler() {
     const fault = faults.find((f) => f.path.test(p) && (f.times ?? 1) > 0);
     if (fault) {
       fault.times = (fault.times ?? 1) - 1;
+      if (fault.cut) {
+        // headers and a piece of the body, then the connection dies mid-body
+        res.writeHead(fault.status, { 'content-type': 'application/json', 'content-length': '100' });
+        res.write('[{');
+        setTimeout(() => res.destroy(), 10);
+        return;
+      }
       res.writeHead(fault.status, {
         'content-type': 'application/json',
         ...(fault.retryAfter ? { 'retry-after': fault.retryAfter } : {}),

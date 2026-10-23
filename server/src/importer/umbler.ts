@@ -153,9 +153,14 @@ export function createUmblerClient(opts: UmblerClientOpts): UmblerClient {
     for (const [k, v] of Object.entries(query)) for (const x of [v].flat()) url.searchParams.append(k, String(x));
     for (let limited = 0, down = 0; ; ) {
       const res = await call(url);
-      if (res?.ok) return (await res.json()) as T;
-      await res?.body?.cancel();
-      const status = res?.status ?? null;
+      let status = res?.status ?? null;
+      if (res?.ok) {
+        try {
+          return (await res.json()) as T;
+        } catch {
+          status = null; // body timeout, connection reset mid-body or not JSON: same as a network error
+        }
+      } else await res?.body?.cancel();
       if (status === 429) {
         if (limited === WAITS_429_S.length) throw new UmblerError('umbler_429', status, route);
         const retryAfter = Number(res?.headers.get('retry-after'));
