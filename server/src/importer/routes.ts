@@ -20,6 +20,7 @@ export const BLOCK_READ_TEST = 'A leitura marcou uma conversa como lida no Umble
 export const BAD_MAPPING = 'Escolha um destino para cada canal, setor e atendente.';
 export const NOT_ANALYZED = 'Analise o Umbler antes de importar.';
 export const NOT_FAILED = 'Só uma importação que parou pode continuar.';
+export const NOT_NEWEST = 'Existe uma análise mais recente do Umbler. Recarregue a página e importe a partir dela.';
 
 const idParams = z.object({ id: z.uuid() });
 const startBody = z.object({
@@ -41,7 +42,7 @@ export async function importBlocks(db: Db, row: UmblerImportRow): Promise<string
 
 function progressDto(p: UmblerImportRow['progress']): UmblerProgressDto | null {
   if (!p) return null;
-  const { maps: _maps, ...rest } = p; // the catalog maps are ids only, but the screen has no use for them
+  const { maps: _maps, phaseStart: _start, ...rest } = p; // ids and resume state: the screen has no use for them
   return rest;
 }
 
@@ -131,10 +132,14 @@ export function registerUmblerImportRoutes(app: FastifyInstance, ctx: AppCtx): v
 
   app.post('/api/umbler-import/:id/start', async (req) => {
     admin(req);
+    if (!ctx.config.umblerToken) throw badRequest(NO_TOKEN);
     const { id } = idParams.parse(req.params);
     const { mapping } = startBody.parse(req.body);
     const row = await rowOf(ctx.db, id);
     if (row.state !== 'analyzed' || !row.analysis) throw conflict(NOT_ANALYZED);
+    // the screen shows only the newest row: an older analysis (another tab, another admin) is stale
+    const [newest] = await ctx.db.select({ id: umblerImports.id }).from(umblerImports).orderBy(desc(umblerImports.createdAt)).limit(1);
+    if (newest?.id !== row.id) throw conflict(NOT_NEWEST);
     if (!(await validMapping(ctx.db, row.analysis, mapping))) throw badRequest(BAD_MAPPING);
     return begin(ctx.db, row, { phase: 'catalog', mapping, startedAt: new Date() });
   });
@@ -142,8 +147,11 @@ export function registerUmblerImportRoutes(app: FastifyInstance, ctx: AppCtx): v
   // "Continuar": same phase, same counters
   app.post('/api/umbler-import/:id/resume', async (req) => {
     admin(req);
+    if (!ctx.config.umblerToken) throw badRequest(NO_TOKEN);
     const row = await rowOf(ctx.db, idParams.parse(req.params).id);
     if (row.state !== 'failed' || !row.startedAt) throw conflict(NOT_FAILED);
-    return begin(ctx.db, row, {});
+    // the report's duration leaves out the time it sat stopped (updated_at is when it failed: nothing writes it after)
+    const startedAt = new Date(row.startedAt.getTime() + Math.max(0, Date.now() - row.updatedAt.getTime()));
+    return begin(ctx.db, row, { startedAt });
   });
 }
