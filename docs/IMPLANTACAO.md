@@ -117,25 +117,34 @@ Rode o passo 1 de novo: a instância não deve aparecer. Anote a data e o N usad
 
 ## 5. Importar do Umbler Talk
 
-O importador traz contatos, setores, etiquetas, campos personalizados e respostas rápidas, com anexos e variáveis. O histórico de conversas fica no Umbler.
+A tela **Ajustes › Importar do Umbler** (só administradores) traz do Umbler Talk tudo o que o escritório tem lá: contatos (com etiquetas, campos e observações), setores, etiquetas, campos personalizados, respostas rápidas, atendentes e **todas as conversas**, abertas e finalizadas, com mensagens, notas internas e arquivos. O importador só **lê** o Umbler (só `GET`; nunca marca conversa como lida).
 
-1. No Umbler Talk: **Conta → Perfil → Tokens de acesso** → crie um token.
-2. No servidor:
+1. No Umbler Talk, entre com o **Proprietário**: **Conta → Perfil → Tokens de acesso** → crie um token.
+2. No servidor, coloque o token no `.env` e recrie o app. O token nunca aparece na tela, nos logs nem no banco:
 
 ```bash
 cd /opt/talk
-read -rs -p 'Token do Umbler: ' UMBLER_TOKEN; echo; export UMBLER_TOKEN
-# 1) Ensaio (--dry-run): lê tudo do Umbler, mostra as contagens e desfaz no fim. Nada é gravado.
-docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts --dry-run
-# 2) Se o ensaio estiver certo, a importação real:
-docker compose exec -T -e UMBLER_TOKEN app node --import tsx server/src/importer/cli.ts
-unset UMBLER_TOKEN
-# 3) Cópia do relatório da importação real no servidor:
-docker compose cp app:/data/import-report.json data/backup/relatorio-importacao.json
+read -rs -p 'Token do Umbler: ' UMBLER_TOKEN; echo
+printf 'UMBLER_TOKEN=%s\n' "$UMBLER_TOKEN" >> .env; unset UMBLER_TOKEN
+chmod 600 .env
+docker compose up -d app
 ```
 
-3. Leia o relatório: ele sai na tela nos dois passos (o `-T` evita caracteres de terminal no texto) e a importação real também o grava em `/data/import-report.json` dentro do container, copiado acima para `data/backup/relatorio-importacao.json`. Ele lista o que não pôde ser convertido, como variáveis `{{n}}` sem correspondência ou anexos que não baixaram. Corrija esses itens à mão na tela de Configurações.
-4. Apague o token no Umbler depois da importação.
+3. Em **Ajustes › Regras automáticas**, desligue as duas regras: com elas ligadas a importação fica bloqueada.
+4. Em **Ajustes › Importar do Umbler**, clique em **Analisar** (cerca de 1 minuto). Confira as contagens, os avisos e o destino de cada canal, setor e atendente. Atendente sem e-mail igual aqui vira usuário **inativo**: guarda quem atendeu cada conversa e pode ser ativado em Ajustes › Atendentes.
+5. Clique em **Importar**. A cópia roda em segundo plano (algumas horas, conforme o volume de arquivos), retoma sozinha se o sistema reiniciar e termina com um relatório na mesma tela. Se parar, a tela diz o motivo e oferece **Continuar**.
+6. Com o relatório conferido: apague o token no Umbler, tire a linha `UMBLER_TOKEN` do `.env` e rode `docker compose up -d app`.
+
+**Ensaio (ambiente de teste, antes da virada).** O ensaio recebe dados reais de clientes: o ambiente de teste precisa da mesma proteção da produção (HTTPS, senhas fortes, acesso restrito). No mapeamento, escolha o canal de teste para o canal do Umbler. Ninguém responde cliente pelo número de teste. Siga o [roteiro de aceite](superpowers/plans/2026-10-21-importar-umbler-aceite.md) e, no fim, apague o ambiente inteiro: `docker compose down -v` e a pasta `data/media`.
+
+**Dia da virada (produção), nesta ordem:**
+
+1. Fim do expediente no Umbler; anote as contagens de Entrada, Esperando e Finalizados.
+2. Conecte o número oficial em Ajustes › Canais (isso desconecta o Umbler, que fica congelado) e espere a importação automática do histórico do WhatsApp terminar.
+3. Analisar → conferir o mapeamento e as contagens → Importar. As conversas abertas chegam nos primeiros minutos e o escritório já atende aqui; as finalizadas chegam depois, das mais recentes para as mais antigas.
+4. Relatório conferido ("casadas com o histórico do WhatsApp" maior que zero e uma conversa recente sem mensagens repetidas) → apague o token → uma semana de consulta → cancele o Umbler e peça o encerramento da organização.
+
+Se o Umbler deixar de responder à API com o canal desconectado, a ordem inversa (importar antes de conectar, com o escritório parado) também funciona: as mensagens repetidas são casadas nos dois sentidos.
 
 ## 6. Atualizar
 
@@ -316,7 +325,8 @@ curl -fsS https://talk.jvo.adv.br/api/health
 
 - [ ] Sistema instalado, HTTPS funcionando, primeiro administrador criado.
 - [ ] Usuários criados, cada um com seus setores e sua assinatura.
-- [ ] Cadastros importados do Umbler (seção 5) e relatório de importação revisado.
+- [ ] "Importar do Umbler" ensaiado no ambiente de teste (seção 5, roteiro de aceite), relatório revisado e ambiente de teste apagado.
+- [ ] No dia da virada: Importar do Umbler na ordem da seção 5 (depois de conectar o número oficial e de o histórico do WhatsApp terminar).
 - [ ] Menu de triagem e mensagem de encerramento configurados.
 - [ ] Chatbot: em Configurações › Chatbots, clicar em **Criar a partir do modelo** e preencher:
   - o nome do escritório;

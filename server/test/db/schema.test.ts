@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { eq, is } from 'drizzle-orm';
 import { PgTable } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -5,7 +6,7 @@ import type { Db } from '../../src/db/client.js';
 import * as schema from '../../src/db/schema.js';
 import {
   appointmentReminders, appointments, botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits,
-  messageFavorites, messages, scheduledMessages, sectors, tags,
+  messageFavorites, messages, scheduledMessages, sectors, tags, umblerImports, umblerMap,
 } from '../../src/db/schema.js';
 import { makeTestDb, seedBasics, type Seeded } from '../helpers.js';
 
@@ -33,9 +34,24 @@ describe('database schema', () => {
 
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(28);
+    expect(tables).toHaveLength(30);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
+  });
+
+  it('umbler_imports: one active import at a time; umbler_map: one row per kind and Umbler id (spec 2026-10-21 importar-umbler §9)', async () => {
+    expect(await pgCode(db.insert(umblerImports).values({ state: 'analyzing' }))).toBeNull();
+    expect(await pgCode(db.insert(umblerImports).values({ state: 'running' }))).toBe(UNIQUE_VIOLATION);
+    expect(await pgCode(db.insert(umblerImports).values([{ state: 'done' }, { state: 'failed' }, { state: 'analyzed' }]))).toBeNull();
+    const [row] = await db.select().from(umblerImports).where(eq(umblerImports.state, 'analyzing'));
+    expect(row).toMatchObject({
+      phase: null, analysis: null, mapping: null, progress: null, report: null, error: null, createdBy: null, startedAt: null, finishedAt: null,
+    });
+    const localId = randomUUID();
+    expect(await pgCode(db.insert(umblerMap).values({ kind: 'chat', umblerId: 'U1', localId }))).toBeNull();
+    expect(await pgCode(db.insert(umblerMap).values({ kind: 'chat', umblerId: 'U1', localId: randomUUID() }))).toBe(UNIQUE_VIOLATION);
+    expect(await pgCode(db.insert(umblerMap).values({ kind: 'message', umblerId: 'U1', localId }))).toBeNull();
+    expect((await db.select().from(umblerMap))[0]!.doneAt).toBeNull();
   });
 
   it('message_favorites: one star per message, gone with the message; users.preferences starts empty (spec 2026-10-19)', async () => {

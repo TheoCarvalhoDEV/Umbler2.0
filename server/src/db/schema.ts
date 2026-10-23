@@ -16,7 +16,8 @@ import {
 } from 'drizzle-orm/pg-core';
 import type {
   BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
-  ReminderUnit, ScheduledStatus, UserPreferences,
+  ReminderUnit, ScheduledStatus, UmblerAnalysisDto, UmblerImportError, UmblerImportPhase, UmblerImportState, UmblerMappingDto,
+  UmblerProgressDto, UmblerReportDto, UserPreferences,
 } from '@talk/shared';
 
 // ponytail: enums are text + TS unions (contract); no pg enums to migrate.
@@ -474,4 +475,57 @@ export const deletedChats = pgTable(
     deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull(),
   },
   (t) => [index('deleted_chats_channel_contact_idx').on(t.channelId, t.contactId)],
+);
+
+/** Spec 2026-10-21 importar-umbler §7: what the catalog phase resolved (Umbler id → ours), read by the later phases and a resume. */
+export interface UmblerCatalogMaps {
+  sectors: Record<string, string>;
+  tags: Record<string, string>;
+  fields: Record<string, { id: string; kind: 'text' | 'number' | 'date' | 'cpf' | 'cnpj' }>;
+  /** linked or created users; an attendant mapped to "Sem atendente" is absent */
+  members: Record<string, { id: string; active: boolean }>;
+  defaultSector: string;
+}
+
+/** The chat skip counts when the phase began: a resumed phase walks its whole list again and recounts from them. */
+export interface UmblerPhaseStart {
+  phase: UmblerImportPhase;
+  skips: Pick<UmblerProgressDto['chats'], 'skippedChannel' | 'skippedEmpty' | 'skippedNoAddress' | 'skippedDeleted'>;
+}
+
+/** Spec 2026-10-21 importar-umbler §10: one "Importar do Umbler" run. analyzing → analyzed → running → done | failed. */
+export const umblerImports = pgTable(
+  'umbler_imports',
+  {
+    id: id(),
+    state: text('state').$type<UmblerImportState>().notNull(),
+    phase: text('phase').$type<UmblerImportPhase>(),
+    analysis: jsonb('analysis').$type<UmblerAnalysisDto>(),
+    mapping: jsonb('mapping').$type<UmblerMappingDto>(),
+    progress: jsonb('progress').$type<UmblerProgressDto & { maps?: UmblerCatalogMaps; phaseStart?: UmblerPhaseStart }>(),
+    report: jsonb('report').$type<UmblerReportDto>(),
+    error: text('error').$type<UmblerImportError>(), // the code only (§9.4)
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(), // "a mais recente" (GET /api/umbler-import)
+    startedAt: timestamp('started_at', { withTimezone: true }), // "Importar"; null while it is only an analysis
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  // §9.3: one active import at a time (a constant expression, so any two active rows collide)
+  (t) => [uniqueIndex('umbler_imports_one_active').on(sql`(true)`).where(sql`${t.state} in ('analyzing', 'running')`)],
+);
+
+/** Spec §9.2: Umbler id → our id, so nothing is ever imported twice. No foreign key: a local id that is gone = deleted here. */
+export const umblerMap = pgTable(
+  'umbler_map',
+  {
+    kind: text('kind').$type<'contact' | 'contactSkipped' | 'note' | 'chat' | 'message'>().notNull(),
+    umblerId: text('umbler_id').notNull(),
+    localId: uuid('local_id').notNull(),
+    doneAt: timestamp('done_at', { withTimezone: true }), // contact: notes copied; chat: every message and file copied
+  },
+  (t) => [primaryKey({ columns: [t.kind, t.umblerId] }), index('umbler_map_local_idx').on(t.kind, t.localId)],
 );

@@ -38,6 +38,7 @@ services:
       WEBHOOK_BASE_URL: http://app:3000
       PORT: "3000"
       MEDIA_DIR: /data/media
+      UMBLER_TOKEN: ${UMBLER_TOKEN:-}
     volumes:
       - ./data/media:/data/media
     depends_on:

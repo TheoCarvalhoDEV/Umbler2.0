@@ -3,6 +3,7 @@ import { and, eq, inArray, max, sql } from 'drizzle-orm';
 import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
 import { chats, deletedChats, messages } from '../db/schema.js';
+import { claimUmblerTwin, hasUmblerMessages } from '../importer/match.js';
 import { getDefaultSectorId } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
 import { messagePreview } from '../messages/dto.js';
@@ -145,6 +146,8 @@ export async function placeRecords(
       .where(eq(deletedChats.channelId, channel.id))
       .groupBy(deletedChats.contactId);
     const deletedUntil = new Map(tombs.map((t) => [t.contactId, t.until]));
+    // spec 2026-10-21 importar-umbler §8: rows copied from Umbler have no WhatsApp id; this copy gives them one
+    const umbler = await hasUmblerMessages(tx);
     const contactByAddress = new Map<string, Contact | null>();
     const chatByContact = new Map<string, Target>();
 
@@ -162,6 +165,9 @@ export async function placeRecords(
       if (!contact || contact.blocked) continue;
       const until = deletedUntil.get(contact.id);
       if (until && ev.sentAt <= until) continue;
+      const mediaQueued = ev.hasMedia && ev.sentAt.getTime() >= mediaCutoff; // as a new row below would be
+      const twin = { direction: ev.direction, kind: ev.kind, text: ev.body, at: ev.sentAt, externalId: ev.externalId, mediaQueued };
+      if (umbler && (await claimUmblerTwin(tx, { contactId: contact.id, channelId: channel.id }, twin))) continue;
 
       let chat = chatByContact.get(contact.id);
       if (!chat) {

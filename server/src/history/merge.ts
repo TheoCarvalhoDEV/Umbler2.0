@@ -3,7 +3,7 @@ import type { AppCtx } from '../ctx.js';
 import type { Tx } from '../db/client.js';
 import {
   appointments, botRuns, chatEvents, chatTags, chats, contactFieldValues, contactNotes, contactTags, contacts, deletedChats, messages,
-  scheduledMessages,
+  scheduledMessages, umblerMap,
 } from '../db/schema.js';
 import { type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
@@ -39,6 +39,8 @@ async function absorb(tx: Tx, from: ChatRow, twin: ChatRow): Promise<void> {
   // spec 2026-10-21 compromissos §3.8: so do appointments, with their reminders; a chat that only changes contact needs
   // nothing, because an appointment takes its contact from the chat
   await tx.update(appointments).set({ chatId: twin.id }).where(eq(appointments.chatId, from.id));
+  // spec 2026-10-21 importar-umbler §9.2: an imported chat stays mapped, or the import would take it for deleted here
+  await tx.update(umblerMap).set({ localId: twin.id }).where(and(eq(umblerMap.kind, 'chat'), eq(umblerMap.localId, from.id)));
   await tx.delete(chats).where(eq(chats.id, from.id));
   const newer = from.lastMessageAt !== null && (twin.lastMessageAt === null || from.lastMessageAt > twin.lastMessageAt);
   await tx
@@ -82,6 +84,8 @@ async function moveContact(tx: Tx, from: Contact, into: Contact): Promise<{ touc
   await tx.update(botRuns).set({ contactId: into.id }).where(eq(botRuns.contactId, from.id));
   // a deleted chat's tombstone follows the contact, or this very import would bring the conversation back
   await tx.update(deletedChats).set({ contactId: into.id }).where(eq(deletedChats.contactId, from.id));
+  // the same for an imported contact: its later Umbler chats and notes come to `into` (importar-umbler §9.2)
+  await tx.update(umblerMap).set({ localId: into.id }).where(and(eq(umblerMap.kind, 'contact'), eq(umblerMap.localId, from.id)));
   await tx.delete(contacts).where(eq(contacts.id, from.id)); // frees the lid (unique); its tag/field rows cascade
   await tx
     .update(contacts)

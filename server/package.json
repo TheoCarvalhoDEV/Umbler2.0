@@ -10,8 +10,7 @@
     "typecheck": "tsc -p .",
     "db:generate": "drizzle-kit generate",
     "seed:admin": "tsx src/auth/seed-admin.ts",
-    "dev:admin": "tsx --env-file=../.env.dev src/auth/seed-admin.ts",
-    "import:umbler": "tsx src/importer/cli.ts"
+    "dev:admin": "tsx --env-file=../.env.dev src/auth/seed-admin.ts"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",
