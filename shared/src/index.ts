@@ -5,7 +5,7 @@ import type { BotRunningBehavior, NotificationDto } from './bots.js';
 import type { MessageChangeSource } from './message-actions.js';
 import type { UserPreferences } from './preferences.js';
 import type { ChatSort } from './chat-list.js';
-import type { ReminderUnit, ScheduledStatus } from './automation.js';
+import type { AppointmentPreset, AppointmentStatus, AppointmentTab, ReminderUnit, ScheduledStatus } from './automation.js';
 export { TAG_COLORS, tagColorHex } from './palette.js';
 export {
   BLOCK_TYPES, WEEKDAYS, WEEKDAY_LABELS, DEFAULT_TIMEZONE, RULE_OPERATOR_LABELS, NATIVE_CONTACT_FIELDS, BLOCK_CATALOG,
@@ -27,6 +27,8 @@ export {
   OFFICE_TIMEZONE, SCHEDULE_MIN_LEAD_MS, SCHEDULE_MAX_AHEAD_MS, SCHEDULE_TEXT_MAX, SCHEDULED_STATUSES, SCHEDULED_TABS,
   RETURN_TO_QUEUE_MINUTES, CLOSE_INACTIVE_HOURS, DEFAULT_AUTO_RULES, scheduleTimeProblem, officeLocalToIso, isoToOfficeLocal,
   formatOfficeDateTime,
+  APPOINTMENT_STATUSES, APPOINTMENT_PRESETS, APPOINTMENT_RANGE_MAX_DAYS, APPOINTMENT_RANGE_LIMIT, APPOINTMENT_CANCELED,
+  officeDateOf, shiftOfficeDate, officeDayRange, appointmentStatusProblem,
   REMINDER_UNITS, APPOINTMENT_LIMITS, REMINDER_PLACEHOLDERS, APPOINTMENT_TABS, DEFAULT_APPOINTMENT_REMINDERS, appointmentTimeProblem,
   reminderSendAt, reminderTextProblem, remindersProblem, fillReminderText,
 } from './automation.js';
@@ -115,7 +117,12 @@ export interface AppointmentReminderDto { id: string; amount: number; unit: Remi
 /** `chatId` = the chat it was made in; reminders next first; canEdit = the author or an admin, who sees that chat, until cancelled. */
 export interface AppointmentDto { id: string; chatId: string; contact: { id: string; name: string | null; phone: string | null };
   authorId: string; authorName: string; title: string; startsAt: string; note: string | null; canceledAt: string | null;
-  canceledByName: string | null; createdAt: string; reminders: AppointmentReminderDto[]; canEdit: boolean }
+  canceledByName: string | null; createdAt: string; reminders: AppointmentReminderDto[]; canEdit: boolean;
+  status: AppointmentStatus; canMark: boolean }
+export interface AppointmentFiltersQuery { authorId?: string; sectorId?: string; q?: string }
+export interface AppointmentListQuery extends AppointmentFiltersQuery {
+  tab?: AppointmentTab; from?: string; to?: string; status?: AppointmentStatus; preset?: AppointmentPreset }
+export interface AppointmentSummaryDto { today: number; tomorrow: number; toConfirm: number; toMark: number }
 export type WsEvent =
   | { type: 'chat.updated'; chat: ChatListItem }
   | { type: 'chat.removed'; chatId: string }

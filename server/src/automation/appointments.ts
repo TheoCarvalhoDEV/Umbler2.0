@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
-  appointmentTimeProblem, fillReminderText, reminderSendAt, reminderTextProblem, remindersProblem, scheduleTimeProblem,
+  APPOINTMENT_CANCELED, appointmentTimeProblem, fillReminderText, reminderSendAt, reminderTextProblem, remindersProblem, scheduleTimeProblem,
   type AppointmentDto, type AppointmentTab, type ReminderInput,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
@@ -169,7 +169,7 @@ export async function listAppointments(ctx: AppCtx, user: AuthUser, tab: Appoint
   return appointmentDtos(ctx.db, user, and(when, mine), order);
 }
 
-export const APPOINTMENT_CANCELED = 'Este compromisso foi cancelado';
+export { APPOINTMENT_CANCELED };
 
 type AppointmentRow = typeof appointments.$inferSelect;
 
