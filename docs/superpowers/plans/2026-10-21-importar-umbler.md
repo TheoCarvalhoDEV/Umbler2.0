@@ -4,7 +4,7 @@
 
 **Goal:** Bring everything the office has in Umbler Talk into the system before the subscription is cancelled, from an admin screen in Ajustes. That covers sectors, tags, custom fields, quick answers and attendants, plus contacts with their tags, fields and notes. It also covers **every conversation**, open and finished, with its messages, internal notes and files. Umbler is only ever read. Open chats arrive open, in the same sector with the same owner, and finished ones arrive in Finalizados with their original dates. The rows WhatsApp history already copied are matched instead of duplicated. The import runs in the background, resumes by itself after a restart and ends with a report.
 
-**Architecture:** `shared/src/umbler.ts` holds the import's states, phases, pt-BR error texts and DTOs. One migration (`0009`) adds `umbler_imports`, one row per run that holds the analysis, the admin's mapping, the progress and the report, and `umbler_map`, which maps an Umbler id to ours so nothing is imported twice. `server/src/importer/umbler.ts` keeps its name and grows:
+**Architecture:** `shared/src/umbler.ts` holds the import's states, phases, pt-BR error texts and DTOs. One migration (`0010`) adds `umbler_imports`, one row per run that holds the analysis, the admin's mapping, the progress and the report, and `umbler_map`, which maps an Umbler id to ours so nothing is imported twice. `server/src/importer/umbler.ts` keeps its name and grows:
 - the HTTP client, which can only `GET`. It keeps the rate and the waits of §9.4, never follows a redirect and sends no token to file links;
 - the Umbler types and `ImportRun`;
 - phase 1 (the catalog, which reuses and extends the CLI importer's functions; `cli.ts` goes);
@@ -21,9 +21,10 @@
 - chats from old Umbler numbers go to the official channel;
 - an ex-attendant becomes an inactive user.
 
-**Base code.** This plan runs on `feat/importar-umbler`, which is `origin/main` at `87cbb06` plus the two spec commits. That base has migration `0008_agendamentos_e_regras` and 26 tables. Every "replace X with Y" snippet below quotes that code, or this plan's own earlier task, verbatim. The following must survive:
+**Base code.** This plan runs on `feat/importar-umbler` at `ec0f6e7`: `origin/main` with the Compromissos feature (PR #33) merged in, plus the spec and plan commits. That base has migration `0009_compromissos` and 28 tables (`appointments` and `appointment_reminders` are the newest; `scheduled_messages` has `reminder_id`). Every "replace X with Y" snippet below quotes that code, or this plan's own earlier task, verbatim. The following must survive:
 - the 2026-10-20 deliveries: `chat_tags`, `waiting_since` and the auto rules (`getAutoRules`);
 - the scheduled messages: `absorb` moving `scheduled_messages` in `history/merge.ts`;
+- the Compromissos (2026-10-21): `absorb` also moving `appointments`; `appointments.chat_id` and `scheduled_messages.chat_id` cascade when a chat is deleted (so code that deletes a chat must first know it holds neither); the `appointment_*` event kinds; the "Compromissos" item in Ajustes;
 - the history import: `placeRecords`, the tombstones, `mergeLidPairs` and the media queue;
 - the "Mensageiro" visual: `ui.ts` and `components/settings/common.tsx`.
 
@@ -40,7 +41,7 @@
 - **Tests never call Umbler.** They use the fake Umbler API (`server/test/fakes/umbler-api.ts`), a `node:http` server on `127.0.0.1` with a random port and `/s3/<name>` in the role of the file links. Every importer test ends with `expect(fake.problems()).toEqual([])`, which means only `GET` requests, no read/unread/pin route, no chat or message detail route, and no `Authorization` on a file link.
 - **Logs** carry Umbler ids, our ids, counts, the phase, the §9.4 code, the route template (`GET /v1/chats/{chatId}/relative-messages/ → 500`) and `errorTag(err)` only. A log never carries text, a phone, a name, an e-mail, a file URL or the token. `UmblerError.message` is `GET <template> → <status>`.
 - **Routes.** Every new mutation is a non-GET `/api/*` route, so the global Origin check (`authPlugin`) covers it. All four routes are admin-only, and an agent gets 403. Tests send `loginAs(...).headers`, and one test sends a POST without Origin and expects 403.
-- **The migration is generated, never hand-edited.** `npm run db:generate -w server -- --name importar_umbler` creates `0009_importar_umbler`, right after `0008_agendamentos_e_regras`. Never run SQL by hand. Never start or stop the dev server, its database or Evolution.
+- **The migration is generated, never hand-edited.** `npm run db:generate -w server -- --name importar_umbler` creates `0010_importar_umbler`, right after `0009_compromissos`. Never run SQL by hand. Never start or stop the dev server, its database or Evolution.
 - **Extend, never rename.** On existing types, only `ChatEventKind` gains a member: `'umbler_imported'`, with data `{ count, merged? }`. The new DTOs live in `shared/src/umbler.ts`. `Config` gains `umblerToken`, so the one `Config` literal in `server/test/helpers.ts` gains `umblerToken: null`.
 - **PGlite.** Inside `ctx.db.transaction(tx => …)` use only `tx`. Publish to the hub after commit. Never call Umbler or a file link inside a transaction (§11).
 - **Pace (§9.4).**
@@ -93,6 +94,7 @@ These are inputs and conditions the spec implies but never tests, most likely fi
 3. **A restart, a stop or a second run duplicates rows or recounts.** **Owner: Task 10**, tests `a stop in the middle of the contacts or of a chat leaves it running; the next beat goes on without duplicates (§9.3)` and `"Analisar de novo" + "Importar" brings only what is missing; a finished closed chat costs no message call (§9.2)`.
 4. **The token leaks** into a log, the row, the DTO, a file link or a redirect. **Owner: Task 2**, tests `files: no Authorization; …` and `never follows a redirect (redirect: 'error')…`. **Task 5**, test `a refused token fails the analysis with umbler_token, and the token is never in the row`. **Task 11**, test `GET says whether the token is configured, never any part of it, and returns the newest import`.
 5. **Open chats land wrong in the Inbox, or the automatic rules act on them.** The owner may be inactive, the contact may already have an open chat here, `unread` or `waiting` may be lost. **Owner: Task 8**, tests `keeps sector, active owner, waiting and unread; waiting_since falls back to the last contact message; publishes once` and `joins the contact's open chat here (decision §7.6)…`. **Task 11**, test `start is blocked while the automatic rules are on or the read test marked a chat; 409 while another import is active`.
+6. **A match empties a WhatsApp-history chat that holds an appointment or a scheduled message**, and deleting the chat would cascade them away (Compromissos, 2026-10-21). **Owner: Task 9**, test `a history chat left without messages is deleted (chat.removed); its appointment and scheduled message move to the imported chat`.
 
 ---
 
@@ -107,7 +109,7 @@ Each line gives the path, the task that creates or first modifies it, and its re
 **Server**
 - `server/src/config.ts` (T1): `Config.umblerToken`, `UMBLER_TOKEN` optional.
 - `server/src/db/schema.ts` (T1): `UmblerCatalogMaps`, tables `umblerImports`, `umblerMap`.
-- `server/drizzle/0009_importar_umbler.sql`, `server/drizzle/meta/0009_snapshot.json`, `server/drizzle/meta/_journal.json` (T1): the generated migration.
+- `server/drizzle/0010_importar_umbler.sql`, `server/drizzle/meta/0010_snapshot.json`, `server/drizzle/meta/_journal.json` (T1): the generated migration.
 - `docker-compose.yml`, `.env.example` (T1): `UMBLER_TOKEN`.
 - `server/src/importer/umbler.ts`:
   - T2: the GET-only client, `pages`, `getAll`, `UmblerError`;
@@ -285,7 +287,7 @@ All four are admin-only (403 otherwise).
 
 ---
 
-### Task 1: Shared contract, `UMBLER_TOKEN`, `umbler_imports` / `umbler_map` and migration 0009
+### Task 1: Shared contract, `UMBLER_TOKEN`, `umbler_imports` / `umbler_map` and migration 0010
 
 Nothing reads the new tables yet. This task has to compile, migrate, read the token without ever showing it, and describe the new event. The new `ChatEventKind` forces `eventText`'s exhaustive switch to change in this task too, or the web typecheck fails.
 
@@ -295,7 +297,7 @@ Nothing reads the new tables yet. This task has to compile, migrate, read the to
 - Modify: `server/src/config.ts` (`Config`, env schema, `loadConfig`)
 - Modify: `server/test/helpers.ts` (the `Config` literal of `makeTestCtx`)
 - Modify: `server/src/db/schema.ts` (`@talk/shared` type import; `UmblerCatalogMaps`, `umblerImports`, `umblerMap` at the end)
-- Generated: `server/drizzle/0009_importar_umbler.sql`, `server/drizzle/meta/0009_snapshot.json`, `server/drizzle/meta/_journal.json`
+- Generated: `server/drizzle/0010_importar_umbler.sql`, `server/drizzle/meta/0010_snapshot.json`, `server/drizzle/meta/_journal.json`
 - Modify: `docker-compose.yml`, `.env.example`
 - Modify: `web/src/components/conversation/model.ts` (`eventText`)
 - Test: `server/test/db/schema.test.ts`, `server/test/config.test.ts`, `web/src/components/conversation/model.test.ts`
@@ -322,29 +324,27 @@ import { eq, is } from 'drizzle-orm';
 and
 
 ```ts
-  botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits, messageFavorites, messages, scheduledMessages,
-  sectors, tags,
+  messageFavorites, messages, scheduledMessages, sectors, tags,
 } from '../../src/db/schema.js';
 ```
 
 with
 
 ```ts
-  botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits, messageFavorites, messages, scheduledMessages,
-  sectors, tags, umblerImports, umblerMap,
+  messageFavorites, messages, scheduledMessages, sectors, tags, umblerImports, umblerMap,
 } from '../../src/db/schema.js';
 ```
 
 replace
 
 ```ts
-    expect(tables).toHaveLength(26);
+    expect(tables).toHaveLength(28);
 ```
 
 with
 
 ```ts
-    expect(tables).toHaveLength(28);
+    expect(tables).toHaveLength(30);
 ```
 
 and add the new test before the `message_favorites` one, replacing
@@ -425,7 +425,7 @@ describe('eventText for chatbot events', () => {
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `npm test -w server -- test/db/schema.test.ts test/config.test.ts`
-Expected: FAIL. `umblerImports` is not exported by `schema.js`, the table count is 26, and `umblerToken` is `undefined`.
+Expected: FAIL. `umblerImports` is not exported by `schema.js`, the table count is 28, and `umblerToken` is `undefined`.
 
 Run: `npm test -w web -- src/components/conversation/model.test.ts`
 Expected: FAIL on the new test: `eventText` returns `undefined` for `'umbler_imported'`.
@@ -555,7 +555,7 @@ export function emptyUmblerCounts(): UmblerCountsDto {
 In `shared/src/index.ts`, replace
 
 ```ts
-  formatOfficeDateTime,
+  reminderSendAt, reminderTextProblem, remindersProblem, fillReminderText,
 } from './automation.js';
 export type * from './automation.js';
 ```
@@ -563,7 +563,7 @@ export type * from './automation.js';
 with
 
 ```ts
-  formatOfficeDateTime,
+  reminderSendAt, reminderTextProblem, remindersProblem, fillReminderText,
 } from './automation.js';
 export type * from './automation.js';
 export { UMBLER_IMPORT_STATES, UMBLER_IMPORT_PHASES, UMBLER_PHASE_LABELS, UMBLER_IMPORT_ERRORS, emptyUmblerCounts } from './umbler.js';
@@ -573,13 +573,13 @@ export type * from './umbler.js';
 and replace
 
 ```ts
-  | 'message_scheduled' | 'scheduled_canceled' | 'returned_to_queue';
+  | 'appointment_scheduled' | 'appointment_canceled';
 ```
 
 with
 
 ```ts
-  | 'message_scheduled' | 'scheduled_canceled' | 'returned_to_queue'
+  | 'appointment_scheduled' | 'appointment_canceled'
   // spec 2026-10-21 importar-umbler §10: data { count, merged? }
   | 'umbler_imported';
 ```
@@ -690,7 +690,7 @@ In `server/src/db/schema.ts`, replace
 ```ts
 import type {
   BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
-  ScheduledStatus, UserPreferences,
+  ReminderUnit, ScheduledStatus, UserPreferences,
 } from '@talk/shared';
 ```
 
@@ -699,7 +699,7 @@ with
 ```ts
 import type {
   BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
-  ScheduledStatus, UmblerAnalysisDto, UmblerImportError, UmblerImportPhase, UmblerImportState, UmblerMappingDto,
+  ReminderUnit, ScheduledStatus, UmblerAnalysisDto, UmblerImportError, UmblerImportPhase, UmblerImportState, UmblerMappingDto,
   UmblerProgressDto, UmblerReportDto, UserPreferences,
 } from '@talk/shared';
 ```
@@ -758,9 +758,9 @@ export const umblerMap = pgTable(
 - [ ] **Step 6: Generate the migration**
 
 Run: `npm run db:generate -w server -- --name importar_umbler`
-Expected: it creates `server/drizzle/0009_importar_umbler.sql` and `server/drizzle/meta/0009_snapshot.json`, and it adds the `0009_importar_umbler` entry (idx 9) to `_journal.json` after `0008_agendamentos_e_regras`.
+Expected: it creates `server/drizzle/0010_importar_umbler.sql` and `server/drizzle/meta/0010_snapshot.json`, and it adds the `0010_importar_umbler` entry (idx 10) to `_journal.json` after `0009_compromissos`.
 
-Run: `grep -E '^(CREATE|ALTER|DROP)' server/drizzle/0009_importar_umbler.sql`
+Run: `grep -E '^(CREATE|ALTER|DROP)' server/drizzle/0010_importar_umbler.sql`
 Expected: exactly 5 lines:
 - `CREATE TABLE "umbler_imports" (`;
 - `CREATE TABLE "umbler_map" (`;
@@ -768,23 +768,23 @@ Expected: exactly 5 lines:
 - `CREATE UNIQUE INDEX "umbler_imports_one_active" ON "umbler_imports" USING btree ((true)) WHERE "umbler_imports"."state" in ('analyzing', 'running');…`;
 - `CREATE INDEX "umbler_map_local_idx" ON "umbler_map" USING btree ("kind","local_id");`.
 
-Anything else means the schema and the 0008 snapshot disagree. In that case stop: do not edit the SQL or the snapshot, and report it.
+Anything else means the schema and the 0009 snapshot disagree. In that case stop: do not edit the SQL or the snapshot, and report it.
 
 - [ ] **Step 7: Describe the event on the web**
 
 In `web/src/components/conversation/model.ts`, replace
 
 ```ts
-    case 'returned_to_queue':
-      return `Devolvida à fila: sem resposta há ${Number(e.data.minutes ?? 0)} min`;
+    case 'appointment_canceled':
+      return `Compromisso “${String(e.data.title ?? '')}” cancelado${by}`;
   }
 ```
 
 with
 
 ```ts
-    case 'returned_to_queue':
-      return `Devolvida à fila: sem resposta há ${Number(e.data.minutes ?? 0)} min`;
+    case 'appointment_canceled':
+      return `Compromisso “${String(e.data.title ?? '')}” cancelado${by}`;
     case 'umbler_imported': {
       const n = Number(e.data.count ?? 0).toLocaleString('pt-BR');
       return e.data.merged === true
@@ -808,8 +808,8 @@ Expected: no errors in any workspace.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add shared/src/umbler.ts shared/src/index.ts server/src/config.ts server/test/helpers.ts server/src/db/schema.ts server/drizzle/0009_importar_umbler.sql server/drizzle/meta/0009_snapshot.json server/drizzle/meta/_journal.json docker-compose.yml .env.example server/test/db/schema.test.ts server/test/config.test.ts web/src/components/conversation/model.ts web/src/components/conversation/model.test.ts
-git commit -m "feat(shared,server): Umbler import contract, UMBLER_TOKEN, umbler_imports and umbler_map (migration 0009)" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git add shared/src/umbler.ts shared/src/index.ts server/src/config.ts server/test/helpers.ts server/src/db/schema.ts server/drizzle/0010_importar_umbler.sql server/drizzle/meta/0010_snapshot.json server/drizzle/meta/_journal.json docker-compose.yml .env.example server/test/db/schema.test.ts server/test/config.test.ts web/src/components/conversation/model.ts web/src/components/conversation/model.test.ts
+git commit -m "feat(shared,server): Umbler import contract, UMBLER_TOKEN, umbler_imports and umbler_map (migration 0010)" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -2553,6 +2553,7 @@ describe('notes phase (spec §7.5)', () => {
     ];
     w.fake.world.notes.C3 = []; // C2 has none: the fake answers 404 (deleted in Umbler)
     await importContactsPhase(run);
+    run.progress.done = 0; // as importUmbler does between phases (Task 10)
 
     await importNotesPhase(run);
 
@@ -3881,7 +3882,7 @@ A tombstone (`deleted_chats`) keeps out a new chat's messages up to `until`.
 - Consumes:
   - Task 4 `upsertContact`; Task 7 `toIncoming`; Task 6 `Candidate`;
   - Task 3 `maps`, `saveProgress`, `checkStop`, `isGone`, `UmblerError`;
-  - existing `messagePreview`, `saveMedia`, `stripSignature`.
+  - existing `messagePreview`, `saveMedia`, `stripSignature`; the Compromissos tables `appointments` and `scheduledMessages` (`refreshChat` moves them out of a history chat it deletes, as `absorb` does).
 - Produces: `MIN_FREE_BYTES`, `importChat`.
 
 - [ ] **Step 1: Write the failing test**
@@ -4087,7 +4088,7 @@ describe('files (§7.8)', () => {
     const err = await importChat(run, chat as never, 'closed').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(UmblerError);
     expect(err).toMatchObject({ code: 'disk_full' });
-    expect(w.fake.calls(/^\/s3\//)).toEqual([]);
+    expect(w.fake.calls(/^\/s3\/a\.pdf$/)).toEqual([]); // the catalog in beforeEach already fetched procuracao.pdf
     expect(await chatOf(chat.id as string)).toBeUndefined();
   });
 });
@@ -4180,7 +4181,9 @@ with
 import { randomUUID } from 'node:crypto';
 import { and, count, desc, eq, inArray, isNull, max, min, ne, sql } from 'drizzle-orm';
 import type { Tx } from '../db/client.js';
-import { chatEvents, chatTags, chats, contacts, deletedChats, messages, umblerMap } from '../db/schema.js';
+import {
+  appointments, chatEvents, chatTags, chats, contacts, deletedChats, messages, scheduledMessages, umblerMap,
+} from '../db/schema.js';
 import { messagePreview } from '../messages/dto.js';
 import { saveMedia } from '../messages/media.js';
 import { formatSignature, stripSignature } from '../messages/signature.js';
@@ -4340,9 +4343,10 @@ async function createChat(tx: Tx, run: ImportRun, chat: UmblerChat, st: ChatRun)
 
 /**
  * last_message_at / preview from the newest message that is not a note. A WhatsApp-history chat also spans its
- * messages, and is deleted when a match took its last one (§8).
+ * messages, and is deleted when a match took its last one (§8); its scheduled messages and appointments move to `into`
+ * first (the chat its messages went to), as history/merge.ts absorb does, because the delete would cascade them away.
  */
-async function refreshChat(tx: Tx, chatId: string): Promise<'removed' | 'open' | 'closed'> {
+async function refreshChat(tx: Tx, chatId: string, into?: string): Promise<'removed' | 'open' | 'closed'> {
   const [chat] = await tx.select({ state: chats.state, history: chats.history }).from(chats).where(eq(chats.id, chatId));
   if (!chat) return 'removed';
   const [last] = await tx
@@ -4359,6 +4363,11 @@ async function refreshChat(tx: Tx, chatId: string): Promise<'removed' | 'open' |
   if (chat.history) {
     const [span] = await tx.select({ first: min(messages.sentAt), last: max(messages.sentAt) }).from(messages).where(eq(messages.chatId, chatId));
     if (!span?.first) {
+      if (into) {
+        // spec 2026-10-20 agendamentos §3.3 and 2026-10-21 compromissos §3.8: they follow the chat (reminders with their appointment)
+        await tx.update(scheduledMessages).set({ chatId: into }).where(eq(scheduledMessages.chatId, chatId));
+        await tx.update(appointments).set({ chatId: into }).where(eq(appointments.chatId, chatId));
+      }
       await tx.delete(chats).where(eq(chats.id, chatId));
       return 'removed';
     }
@@ -4483,7 +4492,7 @@ async function placePage(run: ImportRun, chat: UmblerChat, st: ChatRun, all: Inc
     }
     await refreshChat(tx, chatId);
     for (const id of sources) {
-      const r = await refreshChat(tx, id);
+      const r = await refreshChat(tx, id, chatId);
       if (r === 'removed') removed.push(id);
       else if (r === 'open') openSources.push(id);
     }
@@ -4622,7 +4631,7 @@ This fills the line Task 8 left empty.
 - the Umbler file, when it had none. This is the gain of §7.8: media WhatsApp had already lost now comes back;
 - for a location or contact card, the §7.7 text, with `kind='text'`.
 
-**The chat it came from** is recalculated: `last_message_at` and the preview, plus `created_at` and `closed_at` for a WhatsApp-history chat. A history chat left without messages is deleted and published as `chat.removed`. An open one gets `chat.updated`.
+**The chat it came from** is recalculated: `last_message_at` and the preview, plus `created_at` and `closed_at` for a WhatsApp-history chat. A history chat left without messages is deleted and published as `chat.removed`; its scheduled messages and appointments (with their reminders) move first to the imported chat, as the LID merge's `absorb` does, because the delete would cascade them away. An open one gets `chat.updated`.
 
 The report keeps `matched` and the largest difference, `maxMatchDiffMs`. That is the calibration knob of §8.4.
 
@@ -4645,9 +4654,10 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { chats, contacts, messages, umblerMap } from '../../src/db/schema.js';
+import { appointments, chats, contacts, messages, scheduledMessages, umblerMap } from '../../src/db/schema.js';
 import { importChat } from '../../src/importer/chats.js';
 import { importCatalog, type ImportRun } from '../../src/importer/umbler.js';
+import { insertAppointment } from '../automation/seed.js';
 import { PDF, umblerChat, umblerMessage } from '../fakes/umbler-api.js';
 import { insertChat, newContact } from '../inbox/fixtures.js';
 import { importWorld, runFor, type World } from './world.js';
@@ -4721,11 +4731,24 @@ describe('matching with the WhatsApp history (spec 2026-10-21 importar-umbler §
     expect(Object.fromEntries(mapped.filter((m) => m.umblerId === 'U1' || m.umblerId === 'U2').map((m) => [m.umblerId, m.localId]))).toEqual({ U1: h1, U2: h2 });
   });
 
-  it('a history chat left without messages is deleted (chat.removed)', async () => {
+  it('a history chat left without messages is deleted (chat.removed); its appointment and scheduled message move to the imported chat', async () => {
     await ours(historyChat, 0, { body: 'Bom dia', externalId: 'wa1' });
-    await importClosed([umblerMessage('U1', iso(1), { content: 'Bom dia' })]);
+    const { reminderId } = await insertAppointment(w.ctx, { chatId: historyChat, authorId: w.s.agentA.id, startsAt: new Date('2026-12-01T13:00:00Z') });
+    await w.ctx.db.insert(scheduledMessages).values([
+      { chatId: historyChat, authorId: w.s.agentA.id, body: 'Lembrete', signature: false, sendAt: new Date('2026-12-01T12:00:00Z'), reminderId },
+      { chatId: historyChat, authorId: w.s.agentA.id, body: 'Agendada', signature: false, sendAt: new Date('2026-11-30T13:00:00Z') },
+    ]);
+
+    const imported = await importClosed([umblerMessage('U1', iso(1), { content: 'Bom dia' })]);
+
     expect(await chatRow(historyChat)).toBeUndefined();
     expect(w.ctx.hub.events).toContainEqual({ type: 'chat.removed', chatId: historyChat });
+    // spec 2026-10-21 compromissos §3.8: as in the LID merge (absorb), they follow the messages instead of cascading away
+    expect((await w.ctx.db.select().from(appointments)).map((a) => a.chatId)).toEqual([imported]);
+    expect((await w.ctx.db.select().from(scheduledMessages).orderBy(asc(scheduledMessages.body))).map((r) => [r.body, r.chatId, r.reminderId, r.status])).toEqual([
+      ['Agendada', imported, null, 'pending'],
+      ['Lembrete', imported, reminderId, 'pending'],
+    ]);
   });
 
   it("a match whose file had expired on WhatsApp gets Umbler's file; a location gets the §7.7 text", async () => {
@@ -5046,13 +5069,13 @@ Expected: FAIL. `umblerBeat` is not exported by `job.ts`, and `createHistoryWork
 In `server/src/importer/chats.ts`, replace
 
 ```ts
-import { chatEvents, chatTags, chats, contacts, deletedChats, messages, umblerMap } from '../db/schema.js';
+  appointments, chatEvents, chatTags, chats, contacts, deletedChats, messages, scheduledMessages, umblerMap,
 ```
 
 with
 
 ```ts
-import { chatEvents, chatTags, chats, contacts, deletedChats, historyImports, messages, umblerMap } from '../db/schema.js';
+  appointments, chatEvents, chatTags, chats, contacts, deletedChats, historyImports, messages, scheduledMessages, umblerMap,
 ```
 
 replace
@@ -6466,8 +6489,8 @@ In `web/src/pages/settings/SettingsPage.tsx`, replace
 
 ```tsx
 import {
-  BuildingsIcon, ChatsCircleIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon, TagIcon,
-  TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
+  BuildingsIcon, CalendarStarIcon, ChatsCircleIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon,
+  TagIcon, TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
 } from '@phosphor-icons/react';
 ```
 
@@ -6475,8 +6498,8 @@ with
 
 ```tsx
 import {
-  BuildingsIcon, ChatsCircleIcon, CloudArrowDownIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon,
-  TagIcon, TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
+  BuildingsIcon, CalendarStarIcon, ChatsCircleIcon, CloudArrowDownIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon,
+  SlidersHorizontalIcon, TagIcon, TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
 } from '@phosphor-icons/react';
 ```
 
@@ -6745,7 +6768,8 @@ git commit -m "docs: Importar do Umbler na implantação (ensaio, virada) e rote
 - [ ] Spec §8:
   - both directions (Task 9 and Task 6 tests);
   - `maxMatchDiffMs` in the report;
-  - history chat removed when emptied.
+  - history chat removed when emptied, its scheduled messages and appointments moved to the imported chat first (Compromissos);
+  - `history/place.ts` only gains the `external_id` claim: it never moves or deletes a chat, so appointments and reminders are untouched there.
 - [ ] Spec §9:
   - phase order;
   - `umbler_map` before every insert;
@@ -6758,4 +6782,4 @@ git commit -m "docs: Importar do Umbler na implantação (ensaio, virada) e rote
 - [ ] Spec §12: `analysis` and `report` hold counts, office names (sectors, tags, fields, answers, attendants, channels) and no client data.
 - [ ] Spec §13 and §15: IMPLANTACAO §5, the checklist line, and the acceptance script.
 - [ ] Logs: `grep -rn "console\." server/src/importer` shows only ids, counts, the phase, the code, the route template and `errorTag(err)`.
-- [ ] `ls server/drizzle/*.sql | tail -2` shows `0008_agendamentos_e_regras.sql` then `0009_importar_umbler.sql`, and `git diff origin/main -- server/drizzle/0008_agendamentos_e_regras.sql server/drizzle/meta/0008_snapshot.json` prints nothing.
+- [ ] `ls server/drizzle/*.sql | tail -2` shows `0009_compromissos.sql` then `0010_importar_umbler.sql`, and `git diff origin/main -- server/drizzle/0009_compromissos.sql server/drizzle/meta/0009_snapshot.json` prints nothing.
