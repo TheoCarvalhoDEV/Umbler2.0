@@ -487,6 +487,12 @@ export interface UmblerCatalogMaps {
   defaultSector: string;
 }
 
+/** The chat skip counts when the phase began: a resumed phase walks its whole list again and recounts from them. */
+export interface UmblerPhaseStart {
+  phase: UmblerImportPhase;
+  skips: Pick<UmblerProgressDto['chats'], 'skippedChannel' | 'skippedEmpty' | 'skippedNoAddress' | 'skippedDeleted'>;
+}
+
 /** Spec 2026-10-21 importar-umbler §10: one "Importar do Umbler" run. analyzing → analyzed → running → done | failed. */
 export const umblerImports = pgTable(
   'umbler_imports',
@@ -496,7 +502,7 @@ export const umblerImports = pgTable(
     phase: text('phase').$type<UmblerImportPhase>(),
     analysis: jsonb('analysis').$type<UmblerAnalysisDto>(),
     mapping: jsonb('mapping').$type<UmblerMappingDto>(),
-    progress: jsonb('progress').$type<UmblerProgressDto & { maps?: UmblerCatalogMaps }>(),
+    progress: jsonb('progress').$type<UmblerProgressDto & { maps?: UmblerCatalogMaps; phaseStart?: UmblerPhaseStart }>(),
     report: jsonb('report').$type<UmblerReportDto>(),
     error: text('error').$type<UmblerImportError>(), // the code only (§9.4)
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),

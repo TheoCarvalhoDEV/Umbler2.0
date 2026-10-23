@@ -19,6 +19,11 @@ describe('pairUp (spec 2026-10-21 importar-umbler §8)', () => {
 
   it('drops the signature line, CRLF, the spaces at the ends and compares NFC; a GIF image matches a WhatsApp video', () => {
     expect(normalizeText('*Financeiro - Ana:*\r\nSegue o boleto  ')).toBe('Segue o boleto');
+    // the signature line in any form it may reach WhatsApp (Umbler's on-wire format is not verified)
+    for (const line of ['*Ana:*', '*Ana*:', '*Ana*', '*Ana*: ', '*Ana:* ']) expect(normalizeText(`${line}\nSegue o boleto`)).toBe('Segue o boleto');
+    expect(normalizeText('*Ana*\nSegue o boleto')).toBe(normalizeText('*Financeiro - Ana:*\nSegue o boleto'));
+    expect(normalizeText('Segue *o* boleto')).toBe('Segue *o* boleto'); // only a first line of its own
+    expect(normalizeText('*Atenção* ao prazo')).toBe('*Atenção* ao prazo');
     const signed = msg({ at: at(0), direction: 'out', text: '*Financeiro - Ana:*\r\nSegue o boleto  ' });
     expect(pairUp([signed], [msg({ at: at(2), direction: 'out', text: 'Segue o boleto' })])[0]).not.toBeNull();
     expect(pairUp([msg({ at: at(0), text: 'Sim, João' })], [msg({ at: at(0), text: 'Sim, João' })])[0]).not.toBeNull();

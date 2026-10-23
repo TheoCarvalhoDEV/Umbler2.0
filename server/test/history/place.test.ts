@@ -266,6 +266,20 @@ describe('placeRecords and rows imported from Umbler (spec 2026-10-21 importar-u
     expect(await ctx.db.$count(messages)).toBe(2);
   });
 
+  it('an Umbler row whose file was unavailable goes to the media queue when WhatsApp still has the file (§5.5)', async () => {
+    const contactId = await newContact(ctx, { phone: PHONE });
+    const chatId = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed' });
+    const image = (sentAt: string) => ({ chatId, channelId: s.channelId, direction: 'in' as const, kind: 'image' as const, status: 'read' as const, mediaStatus: 'expired' as const, sentAt: at(sentAt) });
+    const rows = await ctx.db.insert(messages).values([image('2026-10-10T12:00:02Z'), image('2026-09-01T12:00:02Z')]).returning();
+    await ctx.db.insert(umblerMap).values(rows.map((m, i) => ({ kind: 'message' as const, umblerId: `UI${i}`, localId: m.id })));
+
+    const r = await place([imageRec({ id: 'img1', at: '2026-10-10T12:00:00Z' }), imageRec({ id: 'img2', at: '2026-09-01T12:00:00Z' })]);
+
+    expect(r.inserted).toBe(0);
+    const after = await ctx.db.select().from(messages).orderBy(messages.sentAt);
+    expect(after.map((m) => [m.externalId, m.mediaStatus])).toEqual([['img2', 'expired'], ['img1', 'queued']]); // > 21 days: gone on WhatsApp too
+  });
+
   it('pairs an Umbler location row (text with the §7.7 body) with an unsupported row from the phone', async () => {
     const contactId = await newContact(ctx, { phone: PHONE });
     const chatId = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed' });

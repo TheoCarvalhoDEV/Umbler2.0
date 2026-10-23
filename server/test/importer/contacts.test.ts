@@ -1,7 +1,10 @@
 import { and, eq, isNotNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, tags, umblerMap } from '../../src/db/schema.js';
+import { chats, contactFieldValues, contactNotes, contactTags, contacts, customFields, messages, tags, umblerMap } from '../../src/db/schema.js';
+import { mergeLidPairs } from '../../src/history/merge.js';
+import { importChat } from '../../src/importer/chats.js';
 import { importCatalog, importContactsPhase, importNotesPhase, type ImportRun } from '../../src/importer/umbler.js';
+import { umblerChat, umblerMessage } from '../fakes/umbler-api.js';
 import { insertChat } from '../inbox/fixtures.js';
 import { importWorld, runFor, type World } from './world.js';
 
@@ -63,6 +66,47 @@ describe('contacts phase (spec 2026-10-21 importar-umbler §7.4)', () => {
     expect(await contactBy(eq(contacts.id, lidOnly!.id))).toBeUndefined();
     expect(await contactBy(eq(contacts.id, phoneOnly!.id))).toMatchObject({ lid: '201234567890123' });
     expect((await w.ctx.db.select().from(chats).where(eq(chats.id, historyChat)))[0]!.contactId).toBe(phoneOnly!.id);
+  });
+
+  it('an Umbler LID-only contact merged mid-import (mergeLidPairs) keeps its chats and notes importing: umbler_map follows', async () => {
+    await importContactsPhase(run);
+    const lidOnly = (await contactBy(eq(contacts.lid, '209999999999999')))!;
+    const c3 = { _t: 'ContactReferenceModel', id: 'C3', name: 'Só LID', phoneNumber: null, lid: '209999999999999@lid', contactType: 'DirectMessage' };
+    const open = umblerChat({ contact: c3 });
+    w.fake.world.chats.push(open);
+    w.fake.world.messages[open.id as string] = [umblerMessage('L1', '2026-10-20T10:00:00Z')];
+    await importChat(run, open as never, 'open');
+    // the phone contact with its own open chat on the channel: the merge absorbs the imported open chat into it
+    const [phone] = await w.ctx.db.insert(contacts).values({ phone: '5565977776666', name: 'Com número' }).returning();
+    const twin = await insertChat(w.ctx, { channelId: w.s.channelId, sectorId: w.s.defaultSector, contactId: phone!.id, state: 'open' });
+
+    await mergeLidPairs(w.ctx, [{ lid: '209999999999999', phone: '5565977776666' }]);
+
+    expect(await contactBy(eq(contacts.id, lidOnly.id))).toBeUndefined();
+    w.fake.world.messages[open.id as string]!.push(umblerMessage('L2', '2026-10-20T10:05:00Z'));
+    await importChat(run, open as never, 'open'); // a second run: goes on in the twin
+    expect((await w.ctx.db.select().from(messages).where(eq(messages.chatId, twin))).map((m) => m.body).sort()).toEqual(['texto L1', 'texto L2']);
+    const closed = umblerChat({ open: false, closedAtUTC: '2026-08-01T11:00:00Z', contact: c3 });
+    w.fake.world.chats.push(closed);
+    w.fake.world.messages[closed.id as string] = [umblerMessage('L3', '2026-08-01T10:00:00Z')];
+    expect(await importChat(run, closed as never, 'closed')).toBe(true);
+    const [map] = await w.ctx.db.select().from(umblerMap).where(and(eq(umblerMap.kind, 'chat'), eq(umblerMap.umblerId, closed.id as string)));
+    expect((await w.ctx.db.select().from(chats).where(eq(chats.id, map!.localId)))[0]!.contactId).toBe(phone!.id);
+    w.fake.world.notes.C3 = [{ _t: 'NoteModel', id: 'N9', content: 'Nota', pinned: false, createdBy: null, createdAtUTC: '2026-08-01T10:00:00Z' }];
+    await importNotesPhase(run);
+    expect(await w.ctx.db.$count(contactNotes, eq(contactNotes.contactId, phone!.id))).toBe(1);
+    expect(run.progress.chats.skippedDeleted).toBe(0);
+  });
+
+  it('merges every phone + LID pair of the list, mapped ones too: a crash before the merge or a second run still joins them', async () => {
+    const [phoneOnly] = await w.ctx.db.insert(contacts).values({ phone: '5565988887777', name: 'João' }).returning();
+    const [lidOnly] = await w.ctx.db.insert(contacts).values({ lid: '201234567890123', name: null }).returning();
+    await w.ctx.db.insert(umblerMap).values({ kind: 'contact', umblerId: 'C2', localId: phoneOnly!.id }); // its batch committed, then the crash
+
+    await importContactsPhase(run);
+
+    expect(await contactBy(eq(contacts.id, lidOnly!.id))).toBeUndefined();
+    expect(await contactBy(eq(contacts.id, phoneOnly!.id))).toMatchObject({ lid: '201234567890123' });
   });
 
   it('asks each contact for its fields when the list ignores includeCustomFields (§4.1); a second run calls nothing per contact', async () => {

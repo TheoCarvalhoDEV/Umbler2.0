@@ -224,14 +224,22 @@ export async function importUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImport
   };
   for (let i = UMBLER_IMPORT_PHASES.indexOf(row.phase ?? 'catalog'); i < UMBLER_IMPORT_PHASES.length; i += 1) {
     const phase = UMBLER_IMPORT_PHASES[i]!;
-    run.progress.done = 0;
-    run.progress.total = 0;
+    const p = run.progress;
+    p.done = 0;
+    p.total = 0;
+    // a resumed phase walks its list again: the skips it counted before the stop are counted again, so they restart
+    // from the phase's start ('gone' does not: a note's is saved with done_at, a chat deleted in Umbler leaves the list)
+    if (p.phaseStart?.phase === phase) Object.assign(p.chats, p.phaseStart.skips);
+    else {
+      const { skippedChannel, skippedEmpty, skippedNoAddress, skippedDeleted } = p.chats;
+      p.phaseStart = { phase, skips: { skippedChannel, skippedEmpty, skippedNoAddress, skippedDeleted } };
+    }
     await saveProgress(ctx.db, run, phase);
     await PHASES[phase](run);
     console.info('umbler: phase done', { importId: row.id, phase });
   }
   const finishedAt = new Date();
-  const { done: _done, total: _total, chatsRead: _read, maps: _maps, ...counts } = run.progress;
+  const { done: _done, total: _total, chatsRead: _read, maps: _maps, phaseStart: _start, ...counts } = run.progress;
   const durationMs = finishedAt.getTime() - (row.startedAt ?? finishedAt).getTime();
   await ctx.db.update(umblerImports).set({ state: 'done', finishedAt, report: { ...counts, durationMs } }).where(eq(umblerImports.id, row.id));
   console.info('umbler: import done', { importId: row.id, chats: counts.chats.openCreated + counts.chats.closed, messages: counts.messages.total });

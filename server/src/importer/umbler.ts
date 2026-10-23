@@ -9,7 +9,7 @@ import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import {
   contactFieldValues, contactNotes, contactTags, contacts, customFields, quickAnswers, sectors, tags, umblerImports, umblerMap, users,
-  type UmblerCatalogMaps,
+  type UmblerCatalogMaps, type UmblerPhaseStart,
 } from '../db/schema.js';
 import { mergeLidPairs } from '../history/merge.js';
 import { getDefaultSectorId } from '../inbox/chats.js';
@@ -270,7 +270,7 @@ export interface UmblerMessage {
 
 // ---------- one running import ----------
 
-export type UmblerProgress = UmblerProgressDto & { maps?: UmblerCatalogMaps };
+export type UmblerProgress = UmblerProgressDto & { maps?: UmblerCatalogMaps; phaseStart?: UmblerPhaseStart };
 
 /** What every phase reads, and the counters it adds to (saved with the page that changed them, §9.3). */
 export interface ImportRun {
@@ -599,7 +599,6 @@ async function importContactBatch(run: ImportRun, list: UmblerContact[]): Promis
         });
     }
   }
-  const pairs: Array<{ lid: string; phone: string }> = [];
   await run.ctx.db.transaction(async (tx) => {
     for (const c of todo) {
       const id = await upsertContact(tx, c, p.contacts);
@@ -616,15 +615,20 @@ async function importContactBatch(run: ImportRun, list: UmblerContact[]): Promis
         return field && value !== null ? [{ contactId: id, fieldId: field.id, value }] : [];
       });
       if (valueRows.length) await tx.insert(contactFieldValues).values(valueRows).onConflictDoNothing();
-      const phone = validPhone(c.phoneNumber);
-      const lid = lidOf(c.lid);
-      if (phone && lid) pairs.push({ lid, phone });
     }
     p.done += list.length;
     await saveProgress(tx, run);
   });
-  // §7.4: a LID-only contact the WhatsApp history created joins the phone one before any chat (§8 needs a single contact)
-  await mergeLidPairs(run.ctx, pairs);
+  // §7.4: a LID-only contact the WhatsApp history created joins the phone one before any chat (§8 needs a single contact).
+  // Every pair of the batch, mapped ones too: after a crash right here, or on a second run, it still merges (idempotent).
+  await mergeLidPairs(
+    run.ctx,
+    list.flatMap((c) => {
+      const phone = validPhone(c.phoneNumber);
+      const lid = lidOf(c.lid);
+      return phone && lid ? [{ lid, phone }] : [];
+    }),
+  );
 }
 
 /** Phase 2 (§9.1): the whole contact list, 100 per transaction; contacts already in umbler_map are skipped. */

@@ -4,12 +4,13 @@ import type { Tx } from '../db/client.js';
 import {
   appointments, chatEvents, chatTags, chats, contacts, deletedChats, historyImports, messages, scheduledMessages, umblerMap,
 } from '../db/schema.js';
+import { mergeLidPairs } from '../history/merge.js';
 import { messagePreview } from '../messages/dto.js';
 import { saveMedia } from '../messages/media.js';
 import { formatSignature, stripSignature } from '../messages/signature.js';
 import { matchCandidates, pairUp, type Candidate } from './match.js';
 import {
-  UmblerError, checkStop, getAll, isGone, maps, orgQuery, pages, saveProgress, upsertContact, type ImportRun, type Query,
+  UmblerError, checkStop, getAll, isGone, lidOf, maps, orgQuery, pages, saveProgress, upsertContact, validPhone, type ImportRun, type Query,
   type UmblerChat, type UmblerClient, type UmblerMessage,
 } from './umbler.js';
 
@@ -230,7 +231,14 @@ async function contactOf(run: ImportRun, chat: UmblerChat): Promise<string | nul
     await saveProgress(tx, run);
     return created;
   });
-  if (!id) p.chats.skippedNoAddress += 1;
+  if (!id) {
+    p.chats.skippedNoAddress += 1;
+    return null;
+  }
+  // §7.4, as the contacts phase does: a LID-only contact here joins the phone one before §8 looks for its rows
+  const phone = validPhone(chat.contact.phoneNumber);
+  const lid = lidOf(chat.contact.lid);
+  if (phone && lid) await mergeLidPairs(run.ctx, [{ lid, phone }]);
   return id;
 }
 
@@ -327,6 +335,9 @@ async function refreshChat(tx: Tx, chatId: string, into?: string): Promise<'remo
         // spec 2026-10-20 agendamentos §3.3 and 2026-10-21 compromissos §3.8: they follow the chat (reminders with their appointment)
         await tx.update(scheduledMessages).set({ chatId: into }).where(eq(scheduledMessages.chatId, chatId));
         await tx.update(appointments).set({ chatId: into }).where(eq(appointments.chatId, chatId));
+        // spec 2026-10-20 §5: so do its tags (the delete would cascade them away)
+        const tagRows = await tx.select({ tagId: chatTags.tagId }).from(chatTags).where(eq(chatTags.chatId, chatId));
+        if (tagRows.length) await tx.insert(chatTags).values(tagRows.map((t) => ({ chatId: into, tagId: t.tagId }))).onConflictDoNothing();
       }
       await tx.delete(chats).where(eq(chats.id, chatId));
       return 'removed';
@@ -457,8 +468,7 @@ async function placePage(run: ImportRun, chat: UmblerChat, st: ChatRun, all: Inc
       if (!isSaved(file)) continue;
       await tx.update(messages).set(mediaOf(file)).where(and(eq(messages.id, mapped.get(i.umblerId)!.id!), isNull(messages.mediaPath)));
       p.files.saved += 1;
-      p.files.bytes += file.size;
-      p.files.expired -= 1;
+      p.files.bytes += file.size; // ponytail: not taken off `expired`, which a new run starts at 0 (on "Continuar" it counts in both)
     }
     await refreshChat(tx, chatId);
     for (const id of sources) {
@@ -472,8 +482,11 @@ async function placePage(run: ImportRun, chat: UmblerChat, st: ChatRun, all: Inc
   for (const id of openSources) await ctx.hub.publishChat(id);
 }
 
-/** The first time the chat is complete: the waiting_since fallback (§7.6) and "Conversa importada do Umbler Talk". */
-async function finishChat(run: ImportRun, chat: UmblerChat, st: ChatRun): Promise<void> {
+/**
+ * The first time the chat is complete: the waiting_since fallback (§7.6) and "Conversa importada do Umbler Talk".
+ * `complete` false (a 404 after some pages): the same, without done_at.
+ */
+async function finishChat(run: ImportRun, chat: UmblerChat, st: ChatRun, complete = true): Promise<void> {
   const { ctx } = run;
   if (!st.localId) {
     run.progress.chats.skippedEmpty += 1; // no message at all (§7.6)
@@ -501,7 +514,7 @@ async function finishChat(run: ImportRun, chat: UmblerChat, st: ChatRun): Promis
         authorId: null, createdAt: new Date(chat.createdAtUTC),
       });
     }
-    if (!st.temporary) {
+    if (complete && !st.temporary) {
       await tx.update(umblerMap).set({ doneAt: new Date() }).where(and(eq(umblerMap.kind, 'chat'), eq(umblerMap.umblerId, chat.id)));
     }
   });
@@ -556,6 +569,7 @@ export async function importChat(run: ImportRun, chat: UmblerChat, state: 'open'
     } catch (err) {
       if (!isGone(err)) throw err;
       p.gone += 1; // deleted in Umbler during the copy
+      if (st.localId) await finishChat(run, chat, st, false); // the pages already written: event, waiting_since, chat.updated
       return true;
     }
     if (page.hasMessagesBeforeAllowedOrganizationPlan) p.planLimited = true;

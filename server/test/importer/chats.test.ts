@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { emptyUmblerCounts } from '@talk/shared';
 import {
   botRuns, chatEvents, chatTags, chats, contacts, deletedChats, messages, sectors, tags, umblerMap, users,
 } from '../../src/db/schema.js';
@@ -181,9 +182,10 @@ describe('files (§7.8)', () => {
     expect(run.progress.files).toEqual({ saved: 4, bytes: 4 * PDF.length, expired: 4 });
     expect((await localOf(chat.id as string))!.doneAt).toBeNull(); // e.pdf failed for now: not done
 
-    await importChat(run, chat as never, 'closed'); // a new run: reads the chat again and retries the unavailable ones
+    run.progress = { ...emptyUmblerCounts(), done: 0, total: 0, chatsRead: 0, maps: run.progress.maps }; // a new run: new counters
+    await importChat(run, chat as never, 'closed'); // reads the chat again and retries the unavailable ones
     expect((await rowsOf(local.id)).map((r) => r.mediaStatus)).toEqual([null, null, null, null, 'expired', 'expired', 'expired', null]);
-    expect(run.progress.files).toEqual({ saved: 5, bytes: 5 * PDF.length, expired: 3 });
+    expect(run.progress.files).toEqual({ saved: 1, bytes: PDF.length, expired: 0 }); // never "-1 indisponíveis"
     expect((await localOf(chat.id as string))!.doneAt).not.toBeNull();
     expect(await w.ctx.db.$count(messages)).toBe(8);
   });
@@ -229,6 +231,38 @@ describe('what is skipped (§7.3, §7.6)', () => {
     expect(await importChat(run, after as never, 'closed')).toBe(false);
     expect(await w.ctx.db.$count(chats, eq(chats.id, local.id))).toBe(0);
     expect(run.progress.chats).toMatchObject({ skippedChannel: 1, skippedEmpty: 1, skippedNoAddress: 1, skippedDeleted: 1, closed: 1 });
+  });
+});
+
+describe('the contact (§7.4)', () => {
+  it('a contact created from chat.contact joins the LID-only contact here (mergeLidPairs), as the contacts phase does', async () => {
+    const [phone] = await w.ctx.db.insert(contacts).values({ phone: '5565977776666', name: 'Com número' }).returning();
+    const [lidOnly] = await w.ctx.db.insert(contacts).values({ lid: '208888888888888' }).returning();
+    const chat = given(
+      umblerChat({ open: false, closedAtUTC: '2026-08-01T11:00:00Z', contact: { id: 'C9', name: 'Novo', phoneNumber: '5565977776666', lid: '208888888888888' } }),
+      [umblerMessage('Z1', '2026-08-01T10:00:00Z')],
+    );
+    await importChat(run, chat as never, 'closed');
+    expect(await w.ctx.db.$count(contacts, eq(contacts.id, lidOnly!.id))).toBe(0);
+    expect((await w.ctx.db.select().from(contacts).where(eq(contacts.id, phone!.id)))[0]).toMatchObject({ lid: '208888888888888' });
+    expect((await chatOf(chat.id as string))!.contactId).toBe(phone!.id);
+  });
+});
+
+describe('deleted in Umbler mid-chat (§9.4)', () => {
+  it('a 404 after some pages finishes what was written (event, waiting_since, chat.updated) without done_at', async () => {
+    const list = Array.from({ length: 260 }, (_, i) => umblerMessage(`P${i}`, new Date(Date.UTC(2026, 9, 20, 10, 0, 0) + i * 1000).toISOString()));
+    const chat = given(umblerChat({ waiting: true, waitingSinceUTC: null }), list);
+    w.fake.faults.push({ path: /relative-messages/, status: 404, query: ['FromEventUTC', '2026-10-20T10:04:08.999Z'] });
+
+    expect(await importChat(run, chat as never, 'open')).toBe(true);
+
+    const local = (await chatOf(chat.id as string))!;
+    expect(local.waitingSince).toEqual(new Date('2026-10-20T10:04:09Z'));
+    expect((await eventsOf(local.id)).map((e) => [e.kind, e.data])).toEqual([['umbler_imported', { count: 250 }]]);
+    expect(w.ctx.hub.events.filter((e) => e.type === 'chat' && e.chatId === local.id)).toHaveLength(1);
+    expect((await localOf(chat.id as string))!.doneAt).toBeNull();
+    expect(run.progress.gone).toBe(1);
   });
 });
 

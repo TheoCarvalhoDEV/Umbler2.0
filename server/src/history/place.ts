@@ -165,7 +165,8 @@ export async function placeRecords(
       if (!contact || contact.blocked) continue;
       const until = deletedUntil.get(contact.id);
       if (until && ev.sentAt <= until) continue;
-      const twin = { direction: ev.direction, kind: ev.kind, text: ev.body, at: ev.sentAt, externalId: ev.externalId };
+      const mediaQueued = ev.hasMedia && ev.sentAt.getTime() >= mediaCutoff; // as a new row below would be
+      const twin = { direction: ev.direction, kind: ev.kind, text: ev.body, at: ev.sentAt, externalId: ev.externalId, mediaQueued };
       if (umbler && (await claimUmblerTwin(tx, { contactId: contact.id, channelId: channel.id }, twin))) continue;
 
       let chat = chatByContact.get(contact.id);

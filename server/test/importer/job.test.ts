@@ -115,6 +115,27 @@ describe('Importar (spec 2026-10-21 importar-umbler §9)', () => {
     expect(row.report).toMatchObject({ contacts: { created: 2, lidOnly: 1 }, chats: { openCreated: 2, closed: 2 }, messages: { total: 257 }, notes: 1 });
   });
 
+  it('a resumed phase walks its list again without counting its skips twice', async () => {
+    givenOffice();
+    const web = umblerChat({
+      open: false, createdAtUTC: '2026-07-01T10:00:00Z', closedAtUTC: '2026-07-01T11:00:00Z',
+      channel: { _t: 'ChatWebsiteWidgetChannelReferenceModel', id: 'CH_WEB', name: 'Site' },
+    }); // finished after `newer` closed: listed before it
+    const empty = umblerChat({ open: false, createdAtUTC: '2026-06-15T10:00:00Z', closedAtUTC: '2026-06-15T11:00:00Z' });
+    w.fake.world.chats.push(web, empty);
+    w.fake.world.messages[empty.id as string] = [];
+    const analyzed = await analyze(w);
+    await startImport(w, analyzed, stoppingAt((route, _q, params) => route.includes('relative-messages') && params.chatId === chatsOf.newer.id));
+    expect(await rowOf(w, analyzed.id)).toMatchObject({ state: 'running', phase: 'closed_chats' });
+
+    await runUmblerJob(w.ctx, depsOf(w));
+
+    const row = await rowOf(w, analyzed.id);
+    expect(row.state).toBe('done');
+    expect(row.report!.chats).toMatchObject({ skippedChannel: 1, skippedEmpty: 1, closed: 2 });
+    expect(row.report).not.toHaveProperty('phaseStart');
+  });
+
   it('"Analisar de novo" + "Importar" brings only what is missing; a finished closed chat costs no message call (§9.2)', async () => {
     givenOffice();
     await startImport(w, await analyze(w));

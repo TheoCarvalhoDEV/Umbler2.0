@@ -11,7 +11,16 @@ type Obj = Record<string, unknown>;
 
 export interface FakeRequest { method: string; path: string; query: URLSearchParams; auth: string | null }
 /** The next `times` (default 1) requests whose path matches answer `status`; Infinity = always. */
-export interface Fault { path: RegExp; status: number; times?: number; retryAfter?: string; location?: string; cut?: boolean }
+export interface Fault {
+  path: RegExp;
+  status: number;
+  times?: number;
+  retryAfter?: string;
+  location?: string;
+  cut?: boolean;
+  /** only a request whose query has this [name, value] */
+  query?: [string, string];
+}
 export interface FakeFile { body: Buffer; mime: string; status?: number; delayMs?: number }
 
 export interface UmblerWorld {
@@ -182,7 +191,7 @@ export async function startFakeUmbler() {
     const url = new URL(req.url ?? '/', origin);
     const p = url.pathname;
     requests.push({ method: req.method ?? '', path: p, query: url.searchParams, auth: req.headers.authorization ?? null });
-    const fault = faults.find((f) => f.path.test(p) && (f.times ?? 1) > 0);
+    const fault = faults.find((f) => f.path.test(p) && (f.times ?? 1) > 0 && (!f.query || url.searchParams.get(f.query[0]) === f.query[1]));
     if (fault) {
       fault.times = (fault.times ?? 1) - 1;
       if (fault.cut) {

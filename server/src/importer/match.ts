@@ -1,7 +1,6 @@
 import { and, eq, gte, isNull, lte, ne } from 'drizzle-orm';
 import type { Db, Tx } from '../db/client.js';
 import { chats, messages, umblerMap } from '../db/schema.js';
-import { stripSignature } from '../messages/signature.js';
 
 // Spec 2026-10-21 importar-umbler §8: the Umbler API has no WhatsApp id, so an Umbler message and a WhatsApp-history row
 // are the same message when contact, channel, direction, class and text agree within MATCH_WINDOW_MS. Both directions
@@ -24,9 +23,12 @@ export interface Candidate extends Comparable {
   mediaPath: string | null;
 }
 
-/** §8.3: the text both sides compare (media without caption = ''). */
+/**
+ * §8.3: the text both sides compare (media without caption = ''). A first line that is a signature is dropped in any of
+ * the forms it may reach WhatsApp: "*Nome:*", "*Nome*:", "*Nome*" (Umbler's on-wire format is not verified, §8).
+ */
 export function normalizeText(text: string | null): string {
-  return stripSignature((text ?? '').normalize('NFC').replace(/\r\n/g, '\n')).trim();
+  return (text ?? '').normalize('NFC').replace(/\r\n/g, '\n').replace(/^\*[^*\n]{1,200}(?::\*|\*:?)[ \t]*\n/, '').trim();
 }
 
 // §8.2-8.3: direction, class (a GIF is an image in Umbler and a video on WhatsApp: both are 'media') and text.
@@ -108,7 +110,7 @@ export async function hasUmblerMessages(db: Db | Tx): Promise<boolean> {
 export async function claimUmblerTwin(
   tx: Tx,
   scope: { contactId: string; channelId: string },
-  ev: Comparable & { externalId: string },
+  ev: Comparable & { externalId: string; mediaQueued?: boolean },
 ): Promise<boolean> {
   let candidates = await matchCandidates(tx, scope, [ev], 'umbler');
   // §8.2: Umbler location/contact cards are stored as 'text' (§7.7) but the phone sends them as 'unsupported' without text
@@ -120,5 +122,12 @@ export async function claimUmblerTwin(
   const [pair] = pairUp([ev], candidates);
   if (!pair) return false;
   await tx.update(messages).set({ externalId: ev.externalId }).where(eq(messages.id, pair.row.id));
+  if (ev.mediaQueued) {
+    // a file Umbler no longer had: the history media queue fetches it from WhatsApp now that the row has its id (§5.5)
+    await tx
+      .update(messages)
+      .set({ mediaStatus: 'queued' })
+      .where(and(eq(messages.id, pair.row.id), isNull(messages.mediaPath), eq(messages.mediaStatus, 'expired')));
+  }
   return true;
 }

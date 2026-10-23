@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { and, asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { appointments, chats, contacts, messages, scheduledMessages, umblerMap } from '../../src/db/schema.js';
+import { appointments, chatTags, chats, contacts, messages, scheduledMessages, tags, umblerMap } from '../../src/db/schema.js';
 import { importChat } from '../../src/importer/chats.js';
 import { importCatalog, type ImportRun } from '../../src/importer/umbler.js';
 import { insertAppointment } from '../automation/seed.js';
@@ -79,8 +79,10 @@ describe('matching with the WhatsApp history (spec 2026-10-21 importar-umbler §
     expect(Object.fromEntries(mapped.filter((m) => m.umblerId === 'U1' || m.umblerId === 'U2').map((m) => [m.umblerId, m.localId]))).toEqual({ U1: h1, U2: h2 });
   });
 
-  it('a history chat left without messages is deleted (chat.removed); its appointment and scheduled message move to the imported chat', async () => {
+  it('a history chat left without messages is deleted (chat.removed); its appointment, scheduled message and tags move to the imported chat', async () => {
     await ours(historyChat, 0, { body: 'Bom dia', externalId: 'wa1' });
+    const [tag] = await w.ctx.db.select().from(tags).where(eq(tags.name, 'Cliente'));
+    await w.ctx.db.insert(chatTags).values({ chatId: historyChat, tagId: tag!.id });
     const { reminderId } = await insertAppointment(w.ctx, { chatId: historyChat, authorId: w.s.agentA.id, startsAt: new Date('2026-12-01T13:00:00Z') });
     await w.ctx.db.insert(scheduledMessages).values([
       { chatId: historyChat, authorId: w.s.agentA.id, body: 'Lembrete', signature: false, sendAt: new Date('2026-12-01T12:00:00Z'), reminderId },
@@ -97,6 +99,7 @@ describe('matching with the WhatsApp history (spec 2026-10-21 importar-umbler §
       ['Agendada', imported, null, 'pending'],
       ['Lembrete', imported, reminderId, 'pending'],
     ]);
+    expect((await w.ctx.db.select().from(chatTags)).map((t) => [t.chatId, t.tagId])).toEqual([[imported, tag!.id]]);
   });
 
   it("a match whose file had expired on WhatsApp gets Umbler's file; a location gets the §7.7 text", async () => {
