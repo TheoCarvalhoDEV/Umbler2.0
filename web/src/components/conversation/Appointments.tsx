@@ -4,8 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PlusIcon } from '@phosphor-icons/react';
 import {
   APPOINTMENT_LIMITS, REMINDER_UNITS, SCHEDULE_MAX_AHEAD_MS, SCHEDULE_TEXT_MAX, appointmentTimeProblem, fillReminderText,
-  formatOfficeDateTime, isoToOfficeLocal, officeLocalToIso, reminderSendAt, reminderTextProblem, remindersProblem,
-  scheduleTimeProblem, type AppointmentDto, type AppointmentReminderDto, type ChatDetail, type ContactDto, type ReminderInput,
+  appointmentStatusProblem, formatOfficeDateTime, isoToOfficeLocal, officeLocalToIso, reminderSendAt, reminderTextProblem, remindersProblem,
+  scheduleTimeProblem, type AppointmentDto, type AppointmentReminderDto, type AppointmentStatus, type ChatDetail, type ContactDto, type ReminderInput,
   type ReminderUnit,
 } from '@talk/shared';
 import { api, qk } from '../../lib/api';
@@ -49,6 +49,13 @@ export function reminderStatus(r: AppointmentReminderDto): string {
       return 'Não criado: o horário de envio já tinha passado';
   }
 }
+
+export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
+  scheduled: 'Agendado', confirmed: 'Confirmado', attended: 'Compareceu', missed: 'Faltou',
+};
+export const STATUS_TONE: Record<AppointmentStatus, keyof typeof badgeTone> = {
+  scheduled: 'neutral', confirmed: 'accent', attended: 'success', missed: 'danger',
+};
 
 /** The appointment lists and the scheduled-message lists (a reminder is one): both under ['chats']. */
 function useRefresh() {
@@ -384,6 +391,24 @@ export function AppointmentItem({ item, page = false }: { item: AppointmentDto; 
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // the same rule as the server, so the buttons offered are the ones it accepts
+  const now = new Date();
+  const allows = (s: AppointmentStatus) =>
+    appointmentStatusProblem({ startsAt: new Date(item.startsAt), canceledAt: item.canceledAt ? new Date(item.canceledAt) : null }, s, now) === null;
+  const mark = item.canMark;
+  const canConfirm = mark && allows('confirmed');
+  const canAttend = mark && allows('attended');
+
+  async function setStatus(status: AppointmentStatus) {
+    setError(null);
+    try {
+      await api.appointments.setStatus(item.id, status);
+      await refresh();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
   async function cancel() {
     const ok = await confirmDialog({
       title: 'Cancelar o compromisso?',
@@ -413,7 +438,11 @@ export function AppointmentItem({ item, page = false }: { item: AppointmentDto; 
             </Link>
           )}
           <span>por {item.authorName}</span>
-          {item.canceledAt && <span className={`${badge} ${badgeTone.neutral}`}>Cancelado</span>}
+          {item.canceledAt ? (
+            <span className={`${badge} ${badgeTone.neutral}`}>Cancelado</span>
+          ) : (
+            <span className={`${badge} ${badgeTone[STATUS_TONE[item.status]]}`}>{APPOINTMENT_STATUS_LABELS[item.status]}</span>
+          )}
         </p>
         {item.note && (
           <div className="rounded-block bg-sunken px-2.5 py-1.5 text-[13px] leading-[18px] text-fg">
@@ -428,6 +457,36 @@ export function AppointmentItem({ item, page = false }: { item: AppointmentDto; 
           </p>
         )}
       </div>
+      {(canConfirm || canAttend || (mark && item.status === 'missed' && item.canEdit)) && (
+        <span className="flex w-full flex-wrap items-center gap-2">
+          {canConfirm && (
+            <button
+              type="button"
+              onClick={() => void setStatus(item.status === 'confirmed' ? 'scheduled' : 'confirmed')}
+              className={button('secondary', 'sm')}
+            >
+              {item.status === 'confirmed' ? 'Desfazer confirmação' : 'Confirmar'}
+            </button>
+          )}
+          {canAttend &&
+            (['attended', 'missed'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={item.status === s}
+                onClick={() => void setStatus(item.status === s ? 'scheduled' : s)}
+                className={button('secondary', 'sm')}
+              >
+                {APPOINTMENT_STATUS_LABELS[s]}
+              </button>
+            ))}
+          {item.status === 'missed' && item.canEdit && (
+            <button type="button" onClick={() => setEditing(true)} className={button('secondary', 'sm')}>
+              Remarcar
+            </button>
+          )}
+        </span>
+      )}
       {item.canEdit && (
         <span className="flex shrink-0 items-center gap-2">
           <button type="button" onClick={() => setEditing(true)} className={button('secondary', 'sm')}>

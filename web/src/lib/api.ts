@@ -1,8 +1,11 @@
 import type { InfiniteData } from '@tanstack/react-query';
 import type {
   AppointmentDto,
+  AppointmentFiltersQuery,
+  AppointmentListQuery,
   AppointmentRemindersDto,
-  AppointmentTab,
+  AppointmentStatus,
+  AppointmentSummaryDto,
   AutoRulesDto,
   BotAction,
   BotDto,
@@ -339,7 +342,11 @@ export const api = Object.assign(call, {
     /** The contact's upcoming ones, in every chat of theirs the user sees (spec 2026-10-21 compromissos §3.4). */
     listForChat: (chatId: string) => request<AppointmentDto[]>('GET', `/api/chats/${enc(chatId)}/appointments`),
     /** Mine (an admin: everyone's), one tab at a time (§3.5). */
-    list: (tab: AppointmentTab) => request<AppointmentDto[]>('GET', `/api/appointments${qs({ tab })}`),
+    list: (q: AppointmentListQuery = {}) => request<AppointmentDto[]>('GET', `/api/appointments${qs(q)}`),
+    /** The counters follow the same Atendente/Setor/Busca filters as the list (spec 2026-10-23 controle). */
+    summary: (f: AppointmentFiltersQuery = {}) => request<AppointmentSummaryDto>('GET', `/api/appointments/summary${qs(f)}`),
+    setStatus: (id: string, status: AppointmentStatus) =>
+      request<AppointmentDto>('POST', `/api/appointments/${enc(id)}/status`, { status }),
     create: (input: AppointmentInput) => request<AppointmentDto>('POST', '/api/appointments', input),
     update: (id: string, patch: AppointmentPatch) => request<AppointmentDto>('PATCH', `/api/appointments/${enc(id)}`, patch),
     cancel: (id: string) => request<AppointmentDto>('POST', `/api/appointments/${enc(id)}/cancel`),
@@ -416,7 +423,8 @@ export const qk = {
   /** Every appointment list (prefix), under ['chats'] like the scheduled ones (spec 2026-10-21 compromissos). */
   appointments: ['chats', 'appointments'] as const,
   chatAppointments: (chatId: string) => ['chats', 'appointments', 'chat', chatId] as const,
-  appointmentList: (tab: AppointmentTab) => ['chats', 'appointments', 'list', tab] as const,
+  appointmentList: (q: AppointmentListQuery) => ['chats', 'appointments', 'list', q] as const,
+  appointmentSummary: (f: AppointmentFiltersQuery) => ['chats', 'appointments', 'summary', f] as const,
   appointmentReminders: ['settings', 'appointment-reminders'] as const,
   channels: ['channels'] as const,
   bots: ['bots'] as const,

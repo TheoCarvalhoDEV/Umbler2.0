@@ -91,7 +91,7 @@ function MessagesTab({ tab, onTab }: { tab: ScheduledTab; onTab: (t: ScheduledTa
 function AppointmentsTab({ tab, onTab }: { tab: AppointmentTab; onTab: (t: AppointmentTab) => void }) {
   const [creating, setCreating] = useState(false);
   // ponytail: polls every 30 s like the messages tab (spec §10: no real-time notice on the page)
-  const list = useQuery({ queryKey: qk.appointmentList(tab), queryFn: () => api.appointments.list(tab), refetchInterval: 30_000 });
+  const list = useQuery({ queryKey: qk.appointmentList({ tab }), queryFn: () => api.appointments.list({ tab }), refetchInterval: 30_000 });
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-3">
