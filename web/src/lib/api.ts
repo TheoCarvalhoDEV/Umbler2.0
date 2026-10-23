@@ -39,6 +39,9 @@ import type {
   SettingsDto,
   TagDto,
   TimelineItem,
+  UmblerImportDto,
+  UmblerImportStatusDto,
+  UmblerMappingDto,
   UserDto,
   UserPreferences,
 } from '@talk/shared';
@@ -379,6 +382,13 @@ export const api = Object.assign(call, {
     start: (chatId: string, botId: string) => request<BotRunDto>('POST', `/api/chats/${enc(chatId)}/bot-runs`, { botId }),
     stop: (runId: string) => request<BotRunDto>('POST', `/api/bot-runs/${enc(runId)}/stop`),
   },
+  /** Spec 2026-10-21 importar-umbler §10 (admin). */
+  umblerImport: {
+    get: () => request<UmblerImportStatusDto>('GET', '/api/umbler-import'),
+    analyze: () => request<UmblerImportDto>('POST', '/api/umbler-import/analyze'),
+    start: (id: string, mapping: UmblerMappingDto) => request<UmblerImportDto>('POST', `/api/umbler-import/${enc(id)}/start`, { mapping }),
+    resume: (id: string) => request<UmblerImportDto>('POST', `/api/umbler-import/${enc(id)}/resume`),
+  },
 });
 
 /** React Query keys. Everything chat-related lives under ['chats'] so one invalidation refreshes it all. */
@@ -426,4 +436,5 @@ export const qk = {
   botManual: ['bots', 'manual'] as const,
   /** Under ['chats'] so the WS reconnect invalidation refreshes it too. */
   chatBotRuns: (chatId: string) => ['chats', 'bot-runs', chatId] as const,
+  umblerImport: ['umbler-import'] as const,
 };

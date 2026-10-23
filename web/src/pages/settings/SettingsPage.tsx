@@ -1,7 +1,7 @@
 import { useState, type ComponentType } from 'react';
 import {
-  BuildingsIcon, CalendarStarIcon, ChatsCircleIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon, SlidersHorizontalIcon,
-  TagIcon, TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
+  BuildingsIcon, CalendarStarIcon, ChatsCircleIcon, CloudArrowDownIcon, FunnelIcon, LightningIcon, MagnifyingGlassIcon, RobotIcon,
+  SlidersHorizontalIcon, TagIcon, TextAaIcon, TimerIcon, UserCircleIcon, UsersThreeIcon, WhatsappLogoIcon, type Icon,
 } from '@phosphor-icons/react';
 import { NavLink, Navigate, useParams } from 'react-router';
 import { useCurrentUser } from '../../lib/auth';
@@ -18,6 +18,7 @@ import { ChatSettings } from './ChatSettings';
 import { AutoRulesSettings } from './AutoRulesSettings';
 import { AppointmentSettings } from './AppointmentSettings';
 import { BotsSettings } from './bots/BotsSettings';
+import { UmblerImportSettings } from './UmblerImportSettings';
 import { card, pageTitle, searchInput, searchPill } from '../../components/ui';
 
 const GROUPS = ['Você', 'Atendimento', 'Equipe e cadastros'] as const;
@@ -37,6 +38,7 @@ const SECTIONS: Item[] = [
   { path: 'atendentes', label: 'Atendentes', icon: UsersThreeIcon, group: 'Equipe e cadastros', adminOnly: true, page: UsersSettings },
   { path: 'etiquetas', label: 'Etiquetas', icon: TagIcon, group: 'Equipe e cadastros', adminOnly: true, page: TagsSettings },
   { path: 'campos', label: 'Campos personalizados', icon: TextAaIcon, group: 'Equipe e cadastros', adminOnly: true, page: CustomFieldsSettings },
+  { path: 'importar-umbler', label: 'Importar do Umbler', icon: CloudArrowDownIcon, group: 'Equipe e cadastros', adminOnly: true, page: UmblerImportSettings },
 ];
 
 /** For the search: "preferencias" finds Preferências. */
