@@ -130,6 +130,21 @@ describe('eventText for scheduled messages and automatic rules (spec 2026-10-20 
   });
 });
 
+describe('eventText for appointments (spec 2026-10-21 compromissos §6)', () => {
+  it('says marcado, remarcado and cancelado, with the date in Cuiabá time', () => {
+    const data = { appointmentId: 'a1', title: 'Audiência', startsAt: '2026-10-21T18:00:00.000Z' }; // 14:00 in Cuiabá
+    expect(eventText(event({ kind: 'appointment_scheduled', authorName: 'Bia', data }), new Map())).toBe(
+      'Compromisso “Audiência” marcado por Bia para 21/10/2026 14:00',
+    );
+    expect(eventText(event({ kind: 'appointment_scheduled', authorName: 'Bia', data: { ...data, edited: true } }), new Map())).toBe(
+      'Compromisso “Audiência” remarcado por Bia para 21/10/2026 14:00',
+    );
+    expect(
+      eventText(event({ kind: 'appointment_canceled', authorName: 'Bia', data: { appointmentId: 'a1', title: 'Audiência' } }), new Map()),
+    ).toBe('Compromisso “Audiência” cancelado por Bia');
+  });
+});
+
 describe('eventText for history events', () => {
   it('describes an import into a history chat and a contact merge', () => {
     expect(eventText(event({ kind: 'history_imported', data: { count: 1234 } }), new Map())).toBe(

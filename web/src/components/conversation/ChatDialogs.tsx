@@ -17,6 +17,7 @@ export function Modal({ title, onCancel, children }: { title: string; onCancel: 
       aria-label={title}
       onCancel={(e) => {
         e.preventDefault(); // Esc: let React unmount it
+        e.stopPropagation(); // a dialog opened over another (Compromissos → Novo compromisso) closes alone
         onCancel();
       }}
       className={dialog}

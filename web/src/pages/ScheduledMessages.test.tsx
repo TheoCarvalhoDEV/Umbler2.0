@@ -3,8 +3,21 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import type { ScheduledMessageDto } from '@talk/shared';
+import { DEFAULT_APPOINTMENT_REMINDERS, type AppointmentDto, type ScheduledMessageDto } from '@talk/shared';
 import { ScheduledMessagesPage } from './ScheduledMessages';
+
+// jsdom has no modal <dialog> API; the browser opens ChatDialogs' Modal with showModal()
+HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+  this.setAttribute('open', '');
+};
+
+const appointment = (over: Partial<AppointmentDto> = {}): AppointmentDto => ({
+  id: 'a1', chatId: 'c1', contact: { id: 'k1', name: 'Maria Cliente', phone: '5565999999999' }, authorId: 'u1', authorName: 'Ana Lima',
+  title: 'Audiência', startsAt: '2026-10-21T18:00:00.000Z', note: null, canceledAt: null, canceledByName: null,
+  createdAt: '2026-10-20T12:00:00.000Z', canEdit: true,
+  reminders: [{ id: 'r1', amount: 1, unit: 'hours', text: 'Olá', sendAt: '2026-10-21T17:00:00.000Z', status: 'pending', scheduledId: 's1', error: null }],
+  ...over,
+});
 
 function stubFetch(routes: Record<string, unknown>) {
   vi.stubGlobal(
@@ -73,4 +86,37 @@ it('defaults to Pendentes, links a sent message to the chat it went to, and swit
 
   fireEvent.click(screen.getByRole('tab', { name: 'Canceladas' }));
   expect(await screen.findByText('Nenhuma mensagem aqui.')).toBeTruthy();
+});
+
+it('?aba=compromissos opens Compromissos on Próximos; each tab keeps its own filter (spec 2026-10-21 compromissos §3.5)', async () => {
+  stubFetch({
+    'GET /api/appointments?tab=upcoming': [appointment()],
+    'GET /api/appointments?tab=canceled': [appointment({ id: 'a2', title: 'Perícia', canceledAt: '2026-10-20T12:00:00.000Z', canEdit: false })],
+    'GET /api/scheduled-messages?status=failed': [],
+  });
+  renderPage('/agendamentos?aba=compromissos&status=failed');
+  expect(await screen.findByText('Audiência')).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Compromissos' }).getAttribute('aria-selected')).toBe('true');
+  expect(screen.getByRole('tab', { name: 'Próximos' }).getAttribute('aria-selected')).toBe('true');
+  expect(screen.getByRole('link', { name: 'Maria Cliente' }).getAttribute('href')).toBe('/chats/c1');
+  expect(screen.getByText('Pendente · 21/10/2026 13:00')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Cancelados' }));
+  expect(await screen.findByText('Cancelado')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Editar' })).toBeNull();
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Mensagens' }));
+  expect(await screen.findByText('Nenhuma mensagem aqui.')).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Falharam' }).getAttribute('aria-selected')).toBe('true');
+  fireEvent.click(screen.getByRole('tab', { name: 'Compromissos' }));
+  expect(screen.getByRole('tab', { name: 'Cancelados' }).getAttribute('aria-selected')).toBe('true');
+});
+
+it('an empty tab says "Nenhum compromisso aqui.", and "Novo compromisso" opens the form with "Cliente"', async () => {
+  stubFetch({ 'GET /api/appointments?tab=past': [], 'GET /api/settings/appointment-reminders': DEFAULT_APPOINTMENT_REMINDERS });
+  renderPage('/agendamentos?aba=compromissos&situacao=past');
+  expect(await screen.findByText('Nenhum compromisso aqui.')).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Passados' }).getAttribute('aria-selected')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: 'Novo compromisso' }));
+  expect(await screen.findByLabelText('Cliente')).toBeTruthy();
 });

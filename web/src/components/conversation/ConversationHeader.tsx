@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowCounterClockwise, ArrowsLeftRight, Check, LockSimple, LockSimpleOpen, MagnifyingGlass, User, UserPlus,
+  ArrowCounterClockwise, ArrowsLeftRight, CalendarStarIcon, Check, LockSimple, LockSimpleOpen, MagnifyingGlass, User, UserPlus,
 } from '@phosphor-icons/react';
 import type { BotAction, BotRunningErrorBody, ChatDetail } from '@talk/shared';
 import { api, botRunningRuns, qk } from '../../lib/api';
@@ -10,6 +10,7 @@ import { useCurrentUser } from '../../lib/auth';
 import { contactLabel } from '../../lib/format';
 import { Avatar } from '../Avatar';
 import { badge, badgeTone, button, iconButton, iconButtonOn, sectionTitle } from '../ui';
+import { ChatAppointmentsDialog } from './Appointments';
 import { BotRunningDialog, CloseDialog, TransferDialog } from './ChatDialogs';
 import { errorMessage, isConflict } from './model';
 
@@ -69,6 +70,7 @@ export function ConversationHeader({
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list }).data ?? [];
   const users = useQuery({ queryKey: qk.users, queryFn: api.users.list }).data ?? [];
   const [dialog, setDialog] = useState<'transfer' | 'close' | null>(null);
+  const [appointmentsOpen, setAppointmentsOpen] = useState(false); // spec 2026-10-21 compromissos §3.1
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [botAsk, setBotAsk] = useState<{
@@ -160,6 +162,10 @@ export function ConversationHeader({
           <HeaderButton label="Contato" pressed={contactPanelOpen} onClick={onToggleContactPanel}>
             <User size={18} />
           </HeaderButton>
+          {/* open, closed and history chats alike: the reminder's send opens a new chat when needed */}
+          <HeaderButton label="Compromissos" onClick={() => setAppointmentsOpen(true)}>
+            <CalendarStarIcon size={18} />
+          </HeaderButton>
           {open && (
             <HeaderButton
               label={chat.private ? 'Tornar pública' : 'Tornar privada'}
@@ -240,6 +246,7 @@ export function ConversationHeader({
           }}
         />
       )}
+      {appointmentsOpen && <ChatAppointmentsDialog chat={chat} onClose={() => setAppointmentsOpen(false)} />}
     </>
   );
 }

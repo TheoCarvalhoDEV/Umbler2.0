@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client.js';
 import * as schema from '../../src/db/schema.js';
 import {
-  botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits, messageFavorites, messages, scheduledMessages,
-  sectors, tags,
+  appointmentReminders, appointments, botRuns, botVersions, bots, chatTags, chats, contacts, historyImports, messageEdits,
+  messageFavorites, messages, scheduledMessages, sectors, tags,
 } from '../../src/db/schema.js';
 import { makeTestDb, seedBasics, type Seeded } from '../helpers.js';
 
@@ -33,7 +33,7 @@ describe('database schema', () => {
 
   it('applies the migration: every schema table and column exists', async () => {
     const tables = Object.values(schema).filter((t) => is(t, PgTable));
-    expect(tables).toHaveLength(26);
+    expect(tables).toHaveLength(28);
     // select() lists every column explicitly, so a column missing from the SQL fails here.
     for (const t of tables) await db.select().from(t).limit(1);
   });
@@ -151,6 +151,33 @@ describe('database schema', () => {
     await db.delete(messages).where(eq(messages.id, m!.id));
     expect((await db.select().from(scheduledMessages))[0]!.messageId).toBeNull();
     await db.delete(chats).where(eq(chats.id, chat!.id));
+    expect(await db.select().from(scheduledMessages)).toEqual([]);
+  });
+
+  it('appointments: one scheduled message per reminder at most, unlinked with the reminder, gone with the chat (spec 2026-10-21 compromissos §5.1)', async () => {
+    const [c] = await db.insert(contacts).values({ phone: '5565999990005' }).returning({ id: contacts.id });
+    const [chat] = await db
+      .insert(chats)
+      .values({ contactId: c!.id, channelId: s.channelId, sectorId: s.defaultSector })
+      .returning({ id: chats.id });
+    const [a] = await db
+      .insert(appointments)
+      .values({ chatId: chat!.id, authorId: s.agentA.id, title: 'Audiência', startsAt: new Date() })
+      .returning();
+    expect(a).toMatchObject({ note: null, signature: true, canceledAt: null, canceledBy: null });
+    const [r] = await db
+      .insert(appointmentReminders)
+      .values({ appointmentId: a!.id, amount: 2, unit: 'days', text: 'Olá, {nome}!' })
+      .returning();
+    const row = { chatId: chat!.id, authorId: s.agentA.id, body: 'Olá, Maria!', signature: true, sendAt: new Date() };
+    expect(await pgCode(db.insert(scheduledMessages).values({ ...row, reminderId: r!.id }))).toBeNull();
+    expect(await pgCode(db.insert(scheduledMessages).values({ ...row, reminderId: r!.id }))).toBe(UNIQUE_VIOLATION);
+    expect(await pgCode(db.insert(scheduledMessages).values([row, row]))).toBeNull(); // plain scheduled messages: no reminder
+
+    await db.delete(appointmentReminders).where(eq(appointmentReminders.id, r!.id));
+    expect((await db.select().from(scheduledMessages)).map((x) => x.reminderId)).toEqual([null, null, null]);
+    await db.delete(chats).where(eq(chats.id, chat!.id));
+    expect(await db.select().from(appointments)).toEqual([]);
     expect(await db.select().from(scheduledMessages)).toEqual([]);
   });
 });

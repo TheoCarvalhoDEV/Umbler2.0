@@ -25,6 +25,12 @@ interface Props {
   selection?: { selected: boolean; disabled: boolean; onToggle(): void };
 }
 
+/** The office's messages start with the WhatsApp signature ("*Setor - Nome:*" then a line break; the Umbler era used
+ * the same shape). The card shows what was said, so the signature line goes. Only for the office's own messages. */
+export function withoutSignature(preview: string): string {
+  return preview.replace(/^\*[^*\n]{1,80}:\*\s*/, '');
+}
+
 const NO_TAGS: ReadonlyMap<string, TagDto> = new Map();
 // The card's third line has room for the sector, two tags and the owner; the rest becomes "+N".
 const MAX_CHIPS = 2;
@@ -93,7 +99,7 @@ export function ChatListItem({
   const chips = [...chipsOf(chat.chatTagIds ?? [], 'chat'), ...chipsOf(chat.tagIds, 'contact')];
   const highlighted = active || !!selection?.selected;
   return (
-    <li className={`group/row flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
+    <li className={`group/row relative flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
       {selection && (
         <label
           title={selection.disabled ? `Até ${BULK_MAX} conversas por vez` : undefined}
@@ -119,7 +125,7 @@ export function ChatListItem({
             : onOpen
         }
         aria-current={active ? 'true' : undefined}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-item py-2.5 pr-1 pl-2.5 text-left"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-item py-2.5 pr-3 pl-2.5 text-left"
       >
         <Avatar name={chat.contact.name} src={chat.contact.avatarUrl} className="size-[46px] text-sm" />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -139,7 +145,7 @@ export function ChatListItem({
               <span className="truncate">
                 {/* like WhatsApp: the office spoke last */}
                 {chat.lastOutStatus && <span className="font-semibold text-fg-2">Você: </span>}
-                {chat.lastMessagePreview ?? ''}
+                {chat.lastOutStatus ? withoutSignature(chat.lastMessagePreview ?? '') : (chat.lastMessagePreview ?? '')}
               </span>
             </span>
             {unread && (
@@ -177,7 +183,7 @@ export function ChatListItem({
         </span>
       </button>
       {!selection && (
-        <details className="group/menu relative shrink-0 pt-1 pr-1.5">
+        <details className="group/menu absolute right-1.5 bottom-1.5 z-10">
           <summary
             aria-label="Opções da conversa"
             className="grid size-8 cursor-pointer list-none place-items-center rounded-full text-muted opacity-0 transition group-hover/row:opacity-100 group-open/menu:bg-panel group-open/menu:text-fg group-open/menu:opacity-100 hover:bg-panel hover:text-fg focus-visible:opacity-100 pointer-coarse:opacity-100 [&::-webkit-details-marker]:hidden"

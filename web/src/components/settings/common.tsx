@@ -240,6 +240,8 @@ export function SaveBar(props: {
   saved?: boolean;
   /** Salvar disabled (invalid form). */
   disabled?: boolean;
+  /** What it says after a save; "Alterações salvas." by default (Compromissos: "Lembretes salvos."). */
+  savedText?: string;
 }) {
   const [justSaved, setJustSaved] = useState(false);
   useEffect(() => {
@@ -271,7 +273,7 @@ export function SaveBar(props: {
         </>
       ) : (
         <p role="status" className={`${okText} mr-auto py-2.5`}>
-          Alterações salvas.
+          {props.savedText ?? 'Alterações salvas.'}
         </p>
       )}
     </div>

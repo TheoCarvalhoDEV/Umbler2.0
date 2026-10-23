@@ -5,7 +5,7 @@ import type { BotRunningBehavior, NotificationDto } from './bots.js';
 import type { MessageChangeSource } from './message-actions.js';
 import type { UserPreferences } from './preferences.js';
 import type { ChatSort } from './chat-list.js';
-import type { ScheduledStatus } from './automation.js';
+import type { ReminderUnit, ScheduledStatus } from './automation.js';
 export { TAG_COLORS, tagColorHex } from './palette.js';
 export {
   BLOCK_TYPES, WEEKDAYS, WEEKDAY_LABELS, DEFAULT_TIMEZONE, RULE_OPERATOR_LABELS, NATIVE_CONTACT_FIELDS, BLOCK_CATALOG,
@@ -27,6 +27,8 @@ export {
   OFFICE_TIMEZONE, SCHEDULE_MIN_LEAD_MS, SCHEDULE_MAX_AHEAD_MS, SCHEDULE_TEXT_MAX, SCHEDULED_STATUSES, SCHEDULED_TABS,
   RETURN_TO_QUEUE_MINUTES, CLOSE_INACTIVE_HOURS, DEFAULT_AUTO_RULES, scheduleTimeProblem, officeLocalToIso, isoToOfficeLocal,
   formatOfficeDateTime,
+  REMINDER_UNITS, APPOINTMENT_LIMITS, REMINDER_PLACEHOLDERS, APPOINTMENT_TABS, DEFAULT_APPOINTMENT_REMINDERS, appointmentTimeProblem,
+  reminderSendAt, reminderTextProblem, remindersProblem, fillReminderText,
 } from './automation.js';
 export type * from './automation.js';
 
@@ -82,7 +84,9 @@ export type ChatEventKind =
   | 'note_deleted' // data: {} (spec 2026-10-19 §3); the event author is who deleted the note
   // spec 2026-10-20 agendamentos: data { scheduledId, sendAt, edited? } | { scheduledId } | { minutes, previousOwnerId }.
   // The inactivity close is a 'closed' event with data.reason 'inactivity' and no author.
-  | 'message_scheduled' | 'scheduled_canceled' | 'returned_to_queue';
+  | 'message_scheduled' | 'scheduled_canceled' | 'returned_to_queue'
+  // spec 2026-10-21 compromissos: data { appointmentId, title, startsAt, edited? } | { appointmentId, title } (never the note)
+  | 'appointment_scheduled' | 'appointment_canceled';
 export type TimelineItem = ({ type: 'message' } & MessageDto) | ({ type: 'event' } & ChatEventDto);
 /** GET /api/messages/:id/edits: the text before each edit, newest first. */
 export interface MessageEditDto { id: string; previousBody: string | null; source: MessageChangeSource; editedByName: string | null; newTextUnavailable: boolean; editedAt: string }
@@ -101,8 +105,17 @@ export interface ScheduledMessageDto { id: string; chatId: string; contact: { id
   authorId: string; authorName: string; body: string; signature: boolean; attachment: { name: string; mime: string; size: number } | null;
   sendAt: string; status: ScheduledStatus; error: string | null; messageId: string | null; sentChatId: string | null;
   createdAt: string; finishedAt: string | null;
-  // the author or an admin, while still pending
-  canEdit: boolean }
+  // the author or an admin, while still pending; never for an appointment's reminder (spec 2026-10-21 compromissos §3.7)
+  canEdit: boolean;
+  // the appointment of a reminder; optional so existing literals compile, the server always fills it
+  appointment?: { id: string; title: string } | null }
+/** Spec 2026-10-21 compromissos §5.2. status 'skipped' = "Não criado": no scheduled message (its send time had passed). */
+export interface AppointmentReminderDto { id: string; amount: number; unit: ReminderUnit; text: string; sendAt: string;
+  status: ScheduledStatus | 'skipped'; scheduledId: string | null; error: string | null }
+/** `chatId` = the chat it was made in; reminders next first; canEdit = the author or an admin, who sees that chat, until cancelled. */
+export interface AppointmentDto { id: string; chatId: string; contact: { id: string; name: string | null; phone: string | null };
+  authorId: string; authorName: string; title: string; startsAt: string; note: string | null; canceledAt: string | null;
+  canceledByName: string | null; createdAt: string; reminders: AppointmentReminderDto[]; canEdit: boolean }
 export type WsEvent =
   | { type: 'chat.updated'; chat: ChatListItem }
   | { type: 'chat.removed'; chatId: string }

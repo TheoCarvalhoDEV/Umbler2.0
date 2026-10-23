@@ -2,7 +2,8 @@ import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
-  CLOSE_INACTIVE_HOURS, DEFAULT_AUTO_RULES, RETURN_TO_QUEUE_MINUTES, type AutoRulesDto, type BotRunningBehavior, type SettingsDto,
+  APPOINTMENT_LIMITS, CLOSE_INACTIVE_HOURS, DEFAULT_APPOINTMENT_REMINDERS, DEFAULT_AUTO_RULES, REMINDER_UNITS, RETURN_TO_QUEUE_MINUTES,
+  SCHEDULE_TEXT_MAX, remindersProblem, type AppointmentRemindersDto, type AutoRulesDto, type BotRunningBehavior, type SettingsDto,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -57,6 +58,28 @@ export async function getAutoRules(db: Db | Tx): Promise<AutoRulesDto> {
   return parsed.success ? parsed.data : DEFAULT_AUTO_RULES;
 }
 
+/**
+ * Spec 2026-10-21 compromissos §3.2: 1 to 5 reminders, 1–30 days or 1–48 hours before, 1–4096 characters each. The create
+ * route and the default reminders (§4) read the same list; the placeholder and same-time rules are remindersProblem.
+ */
+export const reminderList = z
+  .array(
+    z
+      .object({ amount: z.number().int(), unit: z.enum(REMINDER_UNITS), text: z.string().trim().min(1).max(SCHEDULE_TEXT_MAX) })
+      .refine((r) => r.amount >= APPOINTMENT_LIMITS[r.unit].min && r.amount <= APPOINTMENT_LIMITS[r.unit].max),
+  )
+  .min(1)
+  .max(APPOINTMENT_LIMITS.remindersMax);
+
+const AppointmentRemindersBody = z.object({ reminders: reminderList });
+
+/** settings 'appointment_reminders' (spec 2026-10-21 compromissos §4); the defaults when the key is missing or invalid. */
+export async function getAppointmentReminders(db: Db | Tx): Promise<AppointmentRemindersDto> {
+  const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'appointment_reminders'));
+  const parsed = AppointmentRemindersBody.safeParse(row?.value);
+  return parsed.success && !remindersProblem(parsed.data.reminders, null) ? parsed.data : DEFAULT_APPOINTMENT_REMINDERS;
+}
+
 async function readSettings(db: Db): Promise<SettingsDto> {
   const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'closing_message'));
   return {
@@ -83,6 +106,22 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: AppCtx): void 
       .values({ key: 'auto_rules', value })
       .onConflictDoUpdate({ target: settings.key, set: { value } });
     return getAutoRules(ctx.db);
+  });
+
+  // Spec 2026-10-21 compromissos §4 (decision 5): every user reads them (the form starts with them); only an admin saves them.
+  // Changing them never changes saved appointments: each reminder keeps its own copy of the text.
+  app.get('/api/settings/appointment-reminders', async () => getAppointmentReminders(ctx.db));
+
+  app.put('/api/settings/appointment-reminders', async (req) => {
+    if (req.user.role !== 'admin') throw forbidden();
+    const value = AppointmentRemindersBody.parse(req.body);
+    const problem = remindersProblem(value.reminders, null); // no contact here: {nome} is fine
+    if (problem) throw badRequest(problem);
+    await ctx.db
+      .insert(settings)
+      .values({ key: 'appointment_reminders', value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } });
+    return getAppointmentReminders(ctx.db);
   });
 
   app.put('/api/settings', async (req) => {

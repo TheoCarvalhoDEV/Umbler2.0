@@ -1,6 +1,6 @@
 // Spec 2026-10-20 agendamentos §4: the two automatic rules, batched. The selection is a hint; the UPDATE in
 // returnChatToQueue / closeChatForInactivity re-checks it, so running twice (or racing an agent) never repeats an effect.
-import { and, asc, eq, gte, inArray, isNotNull, notExists, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, notExists, sql } from 'drizzle-orm';
 import { NON_TERMINAL_RUN_STATES } from '@talk/shared';
 import { errorTag } from '../bots/scheduler.js';
 import { getAutoRules } from '../catalog/settings.js';
@@ -72,11 +72,15 @@ async function closeInactiveChats(ctx: AppCtx, hours: number, sendClosingMessage
         eq(chats.triagePending, false),
         sql`coalesce(${chats.lastMessageAt}, ${chats.createdAt}) < ${cutoff.toISOString()}::timestamptz`,
         noRunningBot(ctx), // the chatbot has its own inactivity
+        // a pending scheduled message keeps the chat open; an appointment's reminder does not (spec 2026-10-21 compromissos
+        // §3.6, decision 10): it may be 30 days away, and its send opens a new chat in the original sector anyway
         notExists(
           ctx.db
             .select({ one })
             .from(scheduledMessages)
-            .where(and(eq(scheduledMessages.chatId, chats.id), inArray(scheduledMessages.status, OPEN_STATUSES))),
+            .where(
+              and(eq(scheduledMessages.chatId, chats.id), inArray(scheduledMessages.status, OPEN_STATUSES), isNull(scheduledMessages.reminderId)),
+            ),
         ),
       ),
     )
