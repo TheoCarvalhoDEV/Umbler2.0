@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { APPOINTMENT_LIMITS, APPOINTMENT_TABS, SCHEDULE_TEXT_MAX, SCHEDULED_TABS } from '@talk/shared';
+import { APPOINTMENT_LIMITS, APPOINTMENT_STATUSES, APPOINTMENT_TABS, SCHEDULE_TEXT_MAX, SCHEDULED_TABS } from '@talk/shared';
 import { reminderList } from '../catalog/settings.js';
 import { readParts } from '../chats/routes.js';
 import type { AppCtx } from '../ctx.js';
-import { cancelAppointment, createAppointment, listAppointments, listChatAppointments, updateAppointment } from './appointments.js';
+import { cancelAppointment, createAppointment, listAppointments, listChatAppointments, setAppointmentStatus, updateAppointment } from './appointments.js';
 import { cancelScheduled, createScheduled, listChatScheduled, listScheduled, updateScheduled } from './scheduled.js';
 
 const idParams = z.object({ id: z.uuid() });
@@ -83,4 +83,7 @@ export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): voi
   });
 
   app.post('/api/appointments/:id/cancel', async (req) => cancelAppointment(ctx, req.user, idParams.parse(req.params).id));
+
+  app.post('/api/appointments/:id/status', async (req) =>
+    setAppointmentStatus(ctx, req.user, idParams.parse(req.params).id, z.object({ status: z.enum(APPOINTMENT_STATUSES) }).parse(req.body).status));
 }

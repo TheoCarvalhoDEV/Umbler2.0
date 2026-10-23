@@ -1,0 +1,1 @@
+ALTER TABLE "appointments" ADD COLUMN "status" text DEFAULT 'scheduled' NOT NULL;

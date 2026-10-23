@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
-  APPOINTMENT_CANCELED, appointmentTimeProblem, fillReminderText, reminderSendAt, reminderTextProblem, remindersProblem, scheduleTimeProblem,
-  type AppointmentDto, type AppointmentTab, type ReminderInput,
+  APPOINTMENT_CANCELED, appointmentStatusProblem, appointmentTimeProblem, fillReminderText, reminderSendAt, reminderTextProblem, remindersProblem, scheduleTimeProblem,
+  type AppointmentDto, type AppointmentStatus, type AppointmentTab, type ReminderInput,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -55,7 +55,10 @@ async function appointmentDtos(db: Db, user: AuthUser, where: SQL | undefined, o
     .from(appointmentReminders)
     .leftJoin(scheduledMessages, eq(scheduledMessages.reminderId, appointmentReminders.id))
     .where(inArray(appointmentReminders.appointmentId, rows.map((row) => row.a.id)));
-  return rows.map(({ a, chat, ...r }) => ({
+  return rows.map(({ a, chat, ...r }) => {
+    // decision: also needs the chat, like every write (spec §2)
+    const canMark = !a.canceledAt && canManage(user, a) && canSee(user, chat);
+    return {
     id: a.id,
     chatId: a.chatId,
     contact: { id: r.contactId, name: r.contactName, phone: r.contactPhone },
@@ -80,9 +83,11 @@ async function appointmentDtos(db: Db, user: AuthUser, where: SQL | undefined, o
         error: x.error,
       }))
       .sort((p, q) => p.sendAt.localeCompare(q.sendAt)),
-    // decision: also needs the chat, like every write (spec §2)
-    canEdit: !a.canceledAt && canManage(user, a) && canSee(user, chat),
-  }));
+    status: a.status,
+    canEdit: canMark,
+    canMark,
+    };
+  });
 }
 
 async function dtoOf(db: Db, user: AuthUser, id: string): Promise<AppointmentDto> {
@@ -245,7 +250,11 @@ export async function updateAppointment(
     }
     await tx
       .update(appointments)
-      .set({ title, startsAt, ...(patch.note !== undefined ? { note: patch.note } : {}) })
+      .set({
+        title, startsAt, ...(patch.note !== undefined ? { note: patch.note } : {}),
+        // a new time starts the control over (spec 2026-10-23 §3.4); Confirmado stays
+        ...(moved && (locked.status === 'attended' || locked.status === 'missed') ? { status: 'scheduled' as const } : {}),
+      })
       .where(eq(appointments.id, id));
     if (moved || title !== locked.title) await recalcReminders(tx, { ...locked, title, startsAt }, name, now);
     if (moved) {
@@ -277,5 +286,21 @@ export async function cancelAppointment(ctx: AppCtx, user: AuthUser, id: string)
     return a.chatId;
   });
   await ctx.hub.publishChat(chatId);
+  return dtoOf(ctx.db, user, id);
+}
+
+/** Spec 2026-10-23 §3: set the situation. The same status again is a no-op (200); no event, no publish (the Agenda polls). */
+export async function setAppointmentStatus(ctx: AppCtx, user: AuthUser, id: string, status: AppointmentStatus): Promise<AppointmentDto> {
+  await manageableContact(ctx, user, id);
+  const now = ctx.botRuntime.now();
+  await ctx.db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(appointments).where(eq(appointments.id, id)).for('update');
+    if (!locked) throw notFound();
+    if (locked.canceledAt) throw conflict(APPOINTMENT_CANCELED);
+    if (locked.status === status) return;
+    const problem = appointmentStatusProblem(locked, status, now);
+    if (problem) throw badRequest(problem);
+    await tx.update(appointments).set({ status }).where(eq(appointments.id, id));
+  });
   return dtoOf(ctx.db, user, id);
 }

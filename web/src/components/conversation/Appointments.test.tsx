@@ -40,7 +40,7 @@ function stubFetch(routes: Record<string, unknown>) {
 const appointment = (over: Partial<AppointmentDto> = {}): AppointmentDto => ({
   id: 'a1', chatId: 'c1', contact: { id: 'k1', name: 'Maria Cliente', phone: '5565999999999' }, authorId: 'u1', authorName: 'Ana Lima',
   title: 'Audiência', startsAt: '2026-10-21T18:00:00.000Z', note: 'Levar RG', canceledAt: null, canceledByName: null,
-  createdAt: '2026-10-20T12:00:00.000Z', canEdit: true,
+  createdAt: '2026-10-20T12:00:00.000Z', canEdit: true, status: 'scheduled', canMark: true,
   reminders: [
     { id: 'r1', amount: 2, unit: 'days', text: 'Olá', sendAt: '2026-10-19T18:00:00.000Z', status: 'skipped', scheduledId: null, error: null },
     { id: 'r2', amount: 1, unit: 'hours', text: 'Olá', sendAt: '2026-10-21T17:00:00.000Z', status: 'pending', scheduledId: 's2', error: null },

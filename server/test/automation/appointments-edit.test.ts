@@ -53,6 +53,17 @@ const setStatus = (id: string, status: 'sending' | 'sent' | 'failed') =>
   ctx.db.update(scheduledMessages).set({ status }).where(eq(scheduledMessages.id, id));
 
 describe('PATCH /api/appointments/:id (spec 2026-10-21 compromissos §3.3)', () => {
+  it('moving the time resets Compareceu/Faltou to Agendado and keeps Confirmado; a title change keeps it (spec 2026-10-23 controle §3.4)', async () => {
+    const a = await create();
+    const setDb = (status: 'confirmed' | 'attended' | 'missed') => ctx.db.update(appointments).set({ status }).where(eq(appointments.id, a.id));
+    await setDb('missed');
+    expect((await patch(a.id, { startsAt: after(4 * DAY) })).json().status).toBe('scheduled');
+    await setDb('confirmed');
+    expect((await patch(a.id, { startsAt: after(5 * DAY) })).json().status).toBe('confirmed');
+    await setDb('attended');
+    expect((await patch(a.id, { title: 'Perícia' })).json().status).toBe('attended');
+  });
+
   it('the author or an admin edits; anyone else gets 404; a cancelled one is 409; a new past time is 400, a kept one is not checked', async () => {
     const a = await create();
     const bruno = (await loginAs(app, s.agentB.email)).headers;
