@@ -168,7 +168,7 @@ export function Inbox() {
 
   return (
     <div className="flex h-full min-h-0 gap-3">
-      <aside className={`${card} flex w-[352px] shrink-0 flex-col overflow-hidden`}>
+      <aside className={`${card} flex w-[440px] shrink-0 flex-col overflow-hidden`}>
         <div className="flex min-h-0 flex-col gap-3.5 overflow-y-auto px-[18px] pt-5 pb-3">
           <div className="flex items-center gap-2">
             <h1 className={`${pageTitle} mr-auto`}>Conversas</h1>
@@ -305,7 +305,7 @@ export function Inbox() {
           </p>
         )}
 
-        <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pt-1 pb-2.5" onScroll={onScroll}>
+        <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2.5 pt-1 pb-2.5" onScroll={onScroll}>
           {me?.role === 'admin' && !me.seeAllSectors && me.sectorIds.length === 0 && (
             <li className="mx-1 mb-2 rounded-block bg-sunken px-3.5 py-3 text-[13px] text-muted">
               Você não está em nenhum setor. Ative “Ver todos os setores” para ver as conversas do escritório.
