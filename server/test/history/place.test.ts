@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { botRuns, chatEvents, chats, contacts, messageEdits, messages } from '../../src/db/schema.js';
+import { botRuns, chatEvents, chats, contacts, messageEdits, messages, umblerMap } from '../../src/db/schema.js';
 import { placeRecords, realName, toHistoryEvents, writeHistoryEvents } from '../../src/history/place.js';
 import { makeTestCtx, seedBasics } from '../helpers.js';
 import { insertChat, newContact } from '../inbox/fixtures.js';
@@ -240,5 +240,29 @@ describe('placeRecords', () => {
     const rows = await ctx.db.select().from(messages);
     const perg = rows.find((m) => m.externalId === 'perg')!;
     expect(rows.find((m) => m.externalId === 'resp')!.replyToId).toBe(perg.id);
+  });
+});
+
+describe('placeRecords and rows imported from Umbler (spec 2026-10-21 importar-umbler §8)', () => {
+  it('gives an Umbler row without WhatsApp id its id instead of inserting the same message twice', async () => {
+    const contactId = await newContact(ctx, { phone: PHONE });
+    const chatId = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed' });
+    const [fromUmbler] = await ctx.db
+      .insert(messages)
+      .values({ chatId, channelId: s.channelId, direction: 'in', kind: 'text', body: 'texto um', status: 'read', sentAt: at('2026-10-10T12:00:03Z') })
+      .returning();
+    await ctx.db.insert(umblerMap).values({ kind: 'message', umblerId: 'U1', localId: fromUmbler!.id });
+
+    const r = await place([rec({ id: 'um', at: '2026-10-10T12:00:00Z', text: 'texto um' }), rec({ id: 'dois', at: '2026-10-10T12:00:00Z', text: 'texto dois' })]);
+
+    expect(r.inserted).toBe(1);
+    const rows = await ctx.db.select().from(messages).orderBy(messages.body);
+    expect(rows.map((m) => [m.body, m.externalId, m.chatId === chatId])).toEqual([
+      ['texto dois', 'dois', false], // a new message: the history chat
+      ['texto um', 'um', true], // the Umbler row stays where it is, now with its WhatsApp id
+    ]);
+    // a second copy of the same rows finds the WhatsApp id and changes nothing
+    expect((await place([rec({ id: 'um', at: '2026-10-10T12:00:00Z', text: 'texto um' })])).inserted).toBe(0);
+    expect(await ctx.db.$count(messages)).toBe(2);
   });
 });
