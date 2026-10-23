@@ -528,6 +528,7 @@ export async function importCatalog(run: ImportRun): Promise<void> {
 // ---------- phase 2: contacts (§7.4), phase 4: their notes (§7.5) ----------
 
 const CONTACT_BATCH = 100;
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 /**
  * §7.4: phone first, then LID; fills only what is empty. No valid phone but a LID → a LID-only contact; neither → null
@@ -582,13 +583,13 @@ async function importContactBatch(run: ImportRun, list: UmblerContact[]): Promis
   const mapped = await run.ctx.db
     .select({ umblerId: umblerMap.umblerId })
     .from(umblerMap)
-    .where(and(eq(umblerMap.kind, 'contact'), inArray(umblerMap.umblerId, list.map((c) => c.id))));
+    .where(and(inArray(umblerMap.kind, ['contact', 'contactSkipped']), inArray(umblerMap.umblerId, list.map((c) => c.id))));
   const done = new Set(mapped.map((r) => r.umblerId));
   const todo = list.filter((c) => !done.has(c.id));
   // §4.1: the list ignored includeCustomFields → one call per contact, before the transaction
   if (Object.keys(m.fields).length > 0) {
     for (const c of todo) {
-      if (c.customFields !== undefined) continue;
+      if (c.customFields !== undefined || (!validPhone(c.phoneNumber) && !lidOf(c.lid))) continue;
       checkStop(run);
       c.customFields = await run.client
         .get<NonNullable<UmblerContact['customFields']>>('/v1/contacts/{id}/custom-fields/', orgQuery(run), { id: c.id })
@@ -602,7 +603,11 @@ async function importContactBatch(run: ImportRun, list: UmblerContact[]): Promis
   await run.ctx.db.transaction(async (tx) => {
     for (const c of todo) {
       const id = await upsertContact(tx, c, p.contacts);
-      if (!id) continue;
+      if (!id) {
+        // marker so a resume or a second run neither recounts it nor asks for its fields again (no contact row: kind differs)
+        await tx.insert(umblerMap).values({ kind: 'contactSkipped', umblerId: c.id, localId: NIL_UUID, doneAt: new Date() }).onConflictDoNothing();
+        continue;
+      }
       const tagRows = (c.tags ?? []).flatMap((t) => (m.tags[t.id] ? [{ contactId: id, tagId: m.tags[t.id]! }] : []));
       if (tagRows.length) await tx.insert(contactTags).values(tagRows).onConflictDoNothing();
       const valueRows = (c.customFields ?? []).flatMap((f) => {

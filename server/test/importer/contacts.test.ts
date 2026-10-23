@@ -47,7 +47,7 @@ describe('contacts phase (spec 2026-10-21 importar-umbler §7.4)', () => {
 
     expect(await contactBy(eq(contacts.lid, '209999999999999'))).toMatchObject({ name: 'Só LID', phone: null });
     expect(run.progress.contacts).toEqual({ created: 1, completed: 1, lidOnly: 1, skipped: 1 });
-    expect((await w.ctx.db.select().from(umblerMap)).map((r) => `${r.kind}:${r.umblerId}`).sort()).toEqual(['contact:C1', 'contact:C2', 'contact:C3']);
+    expect((await w.ctx.db.select().from(umblerMap)).map((r) => `${r.kind}:${r.umblerId}`).sort()).toEqual(['contact:C1', 'contact:C2', 'contact:C3', 'contactSkipped:C4']);
     expect(run.progress.done).toBe(4);
   });
 
@@ -74,7 +74,6 @@ describe('contacts phase (spec 2026-10-21 importar-umbler §7.4)', () => {
       '/api/v1/contacts/C1/custom-fields/',
       '/api/v1/contacts/C2/custom-fields/',
       '/api/v1/contacts/C3/custom-fields/',
-      '/api/v1/contacts/C4/custom-fields/',
     ]);
     const maria = (await contactBy(eq(contacts.phone, '5565999998888')))!;
     expect((await w.ctx.db.select().from(contactFieldValues).where(eq(contactFieldValues.contactId, maria.id))).map((v) => v.value)).toEqual([
@@ -82,11 +81,12 @@ describe('contacts phase (spec 2026-10-21 importar-umbler §7.4)', () => {
     ]);
 
     const before = w.fake.requests.length;
-    run.progress.contacts = { created: 0, completed: 0, lidOnly: 0, skipped: 0 };
+    const counted = { ...run.progress.contacts };
     await importContactsPhase(run);
-    // the list again (two pages: the second is empty), then only C4, which never got a map row
-    expect(w.fake.requests.slice(before).map((r) => r.path)).toEqual(['/api/v1/contacts/', '/api/v1/contacts/', '/api/v1/contacts/C4/custom-fields/']);
-    expect(run.progress.contacts).toEqual({ created: 0, completed: 0, lidOnly: 0, skipped: 1 });
+    // the list again (two pages: the second is empty); the skipped C4 has its marker: no fields call, no recount
+    expect(w.fake.requests.slice(before).map((r) => r.path)).toEqual(['/api/v1/contacts/', '/api/v1/contacts/']);
+    expect(run.progress.contacts).toEqual(counted);
+    expect(counted.skipped).toBe(1);
   });
 });
 

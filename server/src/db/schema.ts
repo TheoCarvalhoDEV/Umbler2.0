@@ -516,7 +516,7 @@ export const umblerImports = pgTable(
 export const umblerMap = pgTable(
   'umbler_map',
   {
-    kind: text('kind').$type<'contact' | 'note' | 'chat' | 'message'>().notNull(),
+    kind: text('kind').$type<'contact' | 'contactSkipped' | 'note' | 'chat' | 'message'>().notNull(),
     umblerId: text('umbler_id').notNull(),
     localId: uuid('local_id').notNull(),
     doneAt: timestamp('done_at', { withTimezone: true }), // contact: notes copied; chat: every message and file copied
