@@ -511,7 +511,7 @@ describe('GET /api/appointments/summary (spec §5)', () => {
 Run: `npm test -w server -- test/automation/appointments-filters.test.ts`
 Expected: FAIL (404 on `/summary`).
 
-- [ ] **Step 3: Implement** one query over `appointments ⋈ chats ⋈ contacts` with `where(filtersWhere(user, f))` and four columns `sql<number>\`count(*) filter (where ${presetWhere(k, now)})\`.mapWith(Number)`, `now = ctx.botRuntime.now()`. Register `app.get('/api/appointments/summary', …)`.
+- [ ] **Step 3: Implement** one query over `appointments ⋈ chats ⋈ contacts` with `where(filtersWhere(user, f))` and four columns `sql<number>`count(*) filter (where ${presetWhere(k, now)})`.mapWith(Number)`, `now = ctx.botRuntime.now()`. Register `app.get('/api/appointments/summary', …)`.
 
 - [ ] **Step 4: Run tests**
 
@@ -821,3 +821,228 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
+
+### Task 7: Semana view, view switch, details dialog, pre-fill and the 500 notice
+
+**Files:**
+- Modify: `web/src/components/agenda/dates.ts` (+ `dates.test.ts`)
+- Create: `web/src/components/agenda/CalendarViews.tsx` — `WeekView`, `AppointmentDetailsDialog`, the chip
+- Modify: `web/src/components/agenda/AppointmentsAgenda.tsx` — view switch, mounts `WeekView`, create dialog with a pre-fill
+- Modify: `web/src/components/conversation/Appointments.tsx` — `AppointmentDialog` / `AppointmentForm` accept `initialStartsAt?: string`
+- Test: `web/src/pages/ScheduledMessages.test.tsx`
+
+**Interfaces:**
+- Consumes: Task 6 `AgendaFilters`, `officeToday`, `dayHeading`; Task 5 `api.appointments.list`, `qk.appointmentList`, `AppointmentItem`, `STATUS_TONE`; shared `officeDayRange`, `officeDateOf`, `shiftOfficeDate`, `isoToOfficeLocal`, `officeLocalToIso`, `APPOINTMENT_RANGE_LIMIT`; `Modal` from `../conversation/ChatDialogs`.
+- Produces:
+  - `dates.ts`: `mondayOf(day: string): string`; `weekDays(monday: string): string[]` (7); `weekdayDay(day: string): string` ("seg. 19"); `weekLabel(monday: string): string`; `prefillStartsAt(day: string, now: Date): string | null` (office-local `'YYYY-MM-DDTHH:mm'`: `${day}T09:00` when that is after `now`; else, for today, the next whole hour if still today; else null).
+  - `CalendarViews.tsx`: `export function WeekView(props: { monday: string; filters: AgendaFilters; onWeek: (monday: string) => void; onCreate: (initialStartsAt: string) => void })`; `export function AppointmentDetailsDialog(props: { item: AppointmentDto; onClose: () => void })` — `Modal title="Detalhes do compromisso"` with `<ul><AppointmentItem item page /></ul>` and a "Fechar" `button('secondary')`; an internal `useRangeList(fromDay: string, lastDay: string, filters)` that queries `{ from: officeDayRange(fromDay).from.toISOString(), to: officeDayRange(lastDay).to.toISOString(), ...filters }` (keys in that order) with `refetchInterval: 30_000`, and renders "Mostrando os primeiros 500" (`text-[13px] text-muted`) when `data.length === APPOINTMENT_RANGE_LIMIT`. Task 8 reuses it and the chip.
+  - `AppointmentDialog` prop `initialStartsAt?: string` → the form's initial `local` when creating (ignored with `appointment`).
+
+UI (spec §6.3, §6.6):
+- View switch: `role="tablist" aria-label="Visualização"` with tabs "Lista", "Semana", "Mês" (`tab()` recipe) → `?visao=` absent / `semana` / `mes`. Clicking a counter card goes back to Lista (Task 6). `?semana=` any date is normalised with `mondayOf`; default `mondayOf(officeToday())`.
+- Header: icon buttons `aria-label="Semana anterior"` / `"Próxima semana"` (CaretLeft/CaretRight, `iconButton`), a "Hoje" `button('secondary', 'sm')`, and the `weekLabel` text.
+- `<ol aria-label="Dias da semana" className="grid grid-cols-1 gap-2 md:grid-cols-7">`; each day `<li aria-label={weekdayDay(day)} aria-current={day === today ? 'date' : undefined} className="group …">`, today's header with `bg-primary-soft text-accent-ink`. The day `<li>`s are the only list items (chips are buttons in a `div`).
+- Chip (`<button>`): time (`isoToOfficeLocal(startsAt).slice(11)`), title, `contactLabel(contact)`, a status dot `size-2 rounded-full` with `STATUS_DOT = { scheduled: 'bg-fg-2', confirmed: 'bg-primary', attended: 'bg-success', missed: 'bg-danger' }`; cancelled: `line-through text-muted`, no dot. Sorted by time (the API returns ascending). Click → `AppointmentDetailsDialog`.
+- "+": when `prefillStartsAt(day, new Date())` is not null, a `iconButtonGhost` with `aria-label={`Novo compromisso em ${weekdayDay(day)}`}`, `opacity-0 group-hover:opacity-100 focus-visible:opacity-100`; clicking the empty area of the `<li>` (target === currentTarget) does the same. → `onCreate(prefill)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `dates.test.ts` (import the new names):
+
+```ts
+describe('week helpers (spec §6.6)', () => {
+  it('mondayOf, weekDays and weekdayDay', () => {
+    expect(mondayOf('2026-10-20')).toBe('2026-10-19');
+    expect(mondayOf('2026-10-19')).toBe('2026-10-19');
+    expect(mondayOf('2026-10-25')).toBe('2026-10-19'); // Sunday belongs to the week before
+    expect(mondayOf('2027-01-01')).toBe('2026-12-28');
+    expect(weekDays('2026-10-19')).toEqual(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']);
+    expect(weekdayDay('2026-10-19')).toBe('seg. 19');
+  });
+  it('weekLabel inside a month, across months and across years', () => {
+    expect(weekLabel('2026-10-19')).toBe('19 – 25 de out. de 2026');
+    expect(weekLabel('2026-10-26')).toBe('26 de out. – 1 de nov. de 2026');
+    expect(weekLabel('2026-12-28')).toBe('28 de dez. de 2026 – 3 de jan. de 2027');
+  });
+  it('prefillStartsAt: 09:00 while ahead, else the next whole hour today, never a past day or past midnight', () => {
+    const at = (iso: string) => new Date(iso);
+    expect(prefillStartsAt('2026-10-21', at('2026-10-20T12:00:00.000Z'))).toBe('2026-10-21T09:00');
+    expect(prefillStartsAt('2026-10-20', at('2026-10-20T12:00:00.000Z'))).toBe('2026-10-20T09:00'); // 08:00 now
+    expect(prefillStartsAt('2026-10-20', at('2026-10-20T13:00:00.000Z'))).toBe('2026-10-20T10:00'); // exactly 09:00
+    expect(prefillStartsAt('2026-10-20', at('2026-10-20T14:20:00.000Z'))).toBe('2026-10-20T11:00');
+    expect(prefillStartsAt('2026-10-20', at('2026-10-21T03:30:00.000Z'))).toBeNull(); // 23:30 in Cuiabá
+    expect(prefillStartsAt('2026-10-19', at('2026-10-20T12:00:00.000Z'))).toBeNull();
+  });
+});
+```
+
+Add to `ScheduledMessages.test.tsx` (import `officeDayRange`, `DEFAULT_APPOINTMENT_REMINDERS` from `@talk/shared`, `within`, `waitFor`):
+
+```tsx
+const rangeKey = (firstDay: string, lastDay: string) =>
+  `GET /api/appointments?${new URLSearchParams({ from: officeDayRange(firstDay).from.toISOString(), to: officeDayRange(lastDay).to.toISOString() })}`;
+const thisWeek = rangeKey('2026-10-19', '2026-10-25');
+
+it('Semana: 7 days from Monday, today marked, chips in their Cuiabá day, ◀ ▶ Hoje move the range (§6.6, Review Focus 3)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    'GET /api/appointments?tab=upcoming': [],
+    [thisWeek]: [
+      appointment({ id: 'a1', title: 'Audiência', startsAt: '2026-10-21T02:00:00.000Z' }), // ter. 20, 22:00 in Cuiabá
+      appointment({ id: 'a2', title: 'Perícia', startsAt: '2026-10-22T13:00:00.000Z', canceledAt: '2026-10-20T11:00:00.000Z', canEdit: false, canMark: false }),
+    ],
+    [rangeKey('2026-10-26', '2026-11-01')]: [],
+    [rangeKey('2026-10-12', '2026-10-18')]: [],
+  });
+  renderPage();
+  fireEvent.click(await screen.findByRole('tab', { name: 'Semana' }));
+  const days = within(await screen.findByRole('list', { name: 'Dias da semana' })).getAllByRole('listitem');
+  expect(days.map((d) => d.getAttribute('aria-label'))).toEqual(['seg. 19', 'ter. 20', 'qua. 21', 'qui. 22', 'sex. 23', 'sáb. 24', 'dom. 25']);
+  expect(days[1]!.getAttribute('aria-current')).toBe('date');
+  expect(await within(days[1]!).findByRole('button', { name: /Audiência/ })).toBeTruthy();
+  expect(within(days[3]!).getByRole('button', { name: /Perícia/ }).className).toContain('line-through');
+  expect(screen.getByText('19 – 25 de out. de 2026')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Próxima semana' }));
+  expect(await screen.findByText('26 de out. – 1 de nov. de 2026')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Hoje' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Semana anterior' }));
+  expect(await screen.findByText('12 – 18 de out. de 2026')).toBeTruthy();
+  expect(keys()).toEqual(expect.arrayContaining([thisWeek, rangeKey('2026-10-26', '2026-11-01'), rangeKey('2026-10-12', '2026-10-18')]));
+});
+
+it('Semana: a chip opens its details with the actions; "+" pre-fills the next hour today; no "+" on a past day (§6.6, §6.8)', async () => {
+  vi.setSystemTime(new Date('2026-10-20T14:20:00.000Z')); // 10:20 in Cuiabá
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    [thisWeek]: [appointment({ startsAt: '2026-10-22T13:00:00.000Z' })],
+    'GET /api/settings/appointment-reminders': DEFAULT_APPOINTMENT_REMINDERS,
+  });
+  renderPage('/agendamentos?visao=semana&semana=2026-10-21'); // any day of the week opens its Monday
+  fireEvent.click(await screen.findByRole('button', { name: /Audiência/ }));
+  const details = await screen.findByRole('dialog', { name: 'Detalhes do compromisso' });
+  expect(within(details).getByRole('button', { name: 'Confirmar' })).toBeTruthy();
+  fireEvent.click(within(details).getByRole('button', { name: 'Fechar' }));
+  expect(screen.queryByRole('button', { name: 'Novo compromisso em seg. 19' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Novo compromisso em ter. 20' }));
+  expect(((await screen.findByLabelText('Data e hora (horário de Cuiabá)')) as HTMLInputElement).value).toBe('2026-10-20T11:00');
+});
+
+it('a full range says "Mostrando os primeiros 500" (spec Review focus 3)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    [thisWeek]: Array.from({ length: 500 }, (_, i) => appointment({ id: `a${i}` })),
+  });
+  renderPage('/agendamentos?visao=semana');
+  expect(await screen.findByText('Mostrando os primeiros 500')).toBeTruthy();
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npm test -w web -- src/components/agenda src/pages/ScheduledMessages.test.tsx`
+Expected: FAIL (no "Semana" tab, missing exports).
+
+- [ ] **Step 3: Implement** the helpers, `CalendarViews.tsx`, the switch and pre-fill wiring in `AppointmentsAgenda.tsx`, and `initialStartsAt` in `Appointments.tsx` (`const initialLocal = a ? isoToOfficeLocal(a.startsAt) : (props.initialStartsAt ?? '')` — the "kept time" check only applies to an edit, so nothing else changes).
+
+- [ ] **Step 4: Run tests and typecheck**
+
+Run: `npm test -w web` and `npm run typecheck`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/components/agenda web/src/components/conversation/Appointments.tsx web/src/pages/ScheduledMessages.test.tsx
+git commit -m "feat(web): visão Semana da agenda com detalhes, novo compromisso pré-preenchido e aviso de 500
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 8: Mês view
+
+**Files:**
+- Modify: `web/src/components/agenda/dates.ts` (+ `dates.test.ts`)
+- Modify: `web/src/components/agenda/CalendarViews.tsx` — `MonthView`
+- Modify: `web/src/components/agenda/AppointmentsAgenda.tsx` — mounts `MonthView` for `?visao=mes`
+- Test: `web/src/pages/ScheduledMessages.test.tsx`
+
+**Interfaces:**
+- Consumes: Task 7 `useRangeList`, the chip, `AppointmentDetailsDialog`, `mondayOf`; Task 6 `officeToday`, `AgendaFilters`.
+- Produces:
+  - `dates.ts`: `monthGrid(month: string): string[]` (42 days, from `mondayOf(`${month}-01`)`); `shiftMonth(month: string, n: number): string`; `monthLabel(month: string): string` ("outubro de 2026", `Intl` `{ month: 'long', timeZone: 'UTC' }` + ` de ${year}`).
+  - `CalendarViews.tsx`: `export function MonthView(props: { month: string; filters: AgendaFilters; onMonth: (month: string) => void; onWeek: (monday: string) => void })`.
+
+UI (spec §6.7): `?mes=YYYY-MM` (default `officeToday().slice(0, 7)`). Header like the week: `aria-label="Mês anterior"` / `"Próximo mês"`, "Hoje", `monthLabel`. `<ol aria-label={`Dias de ${monthLabel(month)}`} className="grid grid-cols-7 …">` with 42 `<li>` (`text-muted` for days outside the month, `aria-current="date"` + primary tint for today). Each cell: the day number as a `<button aria-label={`Ver a semana de ${d} de ${monthShort}`}>` (e.g. "Ver a semana de 21 de out.") → `onWeek(mondayOf(day))`, the cell's empty area does the same; up to 3 chips (compact: time + title) and "+N" beyond. Fetch: `useRangeList(grid[0], grid[41], filters)`. `AppointmentsAgenda` wires `onWeek` to `visao=semana&semana=<monday>` and `onMonth` to `mes`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `dates.test.ts`:
+
+```ts
+describe('month helpers (spec §6.7)', () => {
+  it('monthGrid: 42 days from the Monday on or before the 1st', () => {
+    const oct = monthGrid('2026-10');
+    expect([oct.length, oct[0], oct[41]]).toEqual([42, '2026-09-28', '2026-11-08']);
+    const feb = monthGrid('2027-02'); // the 1st is a Monday
+    expect([feb[0], feb[41]]).toEqual(['2027-02-01', '2027-03-14']);
+  });
+  it('shiftMonth and monthLabel', () => {
+    expect(shiftMonth('2026-12', 1)).toBe('2027-01');
+    expect(shiftMonth('2026-01', -1)).toBe('2025-12');
+    expect(monthLabel('2026-10')).toBe('outubro de 2026');
+  });
+});
+```
+
+Add to `ScheduledMessages.test.tsx` (uses `rangeKey`, `thisWeek` from Task 7):
+
+```tsx
+it('Mês: 42 days from Monday, other months muted, 3 chips then "+N", ▶ moves, a day opens its week (§6.7)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    [rangeKey('2026-09-28', '2026-11-08')]: Array.from({ length: 5 }, (_, i) =>
+      appointment({ id: `a${i}`, title: `Audiência ${i}`, startsAt: `2026-10-21T1${i}:00:00.000Z` }),
+    ),
+    [rangeKey('2026-10-26', '2026-12-06')]: [],
+    [thisWeek]: [],
+  });
+  renderPage('/agendamentos?visao=mes&mes=2026-10');
+  const list = await screen.findByRole('list', { name: 'Dias de outubro de 2026' });
+  const days = within(list).getAllByRole('listitem');
+  expect(days).toHaveLength(42);
+  expect(days[0]!.className).toContain('text-muted'); // 28/09
+  expect(days[22]!.getAttribute('aria-current')).toBe('date'); // 20/10
+  const wed = days[23]!; // 21/10
+  expect(await within(wed).findAllByRole('button', { name: /Audiência/ })).toHaveLength(3);
+  expect(within(wed).getByText('+2')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Próximo mês' }));
+  expect(await screen.findByRole('list', { name: 'Dias de novembro de 2026' })).toBeTruthy();
+  expect(keys()).toContain(rangeKey('2026-10-26', '2026-12-06'));
+  fireEvent.click(screen.getByRole('button', { name: 'Mês anterior' }));
+  fireEvent.click(within(await screen.findByRole('list', { name: 'Dias de outubro de 2026' })).getByRole('button', { name: 'Ver a semana de 21 de out.' }));
+  expect(await screen.findByText('19 – 25 de out. de 2026')).toBeTruthy();
+});
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npm test -w web -- src/components/agenda src/pages/ScheduledMessages.test.tsx`
+Expected: FAIL (no month helpers / no list "Dias de outubro de 2026").
+
+- [ ] **Step 3: Implement** the helpers, `MonthView` and its wiring.
+
+- [ ] **Step 4: Run everything**
+
+Run: `npm test` and `npm run typecheck`
+Expected: all workspaces PASS, typecheck clean.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/components/agenda web/src/pages/ScheduledMessages.test.tsx
+git commit -m "feat(web): visão Mês da agenda
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
