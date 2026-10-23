@@ -54,7 +54,7 @@ export function AppointmentsAgenda() {
   const month = mesParam && /^\d{4}-(0[1-9]|1[0-2])$/.test(mesParam) ? mesParam : officeToday().slice(0, 7);
 
   /** Several keys in one setParams; null deletes. */
-  const update = (changes: Record<string, string | null>) =>
+  const update = (changes: Record<string, string | null>, opts?: { replace: boolean }) =>
     setParams((p) => {
       const old = p.get('situacao');
       if (isTab(old)) {
@@ -66,7 +66,7 @@ export function AppointmentsAgenda() {
         else p.set(k, v);
       }
       return p;
-    });
+    }, opts);
 
   const q = useDebounced(busca.trim(), 300) || undefined;
   const filters: AgendaFilters = { authorId: authorParam, sectorId: sectorParam, status: statusParam, q };
@@ -95,7 +95,7 @@ export function AppointmentsAgenda() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {COUNTERS.map((c) => {
             const n = summary.data[c.key];
-            const active = preset === c.preset;
+            const active = preset === c.preset && visao === 'lista';
             return (
               <button
                 key={c.preset}
@@ -146,7 +146,7 @@ export function AppointmentsAgenda() {
           <input
             type="search"
             value={busca}
-            onChange={(e) => update({ busca: e.target.value || null })}
+            onChange={(e) => update({ busca: e.target.value || null }, { replace: true })}
             placeholder="Cliente, telefone ou título"
             aria-label="Buscar compromissos"
             className={searchInput}

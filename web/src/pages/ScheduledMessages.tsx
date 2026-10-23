@@ -17,7 +17,7 @@ const errorText = 'text-[13px] font-semibold text-danger';
  */
 export function ScheduledMessagesPage() {
   const [params, setParams] = useSearchParams();
-  const appointmentsView = params.get('aba') !== 'mensagens';
+  const appointmentsView = params.get('aba') !== 'mensagens' && !(params.get('aba') === null && params.get('status')); // an old ?status= link is Mensagens
   const set = (key: string, value: string | null) =>
     setParams((p) => {
       if (value === null) p.delete(key);
@@ -30,7 +30,7 @@ export function ScheduledMessagesPage() {
     <div className={`${card} flex h-full flex-col gap-[18px] overflow-y-auto px-[18px] py-[22px]`}>
       <h1 className={pageTitle}>Agendamentos</h1>
       <div role="tablist" aria-label="Agenda" className={tabList}>
-        <button type="button" role="tab" aria-selected={appointmentsView} onClick={() => set('aba', null)} className={tabClass(appointmentsView)}>
+        <button type="button" role="tab" aria-selected={appointmentsView} onClick={() => set('aba', 'compromissos')} className={tabClass(appointmentsView)}>
           Compromissos
         </button>
         <button type="button" role="tab" aria-selected={!appointmentsView} onClick={() => set('aba', 'mensagens')} className={tabClass(!appointmentsView)}>

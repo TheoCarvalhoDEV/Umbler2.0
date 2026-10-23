@@ -106,6 +106,13 @@ it('Mensagens defaults to Pendentes, links a sent message to the chat it went to
   expect(await screen.findByText('Nenhuma mensagem aqui.')).toBeTruthy();
 });
 
+it('?status= without ?aba opens Mensagens (old bookmarks and notifications)', async () => {
+  stubFetch({ 'GET /api/scheduled-messages?status=failed': [item({ status: 'failed', error: 'x' })] });
+  renderPage('/agendamentos?status=failed');
+  expect(await screen.findByRole('tab', { name: 'Falharam' })).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Mensagens' }).getAttribute('aria-selected')).toBe('true');
+});
+
 it('?aba=compromissos opens Compromissos on Próximos; each tab keeps its own filter (spec 2026-10-21 compromissos §3.5)', async () => {
   stubFetch({
     'GET /api/appointments/summary': summary,

@@ -5,7 +5,7 @@ import {
   APPOINTMENT_RANGE_LIMIT, officeDateOf, officeDayRange, isoToOfficeLocal, shiftOfficeDate,
   type AppointmentDto, type AppointmentListQuery, type AppointmentStatus,
 } from '@talk/shared';
-import { AppointmentItem } from '../conversation/Appointments';
+import { AppointmentItem, APPOINTMENT_STATUS_LABELS } from '../conversation/Appointments';
 import { Modal } from '../conversation/ChatDialogs';
 import { button, iconButton, iconButtonGhost } from '../ui';
 import { api, qk } from '../../lib/api';
@@ -27,18 +27,26 @@ export function useRangeList(fromDay: string, lastDay: string, filters: AgendaFi
 
 export function AppointmentChip({ item, onOpen, compact }: { item: AppointmentDto; onOpen: () => void; compact?: boolean }) {
   const canceled = !!item.canceledAt;
+  const time = isoToOfficeLocal(item.startsAt).slice(11);
+  const status = APPOINTMENT_STATUS_LABELS[item.status];
   return (
     <button
       type="button"
       onClick={onOpen}
-      className={`flex w-full items-center gap-1.5 rounded-block bg-panel px-2 py-1 text-left text-[13px] hover:bg-border ${canceled ? 'line-through text-muted' : ''}`}
+      title={`${time} ${item.title}${canceled ? '' : ` (${status})`}`}
+      className={`flex w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-block bg-panel px-2 py-1 text-left text-[13px] hover:bg-border ${canceled ? 'line-through text-muted' : ''}`}
     >
-      <span className="shrink-0 tabular-nums">{isoToOfficeLocal(item.startsAt).slice(11)}</span>
+      <span className={`shrink-0 tabular-nums ${compact ? 'hidden sm:inline' : ''}`}>{time}</span>
       <span className="min-w-0 flex-1">
         <span className="block truncate font-semibold">{item.title}</span>
         {!compact && <span className="block truncate text-muted">{contactLabel(item.contact)}</span>}
       </span>
-      {!canceled && <span aria-hidden className={`size-2 shrink-0 rounded-full ${STATUS_DOT[item.status]}`} />}
+      {!canceled && (
+        <>
+          <span aria-hidden className={`size-2 shrink-0 rounded-full ${STATUS_DOT[item.status]}`} />
+          <span className="sr-only">{status}</span>
+        </>
+      )}
     </button>
   );
 }
@@ -92,7 +100,7 @@ export function WeekView(props: { monday: string; filters: AgendaFilters; onWeek
         </p>
       )}
       {notice}
-      <ol aria-label="Dias da semana" className="grid grid-cols-1 gap-2 md:grid-cols-7">
+      <ol aria-label="Dias da semana" className="grid grid-cols-1 gap-2 lg:grid-cols-7">
         {days.map((day) => {
           const prefill = prefillStartsAt(day, new Date());
           return (
@@ -101,7 +109,7 @@ export function WeekView(props: { monday: string; filters: AgendaFilters; onWeek
               aria-label={weekdayDay(day)}
               aria-current={day === today ? 'date' : undefined}
               onClick={(e) => e.target === e.currentTarget && prefill && onCreate(prefill)}
-              className="group flex min-h-24 min-w-0 flex-col gap-1 rounded-block border border-border bg-surface p-2"
+              className="group flex min-h-24 min-w-0 flex-col overflow-hidden gap-1 rounded-block border border-border bg-surface p-2"
             >
               <div className={`flex items-center justify-between rounded-block px-1 text-[13px] font-bold ${day === today ? 'bg-primary-soft text-accent-ink' : 'text-muted'}`}>
                 <span>{weekdayDay(day)}</span>
@@ -110,7 +118,7 @@ export function WeekView(props: { monday: string; filters: AgendaFilters; onWeek
                     type="button"
                     aria-label={`Novo compromisso em ${weekdayDay(day)}`}
                     onClick={() => onCreate(prefill)}
-                    className={`${iconButtonGhost} !size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100`}
+                    className={`${iconButtonGhost} opacity-0 group-hover:opacity-100 focus-visible:opacity-100`}
                   >
                     <PlusIcon size={14} aria-hidden />
                   </button>
@@ -174,7 +182,7 @@ export function MonthView({ month, filters, onMonth, onWeek }: { month: string; 
               key={day}
               aria-current={day === today ? 'date' : undefined}
               onClick={(e) => e.target === e.currentTarget && onWeek(mondayOf(day))}
-              className={`flex min-h-20 min-w-0 flex-col gap-1 rounded-block border border-border p-1 ${day.slice(0, 7) === month ? 'bg-surface' : 'bg-panel text-muted'} ${day === today ? '!bg-primary-soft' : ''}`}
+              className={`flex min-h-20 min-w-0 flex-col overflow-hidden gap-1 rounded-block border border-border p-1 ${day.slice(0, 7) === month ? 'bg-surface' : 'bg-panel text-muted'} ${day === today ? '!bg-primary-soft' : ''}`}
             >
               <button
                 type="button"

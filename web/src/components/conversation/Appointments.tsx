@@ -477,7 +477,7 @@ export function AppointmentItem({ item, page = false }: { item: AppointmentDto; 
                 type="button"
                 aria-pressed={item.status === s}
                 onClick={() => void setStatus(item.status === s ? 'scheduled' : s)}
-                className={button('secondary', 'sm')}
+                className={`${button('secondary', 'sm')} aria-pressed:!bg-chip-on aria-pressed:!text-chip-on-fg`}
               >
                 {APPOINTMENT_STATUS_LABELS[s]}
               </button>
