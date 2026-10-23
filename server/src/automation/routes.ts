@@ -4,7 +4,7 @@ import { APPOINTMENT_LIMITS, APPOINTMENT_PRESETS, APPOINTMENT_STATUSES, APPOINTM
 import { reminderList } from '../catalog/settings.js';
 import { readParts } from '../chats/routes.js';
 import type { AppCtx } from '../ctx.js';
-import { cancelAppointment, createAppointment, listAppointments, listChatAppointments, setAppointmentStatus, updateAppointment } from './appointments.js';
+import { appointmentSummary, cancelAppointment, createAppointment, listAppointments, listChatAppointments, setAppointmentStatus, updateAppointment } from './appointments.js';
 import { cancelScheduled, createScheduled, listChatScheduled, listScheduled, updateScheduled } from './scheduled.js';
 
 const idParams = z.object({ id: z.uuid() });
@@ -78,6 +78,11 @@ export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): voi
   });
 
   app.get('/api/chats/:id/appointments', async (req) => listChatAppointments(ctx, req.user, idParams.parse(req.params).id));
+
+  app.get('/api/appointments/summary', async (req) => {
+    const { authorId, sectorId, q } = appointmentQuery.parse(req.query);
+    return appointmentSummary(ctx, req.user, { authorId, sectorId, q: q || undefined });
+  });
 
   app.get('/api/appointments', async (req) => {
     const q = appointmentQuery.parse(req.query);

@@ -2,11 +2,11 @@
 // scheduled message (scheduled_messages.reminder_id), sent by delivery.ts like any other. This module only creates,
 // moves in place, deletes (pending only) and cancels those rows, always with status = 'pending' in the WHERE.
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lt, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lt, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
   APPOINTMENT_CANCELED, APPOINTMENT_RANGE_LIMIT, APPOINTMENT_RANGE_MAX_DAYS, appointmentStatusProblem, foldText, officeDateOf, officeDayRange, shiftOfficeDate, appointmentTimeProblem, fillReminderText, reminderSendAt, reminderTextProblem, remindersProblem, scheduleTimeProblem,
-  type AppointmentDto, type AppointmentPreset, type AppointmentStatus, type AppointmentTab, type ReminderInput,
+  type AppointmentDto, type AppointmentPreset, type AppointmentSummaryDto, type AppointmentStatus, type AppointmentTab, type ReminderInput,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
@@ -230,6 +230,19 @@ export async function listAppointments(ctx: AppCtx, user: AuthUser, p: Appointme
   const order = newestFirst ? [desc(appointments.startsAt), desc(appointments.id)] : [asc(appointments.startsAt), asc(appointments.id)];
   const status = p.status ? and(eq(appointments.status, p.status), isNull(appointments.canceledAt)) : undefined;
   return appointmentDtos(ctx.db, user, and(when, filtersWhere(user, p), status), order, range && !p.preset ? APPOINTMENT_RANGE_LIMIT : LIST_LIMIT);
+}
+
+/** Spec 2026-10-23 section 5: the four counters in one query, with the list's Atendente/Setor/Busca filters. */
+export async function appointmentSummary(ctx: AppCtx, user: AuthUser, f: AppointmentFilters): Promise<AppointmentSummaryDto> {
+  const now = ctx.botRuntime.now();
+  const count = (k: AppointmentPreset) => sql<number>`count(*) filter (where ${presetWhere(k, now)})`.mapWith(Number);
+  const [row] = await ctx.db
+    .select({ today: count('today'), tomorrow: count('tomorrow'), toConfirm: count('toConfirm'), toMark: count('toMark') })
+    .from(appointments)
+    .innerJoin(chats, eq(chats.id, appointments.chatId))
+    .innerJoin(contacts, eq(contacts.id, chats.contactId))
+    .where(filtersWhere(user, f));
+  return { today: row.today, tomorrow: row.tomorrow, toConfirm: row.toConfirm, toMark: row.toMark };
 }
 
 export { APPOINTMENT_CANCELED };

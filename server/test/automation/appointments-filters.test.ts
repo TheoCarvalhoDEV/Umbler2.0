@@ -140,3 +140,26 @@ describe('GET /api/appointments filters (spec 2026-10-23 controle §4)', () => {
     expect(await ids('/api/appointments?preset=today', ana)).toEqual([r.todayEarly, r.todayLate]);
   });
 });
+
+describe('GET /api/appointments/summary (spec section 5)', () => {
+  const summary = async (qs = '', headers = admin) => {
+    const r = await app.inject({ method: 'GET', url: `/api/appointments/summary${qs}`, headers });
+    expect(r.statusCode).toBe(200);
+    return r.json();
+  };
+  it('counts each bound once, without cancelled ones, with the same filters as the list (Review Focus 3, 5)', async () => {
+    await seedBounds();
+    expect(await summary()).toEqual({ today: 3, tomorrow: 1, toConfirm: 2, toMark: 2 });
+    expect(await summary('', ana)).toEqual({ today: 2, tomorrow: 1, toConfirm: 2, toMark: 2 });
+    expect(await summary(`?authorId=${s.agentB.id}`, ana)).toEqual({ today: 2, tomorrow: 1, toConfirm: 2, toMark: 2 });
+    expect(await summary(`?authorId=${s.agentB.id}`)).toEqual({ today: 1, tomorrow: 0, toConfirm: 0, toMark: 0 });
+    expect(await summary(`?sectorId=${s.sectorB}`)).toEqual({ today: 1, tomorrow: 0, toConfirm: 0, toMark: 0 });
+    expect(await summary('?q=maria')).toEqual({ today: 2, tomorrow: 1, toConfirm: 2, toMark: 2 });
+  });
+  it('at 23:30 Cuiaba "today" is still the Cuiaba day (Tokyo host, UTC already tomorrow)', async () => {
+    const r = await seedBounds();
+    ctx.clock.set(new Date('2026-10-15T03:30:00.000Z'));
+    expect((await summary()).today).toBe(3);
+    expect(await ids('/api/appointments?preset=tomorrow')).toEqual([r.tomorrowMidnight]);
+  });
+});
