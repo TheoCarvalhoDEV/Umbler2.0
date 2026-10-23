@@ -25,13 +25,14 @@ Roteiro do §15 da [especificação](../specs/2026-10-21-importar-umbler-design.
 
 - [ ] **Importar** → confirmação "Importar N contatos e N conversas do Umbler? A cópia roda em segundo plano e pode levar algumas horas." → **Importar**.
 - [ ] A tela mostra "Etapa 3 de 5: conversas abertas — x de y" e os contadores subindo; fechar e reabrir a tela não muda nada.
-- [ ] Durante as conversas finalizadas, reinicie o servidor (`docker compose restart app`): a importação continua sozinha, sem duplicar (contadores seguem de onde estavam).
+- [ ] Durante as conversas finalizadas, reinicie o servidor (`docker compose restart app`): a importação continua sozinha, sem duplicar. Os contadores (mensagens, conversas…) seguem de onde estavam; o "x de y" da etapa recomeça e reconta rápido as conversas já copiadas.
 - [ ] Ao fim: "Importação concluída em dd/mm/aaaa hh:mm (duração …)." e o relatório.
 
 ## C. O que chegou
 
 - [ ] Abertas na **Entrada** com o mesmo setor, atendente e "esperando" do Umbler; as de ex-atendentes na fila do setor ("Sem atendente").
 - [ ] Finalizadas em **Finalizados** com as datas originais; a linha do tempo diz "Conversa importada do Umbler Talk: N mensagens" e "Conversa finalizada por X".
+- [ ] Uma conversa com mais de 250 mensagens: o número de mensagens no Umbler e aqui é o mesmo (a cópia lê 250 por vez).
 - [ ] Uma conversa com foto, áudio e PDF abre os três arquivos; um arquivo que o Umbler não tem mais mostra "Arquivo não está mais disponível…".
 - [ ] Notas internas aparecem como notas; observações do contato aparecem na ficha, com autor e data.
 - [ ] Respostas rápidas com anexo funcionam; as "apenas para mim" de um atendente ativo ficam só dele.
@@ -50,3 +51,7 @@ Roteiro do §15 da [especificação](../specs/2026-10-21-importar-umbler-design.
 - [ ] Ninguém respondeu cliente pelo número de teste.
 - [ ] Token apagado no Umbler e tirado do `.env`.
 - [ ] Ambiente de teste apagado: `docker compose down -v` e a pasta `data/media`.
+
+## F. Na virada (produção)
+
+- [ ] Depois que a importação do histórico do WhatsApp do número oficial terminar, abra uma conversa em que o escritório mandou pelo Umbler uma mensagem **assinada** ("*Setor - Nome:*" na primeira linha): ela aparece **uma vez só**, não duplicada. Se aparecer duas vezes, o formato da assinatura que chega ao WhatsApp é outro: pare e avise o suporte técnico.

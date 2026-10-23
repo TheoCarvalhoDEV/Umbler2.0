@@ -130,7 +130,7 @@ chmod 600 .env
 docker compose up -d app
 ```
 
-3. Em **Configurações › Regras automáticas**, desligue as duas regras: com elas ligadas a importação fica bloqueada.
+3. Em **Ajustes › Regras automáticas**, desligue as duas regras: com elas ligadas a importação fica bloqueada.
 4. Em **Ajustes › Importar do Umbler**, clique em **Analisar** (cerca de 1 minuto). Confira as contagens, os avisos e o destino de cada canal, setor e atendente. Atendente sem e-mail igual aqui vira usuário **inativo**: guarda quem atendeu cada conversa e pode ser ativado em Ajustes › Atendentes.
 5. Clique em **Importar**. A cópia roda em segundo plano (algumas horas, conforme o volume de arquivos), retoma sozinha se o sistema reiniciar e termina com um relatório na mesma tela. Se parar, a tela diz o motivo e oferece **Continuar**.
 6. Com o relatório conferido: apague o token no Umbler, tire a linha `UMBLER_TOKEN` do `.env` e rode `docker compose up -d app`.
@@ -140,7 +140,7 @@ docker compose up -d app
 **Dia da virada (produção), nesta ordem:**
 
 1. Fim do expediente no Umbler; anote as contagens de Entrada, Esperando e Finalizados.
-2. Conecte o número oficial em Configurações › Canais (isso desconecta o Umbler, que fica congelado) e espere a importação automática do histórico do WhatsApp terminar.
+2. Conecte o número oficial em Ajustes › Canais (isso desconecta o Umbler, que fica congelado) e espere a importação automática do histórico do WhatsApp terminar.
 3. Analisar → conferir o mapeamento e as contagens → Importar. As conversas abertas chegam nos primeiros minutos e o escritório já atende aqui; as finalizadas chegam depois, das mais recentes para as mais antigas.
 4. Relatório conferido ("casadas com o histórico do WhatsApp" maior que zero e uma conversa recente sem mensagens repetidas) → apague o token → uma semana de consulta → cancele o Umbler e peça o encerramento da organização.
 
