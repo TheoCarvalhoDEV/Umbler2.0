@@ -528,3 +528,296 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
+
+### Task 5: Web client, status badge and quick actions on `AppointmentItem`
+
+**Files:**
+- Modify: `web/src/lib/api.ts:338-346` (`appointments`), `:417-420` (`qk`)
+- Modify: `web/src/pages/ScheduledMessages.tsx` (only the call site: `api.appointments.list({ tab })`, `qk.appointmentList({ tab })`)
+- Modify: `web/src/components/conversation/Appointments.tsx` (`AppointmentItem`, two exported maps)
+- Test: `web/src/components/conversation/Appointments.test.tsx` (new `describe`)
+
+**Interfaces:**
+- Consumes: Task 1 types (`AppointmentStatus`, `AppointmentListQuery`, `AppointmentFiltersQuery`, `AppointmentSummaryDto`, `appointmentStatusProblem`); Task 2 route.
+- Produces:
+  - `api.appointments.list(q: AppointmentListQuery = {})` → `GET /api/appointments${qs(q)}`; `api.appointments.summary(f: AppointmentFiltersQuery = {})` → `GET /api/appointments/summary${qs(f)}`; `api.appointments.setStatus(id: string, status: AppointmentStatus)` → `POST /api/appointments/:id/status` `{ status }`.
+  - `qk.appointmentList(q: AppointmentListQuery)` = `['chats','appointments','list', q]`; `qk.appointmentSummary(f: AppointmentFiltersQuery)` = `['chats','appointments','summary', f]` (both under the `qk.appointments` prefix, so `useRefresh` refreshes them).
+  - From `Appointments.tsx`: `export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string>` (Agendado / Confirmado / Compareceu / Faltou) and `export const STATUS_TONE: Record<AppointmentStatus, keyof typeof badgeTone>` = `{ scheduled: 'neutral', confirmed: 'accent', attended: 'success', missed: 'danger' }`.
+  - `AppointmentItem` (same props) shows the badge and the quick actions; `ChatAppointmentsDialog` gets them for free (spec §7).
+
+Quick actions, only when `item.canMark`, decided with `appointmentStatusProblem(...) === null` against `new Date()` (so web and server agree):
+- `confirmed` allowed: **Confirmar** (→ `confirmed`), or **Desfazer confirmação** (→ `scheduled`) when the status is `confirmed`.
+- `attended` allowed: **Compareceu** and **Faltou**, `aria-pressed` = current; pressing the pressed one sends `scheduled`.
+- status `missed` and `canEdit`: **Remarcar** → opens the existing edit dialog (`setEditing(true)`).
+- Buttons `button('secondary', 'sm')`; errors go to the existing `error` line under the item; on success `await refresh()`.
+- Badge `${badge} ${badgeTone[STATUS_TONE[status]]}` next to the title; not rendered when cancelled (the existing "Cancelado" badge stays).
+
+- [ ] **Step 1: Write the failing test** (append to `Appointments.test.tsx`; its clock is 2026-10-20T12:00Z = 08:00 Cuiabá, host Tokyo; import `AppointmentItem` and `waitFor`)
+
+```tsx
+describe('AppointmentItem situation (spec 2026-10-23 controle §6.5)', () => {
+  const show = (over: Partial<AppointmentDto> = {}) => renderUi(<ul><AppointmentItem item={appointment(over)} /></ul>);
+  const btn = (name: string) => screen.queryByRole('button', { name });
+  const posted = (status: string) =>
+    waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/appointments/a1/status', body: { status } }));
+
+  it('tomorrow and Agendado: the badge and only Confirmar, which posts confirmed', async () => {
+    stubFetch({ 'POST /api/appointments/a1/status': appointment({ status: 'confirmed' }) });
+    show(); // 21/10 14:00 in Cuiabá
+    expect(screen.getByText('Agendado')).toBeTruthy();
+    expect(btn('Compareceu')).toBeNull();
+    expect(btn('Faltou')).toBeNull();
+    fireEvent.click(btn('Confirmar')!);
+    await posted('confirmed');
+  });
+
+  it('Confirmado: Desfazer confirmação posts scheduled', async () => {
+    stubFetch({ 'POST /api/appointments/a1/status': appointment() });
+    show({ status: 'confirmed' });
+    expect(screen.getByText('Confirmado')).toBeTruthy();
+    expect(btn('Confirmar')).toBeNull();
+    fireEvent.click(btn('Desfazer confirmação')!);
+    await posted('scheduled');
+  });
+
+  it('22:00 today in Cuiabá (already tomorrow in Tokyo): Confirmar, Compareceu and Faltou, none pressed (Review Focus 3)', () => {
+    stubFetch({});
+    show({ startsAt: '2026-10-21T02:00:00.000Z' });
+    expect(btn('Confirmar')).toBeTruthy();
+    expect(btn('Compareceu')!.getAttribute('aria-pressed')).toBe('false');
+    expect(btn('Faltou')!.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('past and Faltou: Faltou pressed (again → scheduled), Remarcar opens the edit form, no Confirmar', async () => {
+    stubFetch({ 'POST /api/appointments/a1/status': appointment() });
+    show({ startsAt: '2026-10-19T18:00:00.000Z', status: 'missed' });
+    expect(btn('Confirmar')).toBeNull();
+    expect(btn('Faltou')!.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn('Faltou')!);
+    await posted('scheduled');
+    fireEvent.click(btn('Remarcar')!);
+    expect(await screen.findByRole('dialog', { name: 'Editar compromisso' })).toBeTruthy();
+  });
+
+  it('no status buttons when cancelled or without canMark; a cancelled one shows only "Cancelado" (spec Review focus 4)', () => {
+    stubFetch({});
+    show({ canceledAt: '2026-10-20T11:00:00.000Z', canEdit: false, canMark: false });
+    expect(screen.getByText('Cancelado')).toBeTruthy();
+    expect(screen.queryByText('Agendado')).toBeNull();
+    expect(btn('Confirmar')).toBeNull();
+    cleanup();
+    show({ canEdit: false, canMark: false });
+    expect(screen.getByText('Agendado')).toBeTruthy();
+    expect(btn('Confirmar')).toBeNull();
+  });
+
+  it('a refused change shows the reason under the item', async () => {
+    stubFetch({}); // every call answers 500 "inesperado"
+    show();
+    fireEvent.click(btn('Confirmar')!);
+    expect((await screen.findByRole('alert')).textContent).toContain('inesperado');
+  });
+});
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npm test -w web -- src/components/conversation/Appointments.test.tsx`
+Expected: FAIL (no "Agendado", no "Confirmar").
+
+- [ ] **Step 3: Implement** the api/qk changes, the call-site update in `ScheduledMessages.tsx`, the two maps and the item changes described above.
+
+- [ ] **Step 4: Run tests and typecheck**
+
+Run: `npm test -w web -- src/components/conversation src/pages` and `npm run typecheck`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/lib/api.ts web/src/pages/ScheduledMessages.tsx web/src/components/conversation/Appointments.tsx web/src/components/conversation/Appointments.test.tsx
+git commit -m "feat(web): situação do compromisso com ações rápidas (Confirmar, Compareceu, Faltou, Remarcar)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 6: Agenda page — tabs, counters, filters, Lista grouped by day
+
+**Files:**
+- Create: `web/src/lib/hooks.ts` — `useDebounced` moved verbatim from `web/src/pages/Inbox.tsx:26-33` (Inbox imports it from here)
+- Create: `web/src/components/agenda/dates.ts`, `web/src/components/agenda/dates.test.ts`
+- Create: `web/src/components/agenda/AppointmentsAgenda.tsx` — the whole Compromissos tab (moves `AppointmentsTab` out of the page)
+- Modify: `web/src/pages/ScheduledMessages.tsx` (tab order/default; mounts `<AppointmentsAgenda />`; `MessagesTab` unchanged)
+- Modify: `web/src/components/layout/NotificationToasts.tsx:15` and its test (Review Focus 1)
+- Test: `web/src/pages/ScheduledMessages.test.tsx`
+
+**Interfaces:**
+- Consumes: Task 5 `api.appointments.list/summary`, `qk.appointmentList/appointmentSummary`, `AppointmentItem`, `APPOINTMENT_STATUS_LABELS`; `api.users.list` / `api.sectors.list` with `qk.users` / `qk.sectors` (as in `ContactPanel.tsx`); `useCurrentUser()` from `web/src/lib/auth.tsx`; `officeDateOf` from shared.
+- Produces:
+  - `dates.ts`: `officeToday(now: Date = new Date()): string` (= `officeDateOf(now)`); `dayHeading(day: string, today: string): string` — "Hoje" / "Amanhã" / "Ontem", else `${weekdayShort}, ${dayNumber} de ${monthShort}` plus ` de ${year}` when the year differs from `today`'s. Weekday/month names from `Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', weekday: 'short' })` / `{ month: 'short' }` on `${day}T12:00:00Z` (a calendar date, no host zone); compose the string yourself.
+  - `AppointmentsAgenda.tsx`: `export function AppointmentsAgenda()`; `export type AgendaFilters = Pick<AppointmentListQuery, 'authorId' | 'sectorId' | 'status' | 'q'>` (q already debounced 300 ms and trimmed, `undefined` when blank). Task 7 passes `filters` and an `onCreate(initialStartsAt?: string)` callback to the calendar views.
+
+URL params (all via `useSearchParams`; write several keys in one `setParams`):
+- `aba`: absent or `compromissos` → Compromissos; `mensagens` → Mensagens. Tabs render Compromissos first.
+- `periodo` (Próximos/Passados/Cancelados); an old `situacao` whose value is in `APPOINTMENT_TABS` is read as `periodo` (and dropped when a period tab is clicked).
+- `situacao` in `APPOINTMENT_STATUSES` → status filter. `atendente`, `setor`, `busca`, `filtro` (a preset).
+- List query object, keys in this order (tests match the query string): `{ ...(preset ? { preset } : { tab }), authorId, sectorId, status, q }`. Summary: `{ authorId, sectorId, q }`.
+
+UI (spec §6.2–6.4, copy verbatim):
+- Counters strip (only when `summary.data`): four `<button type="button" aria-pressed>` cards — "Hoje", "Amanhã", "A confirmar", "Presença a marcar" — number `text-[22px] font-bold tabular-nums` above the label; `text-muted` when 0; active `border-primary bg-primary-soft`, else `border-border bg-surface`; `rounded-block border px-4 py-3`. Click → set `filtro` (and delete `visao`); click the active one → delete `filtro`.
+- Toolbar (`flex flex-wrap items-center gap-3`): selects with visible `<label>`s "Atendente" (admin only; "Todos os atendentes" + `users.filter(u => u.active)`), "Setor" ("Todos os setores" + sectors), "Situação" ("Todas as situações" + the four labels), all `fieldSelect`; the search pill (`searchPill` + `searchInput`, `type="search"`, placeholder "Cliente, telefone ou título", `aria-label="Buscar compromissos"`) writing `busca` on every keystroke; "Limpar filtros" (`button('ghost', 'sm')`) when any of the four is set; "Novo compromisso" primary at the right (`ml-auto`).
+- Period tabs hidden while `filtro` is set.
+- Lista: group consecutive items by `officeDateOf(new Date(a.startsAt))`; each group a `<section>` with `<h2 className="sticky top-0 z-10 bg-surface py-1.5 text-[13px] font-bold …">{dayHeading(day, today)}</h2>` (`text-primary` for today, else `text-muted`) and the existing `<ul className="divide-y divide-border">` of `AppointmentItem page`.
+
+- [ ] **Step 1: Write the failing tests**
+
+`web/src/components/agenda/dates.test.ts`:
+
+```ts
+process.env.TZ = 'Asia/Tokyo';
+import { describe, expect, it } from 'vitest';
+import { dayHeading, officeToday } from './dates';
+
+describe('agenda dates (spec 2026-10-23 controle §6.4)', () => {
+  it('officeToday is the Cuiabá date', () => {
+    expect(officeToday(new Date('2026-10-21T03:30:00.000Z'))).toBe('2026-10-20');
+  });
+  it('dayHeading: Hoje, Amanhã, Ontem, then the short date, with the year only when it differs', () => {
+    expect(dayHeading('2026-10-20', '2026-10-20')).toBe('Hoje');
+    expect(dayHeading('2026-10-21', '2026-10-20')).toBe('Amanhã');
+    expect(dayHeading('2026-10-19', '2026-10-20')).toBe('Ontem');
+    expect(dayHeading('2026-10-23', '2026-10-20')).toBe('sex., 23 de out.');
+    expect(dayHeading('2025-10-24', '2026-10-20')).toBe('sex., 24 de out. de 2025');
+    expect(dayHeading('2027-01-04', '2026-12-30')).toBe('seg., 4 de jan. de 2027');
+  });
+});
+```
+
+`web/src/pages/ScheduledMessages.test.tsx` — changes to the existing file:
+- Right after the `// @vitest-environment jsdom` pragma: `process.env.TZ = 'Asia/Tokyo';`. Add `beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-20T12:00:00.000Z')); })` (08:00 Cuiabá); `afterEach` adds `vi.useRealTimers()`.
+- `renderPage(entry = '/agendamentos', me: Me = agentMe)` calls `qc.setQueryData(['me'], me)`. `agentMe` / `adminMe` shaped like `adminMe` in `web/src/pages/Inbox.test.tsx:99` (agent: `role: 'agent'`, `sectorIds: ['s1']`).
+- Helpers:
+
+```tsx
+const keys = () =>
+  vi.mocked(fetch).mock.calls.map(([input, init]) => {
+    const u = new URL(String(input), 'http://localhost');
+    return `${init?.method ?? 'GET'} ${u.pathname}${u.search}`;
+  });
+const summary = { today: 2, tomorrow: 0, toConfirm: 1, toMark: 3 };
+```
+
+- Existing tests: the first now opens `'/agendamentos?aba=mensagens&status=failed'`, the second `'/agendamentos?aba=mensagens'`; the third keeps `?aba=compromissos&status=failed` (old links still work); the fourth keeps `situacao=past` (old value) — add a twin with `periodo=past`. Add `'GET /api/appointments/summary': summary` to their stubs.
+
+New tests:
+
+```tsx
+it('opens on Compromissos, listed before Mensagens (spec 2026-10-23 controle §6.1)', async () => {
+  stubFetch({ 'GET /api/appointments?tab=upcoming': [appointment()], 'GET /api/appointments/summary': summary });
+  renderPage();
+  expect(await screen.findByText('Audiência')).toBeTruthy();
+  const agenda = screen.getByRole('tablist', { name: 'Agenda' });
+  expect(within(agenda).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Compromissos', 'Mensagens']);
+  expect(within(agenda).getByRole('tab', { name: 'Compromissos' }).getAttribute('aria-selected')).toBe('true');
+});
+
+it('counters: the number per card, 0 muted; a click lists the preset without the period tabs, a second click clears it (§6.2)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    'GET /api/appointments?tab=upcoming': [appointment()],
+    'GET /api/appointments?preset=toMark': [appointment({ id: 'a2', title: 'Perícia', startsAt: '2026-10-19T18:00:00.000Z' })],
+  });
+  renderPage();
+  const card = await screen.findByRole('button', { name: /Presença a marcar/ });
+  expect(card.textContent).toContain('3');
+  expect(screen.getByRole('button', { name: /Amanhã/ }).className).toContain('text-muted');
+  fireEvent.click(card);
+  expect(await screen.findByText('Perícia')).toBeTruthy();
+  expect(card.getAttribute('aria-pressed')).toBe('true');
+  expect(screen.queryByRole('tab', { name: 'Próximos' })).toBeNull();
+  fireEvent.click(card);
+  expect(await screen.findByText('Audiência')).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Próximos' })).toBeTruthy();
+});
+
+it('groups the list by Cuiabá day: Hoje in primary, Amanhã, then the short date (§6.4, Review Focus 3)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    'GET /api/appointments?tab=upcoming': [
+      appointment({ id: 'a1', startsAt: '2026-10-21T02:00:00.000Z' }), // 20/10 22:00 in Cuiabá, the 21st in Tokyo
+      appointment({ id: 'a2', startsAt: '2026-10-21T13:00:00.000Z' }),
+      appointment({ id: 'a3', startsAt: '2026-10-23T13:00:00.000Z' }),
+    ],
+  });
+  renderPage();
+  await screen.findAllByText('Audiência');
+  const headings = screen.getAllByRole('heading', { level: 2 });
+  expect(headings.map((h) => h.textContent)).toEqual(['Hoje', 'Amanhã', 'sex., 23 de out.']);
+  expect(headings[0]!.className).toContain('text-primary');
+});
+
+it('filters: into both requests, active users only, Busca after 300 ms and trimmed, Limpar filtros (§6.3, Review Focus 5)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    'GET /api/appointments?tab=upcoming': [],
+    'GET /api/users': [
+      { id: 'u2', name: 'Bruno', email: 'b@x.br', role: 'agent', signature: null, active: true, sectorIds: [], avatarUrl: null },
+      { id: 'u3', name: 'Inativo', email: 'i@x.br', role: 'agent', signature: null, active: false, sectorIds: [], avatarUrl: null },
+    ],
+    'GET /api/sectors': [{ id: 's1', name: 'Financeiro', position: 1, isDefault: false }],
+  });
+  renderPage('/agendamentos', adminMe);
+  await screen.findByRole('option', { name: 'Financeiro' });
+  await screen.findByRole('option', { name: 'Bruno' });
+  expect(screen.queryByRole('option', { name: 'Inativo' })).toBeNull();
+  fireEvent.change(screen.getByLabelText('Atendente'), { target: { value: 'u2' } });
+  fireEvent.change(screen.getByLabelText('Setor'), { target: { value: 's1' } });
+  fireEvent.change(screen.getByLabelText('Situação'), { target: { value: 'confirmed' } });
+  fireEvent.change(screen.getByPlaceholderText('Cliente, telefone ou título'), { target: { value: ' maria ' } });
+  expect(keys().some((k) => k.includes('q='))).toBe(false); // debounced
+  await waitFor(() => expect(keys()).toContain('GET /api/appointments?tab=upcoming&authorId=u2&sectorId=s1&status=confirmed&q=maria'));
+  expect(keys()).toContain('GET /api/appointments/summary?authorId=u2&sectorId=s1&q=maria');
+  fireEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }));
+  expect((screen.getByLabelText('Setor') as HTMLSelectElement).value).toBe('');
+  expect(screen.queryByRole('button', { name: 'Limpar filtros' })).toBeNull();
+});
+
+it('an attendant has no Atendente filter; an old-style ?situacao=confirmed is the status filter (spec Review focus 5)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    'GET /api/appointments?tab=upcoming&status=confirmed': [appointment({ status: 'confirmed' })],
+  });
+  renderPage('/agendamentos?situacao=confirmed');
+  expect(await screen.findByText('Audiência')).toBeTruthy();
+  expect(screen.queryByLabelText('Atendente')).toBeNull();
+  expect((screen.getByLabelText('Situação') as HTMLSelectElement).value).toBe('confirmed');
+});
+```
+
+In `NotificationToasts.test.tsx` (the "failed scheduled message" test), before the click add:
+`expect(screen.getByRole('link', { name: /Mensagem agendada não enviada/ }).getAttribute('href')).toBe('/agendamentos?aba=mensagens&status=failed');`
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `npm test -w web -- src/components/agenda src/pages/ScheduledMessages.test.tsx src/components/layout/NotificationToasts.test.tsx`
+Expected: FAIL (module `./dates` missing; tab order; no counters).
+
+- [ ] **Step 3: Implement** `hooks.ts` (move), `dates.ts`, `AppointmentsAgenda.tsx`, the page changes and the toast link. The list and summary queries keep `refetchInterval: 30_000`.
+
+- [ ] **Step 4: Run tests and typecheck**
+
+Run: `npm test -w web` and `npm run typecheck`
+Expected: PASS (Inbox tests still pass with the moved hook).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add web/src/lib/hooks.ts web/src/pages/Inbox.tsx web/src/components/agenda web/src/pages/ScheduledMessages.tsx web/src/pages/ScheduledMessages.test.tsx web/src/components/layout/NotificationToasts.tsx web/src/components/layout/NotificationToasts.test.tsx
+git commit -m "feat(web): agenda abre em Compromissos com contadores, filtros, busca e lista por dia
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
