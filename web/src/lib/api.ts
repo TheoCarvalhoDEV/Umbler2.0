@@ -382,7 +382,7 @@ export const api = Object.assign(call, {
     start: (chatId: string, botId: string) => request<BotRunDto>('POST', `/api/chats/${enc(chatId)}/bot-runs`, { botId }),
     stop: (runId: string) => request<BotRunDto>('POST', `/api/bot-runs/${enc(runId)}/stop`),
   },
-  /** Spec 2026-10-21 importar-umbler §10 (admin). */
+  /** Spec 2026-10-21 importar-umbler sec. 10 (admin). */
   umblerImport: {
     get: () => request<UmblerImportStatusDto>('GET', '/api/umbler-import'),
     analyze: () => request<UmblerImportDto>('POST', '/api/umbler-import/analyze'),
