@@ -49,3 +49,25 @@ it('filters the items by label, ignoring accents and case, and hides empty group
   expect(within(nav).queryAllByRole('link')).toHaveLength(0);
   expect(within(nav).getByText('Nenhum ajuste encontrado')).toBeTruthy();
 });
+
+it('lists "Importar do Umbler" under Equipe e cadastros for admins only (spec 2026-10-21 importar-umbler §6)', () => {
+  const nav = (me: Me) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['me'], me);
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/configuracoes/importar-umbler']}>
+          <Routes>
+            <Route path="/configuracoes/:section?" element={<SettingsPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return screen.getByRole('navigation', { name: 'Configurações' });
+  };
+  expect(within(nav(admin)).getByRole('link', { name: 'Importar do Umbler' }).getAttribute('href')).toBe('/configuracoes/importar-umbler');
+  cleanup();
+  const agentNav = nav({ ...admin, id: 'u2', role: 'agent' });
+  expect(within(agentNav).queryByRole('link', { name: 'Importar do Umbler' })).toBeNull();
+  expect(within(agentNav).getByRole('link', { name: 'Perfil' }).getAttribute('aria-current')).toBe('page'); // sent back to Perfil
+});

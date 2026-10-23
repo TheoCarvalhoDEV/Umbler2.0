@@ -54,6 +54,21 @@ describe('loadConfig', () => {
     expect(() => loadConfig(rest)).toThrow(/DATABASE_URL/);
   });
 
+  it('reads UMBLER_TOKEN as optional: empty is absent, never shown in an error (spec 2026-10-21 importar-umbler §10)', () => {
+    expect(loadConfig(base).umblerToken).toBeNull();
+    expect(loadConfig({ ...base, UMBLER_TOKEN: '' }).umblerToken).toBeNull();
+    expect(loadConfig({ ...base, UMBLER_TOKEN: '  eyJ.token  ' }).umblerToken).toBe('eyJ.token');
+    const err = (() => {
+      try {
+        loadConfig({ ...base, UMBLER_TOKEN: 'eyJ.segredo', WEBHOOK_SECRET: 'curto' });
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+    expect(err?.message).toMatch(/WEBHOOK_SECRET/);
+    expect(err?.message).not.toContain('eyJ.segredo');
+  });
+
   it('rejects an APP_ORIGIN that is not a URL', () => {
     expect(() => loadConfig({ ...base, APP_ORIGIN: 'talk.jvo.adv.br' })).toThrow(/APP_ORIGIN/);
   });

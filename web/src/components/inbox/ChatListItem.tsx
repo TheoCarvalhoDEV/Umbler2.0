@@ -99,7 +99,10 @@ export function ChatListItem({
   const chips = [...chipsOf(chat.chatTagIds ?? [], 'chat'), ...chipsOf(chat.tagIds, 'contact')];
   const highlighted = active || !!selection?.selected;
   return (
-    <li className={`group/row relative flex items-start rounded-item transition-colors ${highlighted ? 'bg-sidebar-active' : 'hover:bg-sidebar-hover'}`}>
+    <li
+      // the hairline under each card starts after the avatar, and hides around a hovered or open card
+      className={`group/row relative flex items-start rounded-item transition-colors after:pointer-events-none after:absolute after:right-3 after:bottom-0 after:left-[68px] after:h-px after:bg-border last:after:hidden hover:after:opacity-0 [&:has(+li:hover)]:after:opacity-0 ${highlighted ? 'bg-sidebar-active after:opacity-0' : 'hover:bg-sidebar-hover'}`}
+    >
       {selection && (
         <label
           title={selection.disabled ? `Até ${BULK_MAX} conversas por vez` : undefined}

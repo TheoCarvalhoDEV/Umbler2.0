@@ -119,6 +119,7 @@ export async function makeTestCtx(): Promise<
     webDistDir: null,
     evolution: { url: 'http://evolution.test', apiKey: 'test-key' },
     sessionDays: 30,
+    umblerToken: null,
   };
   const clock = createFakeClock();
   return { db, wa: createFakeGateway(), hub: createRecordingHub(), config, clock, botRuntime: createBotRuntime({ now: clock.now }) };

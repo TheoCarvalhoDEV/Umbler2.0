@@ -36,8 +36,8 @@ export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 pt-BR labels: `scheduled` "Agendado", `confirmed` "Confirmado", `attended` "Compareceu", `missed` "Faltou".
 A cancelled appointment (canceled_at set, base spec) shows "Cancelado" and its status is not shown or changed.
 
-Migration `0010_situacao_compromissos` adds the column; existing rows become `'scheduled'`.
-(The Umbler import branch also has a 0010; whichever branch merges second renumbers its migration.)
+Migration `0011_situacao_compromissos` adds the column; existing rows become `'scheduled'`.
+(Renumbered from 0010 after the Umbler import, PR #38, merged first with its `0010_importar_umbler`.)
 
 ### 3.2 Rules (same check on server and web, one shared function)
 

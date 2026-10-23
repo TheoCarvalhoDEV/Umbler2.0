@@ -2,28 +2,26 @@ import { useEffect, useRef, useState } from 'react';
 import { useMatch, useNavigate } from 'react-router';
 import { useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import { BellSimpleIcon, BellSimpleSlashIcon } from '@phosphor-icons/react';
-import type { BrowserNotificationMode, ChatDetail, ChatListItem, ContactRef, MessageDto, UserPreferences } from '@talk/shared';
+import type {
+  BrowserNotificationMode, ChatDetail, ChatListItem, ContactRef, MessageDto, NotificationSound, UserPreferences,
+} from '@talk/shared';
 import { previewText } from '../components/conversation/model';
 import { menuItem } from '../components/ui';
 import { api, qk } from './api';
 import { preferencesOf } from './auth';
 import { contactLabel } from './format';
+import { playSound } from './sounds';
 import { onWsEvent } from './ws';
 
-function beep(): void {
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = 880;
-    gain.gain.value = 0.1;
-    osc.connect(gain).connect(ctx.destination);
-    osc.onended = () => void ctx.close();
-    osc.start();
-    osc.stop(ctx.currentTime + 0.15);
-  } catch {
-    // navegador bloqueou o áudio (sem interação prévia); a notificação ainda aparece
-  }
+const SOUND_GAP_MS = 1500;
+let lastSoundAt = -Infinity;
+
+/** The message sound, at most once per 1.5 s: a burst (say, after reconnecting) plays it once. */
+export function messageSound(kind: NotificationSound = 'soft'): void {
+  const now = Date.now();
+  if (now - lastSoundAt < SOUND_GAP_MS) return;
+  lastSoundAt = now;
+  playSound(kind);
 }
 
 /** "Notificações do navegador" (spec 2026-10-19 §6): Sempre, Só quando a aba está em segundo plano, Nunca. */
@@ -92,8 +90,9 @@ export function useMessageNotifications(): void {
         if (e.type !== 'message.created' || e.message.direction !== 'in') return;
         const { chatId } = e.message;
         const message = e.message;
-        const alerts = messageAlerts(preferencesOf(qc), { hidden: document.hidden, chatOnScreen: openRef.current === chatId });
-        if (alerts.sound) beep();
+        const prefs = preferencesOf(qc);
+        const alerts = messageAlerts(prefs, { hidden: document.hidden, chatOnScreen: openRef.current === chatId });
+        if (alerts.sound) messageSound(prefs.sound);
         if (alerts.browser) {
           void chatContact(qc, chatId).then((contact) => {
             const n = messageNotification(contact, message, window.location.origin);

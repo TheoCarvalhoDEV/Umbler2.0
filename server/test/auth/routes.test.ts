@@ -271,14 +271,16 @@ describe('PUT /api/auth/me/preferences (spec 2026-10-19 §6)', () => {
   it('starts from the defaults and changes only the named fields, for this user only', async () => {
     const ana = await loginAs(app, seed.agentA.email);
     expect((await meOf(ana.cookie)).preferences).toEqual(DEFAULT_PREFERENCES);
+    expect(DEFAULT_PREFERENCES.sound).toBe('soft');
 
     const first = await put(ana.headers, { sounds: false });
     expect(first.statusCode).toBe(200);
     expect(first.json().preferences).toEqual({ ...DEFAULT_PREFERENCES, sounds: false });
     expect((await put(ana.headers, { browserNotifications: 'never' })).json().preferences).toEqual({
-      enterSends: true, sounds: false, browserNotifications: 'never',
+      enterSends: true, sounds: false, sound: 'soft', browserNotifications: 'never',
     });
-    expect(await stored(seed.agentA.id)).toEqual({ sounds: false, browserNotifications: 'never' });
+    expect((await put(ana.headers, { sound: 'bell' })).json().preferences.sound).toBe('bell');
+    expect(await stored(seed.agentA.id)).toEqual({ sounds: false, browserNotifications: 'never', sound: 'bell' });
 
     const bruno = await loginAs(app, seed.agentB.email);
     expect((await meOf(bruno.cookie)).preferences).toEqual(DEFAULT_PREFERENCES);
@@ -301,6 +303,7 @@ describe('PUT /api/auth/me/preferences (spec 2026-10-19 §6)', () => {
     expect((await put(ana.headers, { theme: 'dark' })).statusCode).toBe(400);
     expect((await put(ana.headers, { browserNotifications: 'sometimes' })).statusCode).toBe(400);
     expect((await put(ana.headers, { sounds: 'no' })).statusCode).toBe(400);
+    expect((await put(ana.headers, { sound: 'trumpet' })).statusCode).toBe(400);
     expect((await put({ cookie: ana.cookie }, { sounds: false })).statusCode).toBe(403);
     expect((await put({ origin: TEST_ORIGIN }, { sounds: false })).statusCode).toBe(401);
     expect(await stored(seed.agentA.id)).toEqual({});

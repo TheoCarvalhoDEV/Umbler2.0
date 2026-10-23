@@ -18,7 +18,7 @@ export {
   reactBlock, replyBlock, editBlock, deleteBlock, forwardBlock, isSingleEmoji, noteEditBlock, noteDeleteBlock,
 } from './message-actions.js';
 export type * from './message-actions.js';
-export { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES } from './preferences.js';
+export { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES, SOUNDS, SOUND_VALUES } from './preferences.js';
 export type * from './preferences.js';
 export { SEARCH_MIN_CHARS, SEARCH_MAX_CHARS, SEARCH_LIMIT, FOLD_FROM, FOLD_TO, foldText } from './search.js';
 export { CHAT_SORTS, DEFAULT_CHAT_SORT, BULK_MAX } from './chat-list.js';
@@ -33,6 +33,8 @@ export {
   reminderSendAt, reminderTextProblem, remindersProblem, fillReminderText,
 } from './automation.js';
 export type * from './automation.js';
+export { UMBLER_IMPORT_STATES, UMBLER_IMPORT_PHASES, UMBLER_PHASE_LABELS, UMBLER_IMPORT_ERRORS, emptyUmblerCounts } from './umbler.js';
+export type * from './umbler.js';
 
 export type Role = 'admin' | 'agent';
 export interface Me { id: string; name: string; email: string; role: Role; signature: string | null; sectorIds: string[]; seeAllSectors: boolean; avatarUrl: string | null;
@@ -88,7 +90,9 @@ export type ChatEventKind =
   // The inactivity close is a 'closed' event with data.reason 'inactivity' and no author.
   | 'message_scheduled' | 'scheduled_canceled' | 'returned_to_queue'
   // spec 2026-10-21 compromissos: data { appointmentId, title, startsAt, edited? } | { appointmentId, title } (never the note)
-  | 'appointment_scheduled' | 'appointment_canceled';
+  | 'appointment_scheduled' | 'appointment_canceled'
+  // spec 2026-10-21 importar-umbler §10: data { count, merged? }
+  | 'umbler_imported';
 export type TimelineItem = ({ type: 'message' } & MessageDto) | ({ type: 'event' } & ChatEventDto);
 /** GET /api/messages/:id/edits: the text before each edit, newest first. */
 export interface MessageEditDto { id: string; previousBody: string | null; source: MessageChangeSource; editedByName: string | null; newTextUnavailable: boolean; editedAt: string }

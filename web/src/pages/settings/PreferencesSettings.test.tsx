@@ -4,7 +4,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DEFAULT_PREFERENCES, type Me, type UserPreferences } from '@talk/shared';
 import { qk } from '../../lib/api';
+import { playSound } from '../../lib/sounds';
 import { PreferencesSettings } from './PreferencesSettings';
+
+vi.mock('../../lib/sounds', () => ({ playSound: vi.fn() }));
 
 const ME: Me = {
   id: 'u1', name: 'Ana Lima', email: 'ana@teste.local', role: 'agent', signature: null, sectorIds: [], seeAllSectors: false,
@@ -60,6 +63,35 @@ it('saves each change at once, only the field that changed (spec 2026-10-19 §6)
   );
   expect(calls.every((c) => c.method === 'PUT' && c.path === '/api/auth/me/preferences')).toBe(true);
   await waitFor(() =>
-    expect(qc.getQueryData<Me>(qk.me)?.preferences).toEqual({ enterSends: false, sounds: false, browserNotifications: 'never' }),
+    expect(qc.getQueryData<Me>(qk.me)?.preferences).toEqual({ enterSends: false, sounds: false, sound: 'soft', browserNotifications: 'never' }),
   );
+});
+
+function renderPage(preferences: UserPreferences) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  qc.setQueryData(qk.me, { ...ME, preferences });
+  render(
+    <QueryClientProvider client={qc}>
+      <PreferencesSettings />
+    </QueryClientProvider>,
+  );
+}
+
+it('Som da notificação: the select saves the sound and Ouvir plays the one selected', async () => {
+  renderPage({ ...DEFAULT_PREFERENCES });
+  const select = screen.getByLabelText('Som da notificação') as HTMLSelectElement;
+  expect(select.value).toBe('soft');
+  expect([...select.options].map((o) => o.text)).toEqual(['Suave', 'Gota', 'Sino']);
+
+  fireEvent.change(select, { target: { value: 'bell' } });
+  await waitFor(() => expect(calls.map((c) => c.body)).toEqual([{ sound: 'bell' }]));
+  await waitFor(() => expect(select.value).toBe('bell'));
+  fireEvent.click(screen.getByRole('button', { name: 'Ouvir' }));
+  expect(playSound).toHaveBeenCalledWith('bell');
+});
+
+it('Som da notificação is disabled while Sons is off', () => {
+  renderPage({ ...DEFAULT_PREFERENCES, sounds: false });
+  expect((screen.getByLabelText('Som da notificação') as HTMLSelectElement).disabled).toBe(true);
+  expect((screen.getByRole('button', { name: 'Ouvir' }) as HTMLButtonElement).disabled).toBe(true);
 });

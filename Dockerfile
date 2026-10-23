@@ -20,7 +20,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 # ponytail: copies the whole pruned workspace (server runs from source via tsx). Trim web/src etc. if image size ever matters.
 COPY --from=build /app /app
-# /data também do node: o importador grava /data/import-report.json ao lado de /data/media.
+# /data e /data/media do node: o app grava os arquivos das conversas em /data/media.
 RUN mkdir -p /data/media && chown node:node /data /data/media
 USER node
 EXPOSE 3000

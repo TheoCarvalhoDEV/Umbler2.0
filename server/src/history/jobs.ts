@@ -3,6 +3,8 @@ import type { HistoryPeriod } from '@talk/shared';
 import { errorTag } from '../bots/scheduler.js';
 import type { AppCtx } from '../ctx.js';
 import { channels, historyImports } from '../db/schema.js';
+import { umblerBeat } from '../importer/job.js';
+import type { UmblerClient } from '../importer/umbler.js';
 import { copyRange } from './copy.js';
 import { drainMediaQueue } from './media.js';
 import type { HistoryImportRow } from './imports.js';
@@ -97,17 +99,22 @@ export async function runBackfill(ctx: AppCtx, channelId: string): Promise<numbe
 
 /**
  * The history worker (§5-6), one per app process: import passes that are due and, every 5 min, the back-fill of every
- * channel; plus the media queue in its own loop, so a long download run never delays an import pass. All state lives
- * in the DB, so a restart resumes where the previous process stopped.
+ * channel; plus the media queue in its own loop, so a long download run never delays an import pass; plus the "Importar
+ * do Umbler" job (spec 2026-10-21 importar-umbler §9.3) in a third loop, which runs for hours in one beat. All state
+ * lives in the DB, so a restart resumes where the previous process stopped.
  * ponytail: one process only; claim rows with FOR UPDATE SKIP LOCKED if the app ever runs more than one.
  */
-export function createHistoryWorker(ctx: AppCtx, opts: { intervalMs?: number; mediaIntervalMs?: number } = {}) {
+export function createHistoryWorker(
+  ctx: AppCtx,
+  opts: { intervalMs?: number; mediaIntervalMs?: number; umblerClient?: () => UmblerClient } = {},
+) {
   const { intervalMs = 15_000, mediaIntervalMs = 10_000 } = opts;
   let lastBackfill = Number.NEGATIVE_INFINITY;
   const timers: Array<ReturnType<typeof setInterval>> = [];
   let abort = new AbortController();
   let jobs: Promise<unknown> | null = null;
   let media: Promise<unknown> | null = null;
+  let umbler: Promise<unknown> | null = null;
 
   async function tick(): Promise<void> {
     const now = ctx.botRuntime.now();
@@ -152,6 +159,15 @@ export function createHistoryWorker(ctx: AppCtx, opts: { intervalMs?: number; me
       });
   }
 
+  function runUmbler(): void {
+    if (umbler) return; // the import is still running: it goes on in the same beat
+    umbler = umblerBeat(ctx, abort.signal, opts.umblerClient)
+      .catch((err: unknown) => console.error('umbler: beat failed', errorTag(err)))
+      .finally(() => {
+        umbler = null;
+      });
+  }
+
   return {
     tick,
     start(): void {
@@ -159,15 +175,16 @@ export function createHistoryWorker(ctx: AppCtx, opts: { intervalMs?: number; me
       abort = new AbortController();
       runJobs();
       runMedia();
-      timers.push(setInterval(runJobs, intervalMs), setInterval(runMedia, mediaIntervalMs));
+      runUmbler();
+      timers.push(setInterval(runJobs, intervalMs), setInterval(runMedia, mediaIntervalMs), setInterval(runUmbler, intervalMs));
       for (const t of timers) t.unref();
     },
-    /** Clears the timers, ends the media loop after its current download, and waits for both. */
+    /** Clears the timers, ends the media loop after its current download and the Umbler job between pages, and waits for all. */
     async stop(): Promise<void> {
       for (const t of timers) clearInterval(t);
       timers.length = 0;
       abort.abort();
-      await Promise.all([jobs, media]);
+      await Promise.all([jobs, media, umbler]);
     },
   };
 }

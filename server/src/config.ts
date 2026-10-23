@@ -13,6 +13,8 @@ export interface Config {
   webDistDir: string | null;
   evolution: { url: string; apiKey: string };
   sessionDays: number;
+  /** Spec 2026-10-21 importar-umbler §10: the Umbler access token; null = not configured. Never logged, stored or sent to the web. */
+  umblerToken: string | null;
 }
 
 const baseUrl = z.url().transform((u) => u.replace(/\/+$/, ''));
@@ -29,6 +31,8 @@ const envSchema = z.object({
   WEB_DIST_DIR: z.string().optional(),
   EVOLUTION_URL: baseUrl,
   EVOLUTION_API_KEY: z.string().min(1),
+  // optional; empty = absent (docker-compose passes UMBLER_TOKEN: ${UMBLER_TOKEN:-})
+  UMBLER_TOKEN: z.string().optional().transform((v) => v?.trim() || null),
 });
 
 const defaultWebDist = fileURLToPath(new URL('../../web/dist', import.meta.url));
@@ -49,5 +53,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     webDistDir: e.WEB_DIST_DIR === undefined ? defaultWebDist : e.WEB_DIST_DIR === '' ? null : path.resolve(e.WEB_DIST_DIR),
     evolution: { url: e.EVOLUTION_URL, apiKey: e.EVOLUTION_API_KEY },
     sessionDays: 30,
+    umblerToken: e.UMBLER_TOKEN,
   };
 }

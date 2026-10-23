@@ -338,3 +338,21 @@ describe('api routes of the 2026-10-21 compromissos delivery', () => {
     ]);
   });
 });
+
+describe('api routes of the 2026-10-21 importar-umbler delivery', () => {
+  it('calls the Umbler import routes', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => json(200, {}));
+    vi.stubGlobal('fetch', fetchMock);
+    const mapping = { channels: { CH: 'c1' }, sectors: { S: 'create' }, members: { M: 'none' } };
+    await api.umblerImport.get();
+    await api.umblerImport.analyze();
+    await api.umblerImport.start('i1', mapping);
+    await api.umblerImport.resume('i1');
+    expect(fetchMock.mock.calls.map(([u, i]) => `${i?.method} ${String(u)} ${String(i?.body ?? '')}`)).toEqual([
+      'GET /api/umbler-import ',
+      'POST /api/umbler-import/analyze ',
+      `POST /api/umbler-import/i1/start ${JSON.stringify({ mapping })}`,
+      'POST /api/umbler-import/i1/resume ',
+    ]);
+  });
+});
