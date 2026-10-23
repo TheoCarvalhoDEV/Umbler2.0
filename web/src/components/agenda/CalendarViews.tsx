@@ -11,7 +11,7 @@ import { button, iconButton, iconButtonGhost } from '../ui';
 import { api, qk } from '../../lib/api';
 import { contactLabel } from '../../lib/format';
 import type { AgendaFilters } from './AppointmentsAgenda';
-import { mondayOf, officeToday, prefillStartsAt, weekDays, weekdayDay, weekLabel } from './dates';
+import { mondayOf, monthGrid, monthLabel, officeToday, prefillStartsAt, shiftMonth, weekDays, weekdayDay, weekLabel } from './dates';
 
 const STATUS_DOT: Record<AppointmentStatus, string> = { scheduled: 'bg-fg-2', confirmed: 'bg-primary', attended: 'bg-success', missed: 'bg-danger' };
 
@@ -25,7 +25,7 @@ export function useRangeList(fromDay: string, lastDay: string, filters: AgendaFi
   return { list, notice: full && <p className="text-[13px] text-muted">Mostrando os primeiros {APPOINTMENT_RANGE_LIMIT}</p> };
 }
 
-export function AppointmentChip({ item, onOpen }: { item: AppointmentDto; onOpen: () => void }) {
+export function AppointmentChip({ item, onOpen, compact }: { item: AppointmentDto; onOpen: () => void; compact?: boolean }) {
   const canceled = !!item.canceledAt;
   return (
     <button
@@ -36,7 +36,7 @@ export function AppointmentChip({ item, onOpen }: { item: AppointmentDto; onOpen
       <span className="shrink-0 tabular-nums">{isoToOfficeLocal(item.startsAt).slice(11)}</span>
       <span className="min-w-0 flex-1">
         <span className="block truncate font-semibold">{item.title}</span>
-        <span className="block truncate text-muted">{contactLabel(item.contact)}</span>
+        {!compact && <span className="block truncate text-muted">{contactLabel(item.contact)}</span>}
       </span>
       {!canceled && <span aria-hidden className={`size-2 shrink-0 rounded-full ${STATUS_DOT[item.status]}`} />}
     </button>
@@ -121,6 +121,73 @@ export function WeekView(props: { monday: string; filters: AgendaFilters; onWeek
                   <AppointmentChip key={a.id} item={a} onOpen={() => setOpenId(a.id)} />
                 ))}
               </div>
+            </li>
+          );
+        })}
+      </ol>
+      {open && <AppointmentDetailsDialog item={open} onClose={() => setOpenId(null)} />}
+    </>
+  );
+}
+
+const monthShort = new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', month: 'short' });
+
+/** Spec 2026-10-23 controle §6.7: 6 weeks of office days; a day opens its week. */
+export function MonthView({ month, filters, onMonth, onWeek }: { month: string; filters: AgendaFilters; onMonth: (month: string) => void; onWeek: (monday: string) => void }) {
+  const grid = monthGrid(month);
+  const today = officeToday();
+  const { list, notice } = useRangeList(grid[0]!, grid[41]!, filters);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const open = list.data?.find((a) => a.id === openId);
+  const byDay = new Map<string, AppointmentDto[]>();
+  for (const a of list.data ?? []) {
+    const day = officeDateOf(new Date(a.startsAt));
+    byDay.set(day, [...(byDay.get(day) ?? []), a]);
+  }
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" aria-label="Mês anterior" onClick={() => onMonth(shiftMonth(month, -1))} className={iconButton}>
+          <CaretLeft size={16} aria-hidden />
+        </button>
+        <button type="button" aria-label="Próximo mês" onClick={() => onMonth(shiftMonth(month, 1))} className={iconButton}>
+          <CaretRight size={16} aria-hidden />
+        </button>
+        <button type="button" onClick={() => onMonth(today.slice(0, 7))} className={button('secondary', 'sm')}>
+          Hoje
+        </button>
+        <span className="text-sm font-semibold">{monthLabel(month)}</span>
+      </div>
+      {list.isPending && <p className="text-sm text-muted">Carregando…</p>}
+      {list.isError && (
+        <p role="alert" className="text-[13px] font-semibold text-danger">
+          Não foi possível carregar os compromissos.
+        </p>
+      )}
+      {notice}
+      <ol aria-label={`Dias de ${monthLabel(month)}`} className="grid grid-cols-7 gap-1">
+        {grid.map((day) => {
+          const items = byDay.get(day) ?? [];
+          const n = Number(day.slice(8, 10));
+          return (
+            <li
+              key={day}
+              aria-current={day === today ? 'date' : undefined}
+              onClick={(e) => e.target === e.currentTarget && onWeek(mondayOf(day))}
+              className={`flex min-h-20 min-w-0 flex-col gap-1 rounded-block border border-border p-1 ${day.slice(0, 7) === month ? 'bg-surface' : 'bg-panel text-muted'} ${day === today ? '!bg-primary-soft' : ''}`}
+            >
+              <button
+                type="button"
+                aria-label={`Ver a semana de ${n} de ${monthShort.format(new Date(`${day}T12:00:00Z`))}`}
+                onClick={() => onWeek(mondayOf(day))}
+                className="self-start rounded-block px-1 text-[13px] font-bold hover:bg-border"
+              >
+                {n}
+              </button>
+              {items.slice(0, 3).map((a) => (
+                <AppointmentChip key={a.id} item={a} compact onOpen={() => setOpenId(a.id)} />
+              ))}
+              {items.length > 3 && <span className="px-1 text-[12px] text-muted">+{items.length - 3}</span>}
             </li>
           );
         })}

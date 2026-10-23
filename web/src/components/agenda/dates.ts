@@ -45,3 +45,15 @@ export function prefillStartsAt(day: string, now: Date): string | null {
   const hour = Number(nowLocal.slice(11, 13)) + 1;
   return hour > 23 ? null : `${day}T${String(hour).padStart(2, '0')}:00`;
 }
+
+/** The 6 weeks (42 office days) shown for a month ('YYYY-MM'), from the Monday on or before the 1st. */
+export const monthGrid = (month: string): string[] => Array.from({ length: 42 }, (_, i) => shiftOfficeDate(mondayOf(`${month}-01`), i));
+
+export function shiftMonth(month: string, n: number): string {
+  const idx = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1 + n;
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`;
+}
+
+const monthLong = new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC', month: 'long' });
+/** "outubro de 2026" */
+export const monthLabel = (month: string): string => `${monthLong.format(dayOf(`${month}-01`))} de ${month.slice(0, 4)}`;

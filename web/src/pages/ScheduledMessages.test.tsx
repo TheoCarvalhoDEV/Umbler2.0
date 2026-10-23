@@ -294,3 +294,29 @@ it('a full range says "Mostrando os primeiros 500" (spec Review focus 3)', async
   renderPage('/agendamentos?visao=semana');
   expect(await screen.findByText('Mostrando os primeiros 500')).toBeTruthy();
 });
+
+it('Mês: 42 days from Monday, other months muted, 3 chips then "+N", ▶ moves, a day opens its week (§6.7)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    [rangeKey('2026-09-28', '2026-11-08')]: Array.from({ length: 5 }, (_, i) =>
+      appointment({ id: `a${i}`, title: `Audiência ${i}`, startsAt: `2026-10-21T1${i}:00:00.000Z` }),
+    ),
+    [rangeKey('2026-10-26', '2026-12-06')]: [],
+    [thisWeek]: [],
+  });
+  renderPage('/agendamentos?visao=mes&mes=2026-10');
+  const list = await screen.findByRole('list', { name: 'Dias de outubro de 2026' });
+  const days = within(list).getAllByRole('listitem');
+  expect(days).toHaveLength(42);
+  expect(days[0]!.className).toContain('text-muted'); // 28/09
+  expect(days[22]!.getAttribute('aria-current')).toBe('date'); // 20/10
+  const wed = days[23]!; // 21/10
+  expect(await within(wed).findAllByRole('button', { name: /Audiência/ })).toHaveLength(3);
+  expect(within(wed).getByText('+2')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Próximo mês' }));
+  expect(await screen.findByRole('list', { name: 'Dias de novembro de 2026' })).toBeTruthy();
+  expect(keys()).toContain(rangeKey('2026-10-26', '2026-12-06'));
+  fireEvent.click(screen.getByRole('button', { name: 'Mês anterior' }));
+  fireEvent.click(within(await screen.findByRole('list', { name: 'Dias de outubro de 2026' })).getByRole('button', { name: 'Ver a semana de 21 de out.' }));
+  expect(await screen.findByText('19 – 25 de out. de 2026')).toBeTruthy();
+});

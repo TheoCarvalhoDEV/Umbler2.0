@@ -11,7 +11,7 @@ import { button, fieldSelect, searchInput, searchPill, tab as tabClass, tabList 
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { useDebounced } from '../../lib/hooks';
-import { WeekView } from './CalendarViews';
+import { MonthView, WeekView } from './CalendarViews';
 import { dayHeading, mondayOf, officeToday } from './dates';
 
 export type AgendaFilters = Pick<AppointmentListQuery, 'authorId' | 'sectorId' | 'status' | 'q'>;
@@ -50,6 +50,8 @@ export function AppointmentsAgenda() {
   const semanaParam = params.get('semana');
   const validWeek = semanaParam && /^\d{4}-\d{2}-\d{2}$/.test(semanaParam) && !Number.isNaN(Date.parse(`${semanaParam}T12:00:00Z`));
   const monday = mondayOf(validWeek ? semanaParam : officeToday());
+  const mesParam = params.get('mes');
+  const month = mesParam && /^\d{4}-(0[1-9]|1[0-2])$/.test(mesParam) ? mesParam : officeToday().slice(0, 7);
 
   /** Several keys in one setParams; null deletes. */
   const update = (changes: Record<string, string | null>) =>
@@ -169,6 +171,7 @@ export function AppointmentsAgenda() {
       {visao === 'semana' && (
         <WeekView monday={monday} filters={filters} onWeek={(m) => update({ semana: m })} onCreate={(initialStartsAt) => setCreating({ initialStartsAt })} />
       )}
+      {visao === 'mes' && <MonthView month={month} filters={filters} onMonth={(m) => update({ mes: m })} onWeek={(m) => update({ visao: 'semana', semana: m })} />}
       {visao === 'lista' && !preset && (
         <div role="tablist" aria-label="Situação dos compromissos" className={tabList}>
           {APPOINTMENT_TABS.map((t) => (

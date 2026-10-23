@@ -1,6 +1,6 @@
 process.env.TZ = 'Asia/Tokyo';
 import { describe, expect, it } from 'vitest';
-import { dayHeading, mondayOf, officeToday, prefillStartsAt, weekDays, weekdayDay, weekLabel } from './dates';
+import { dayHeading, mondayOf, monthGrid, monthLabel, shiftMonth, officeToday, prefillStartsAt, weekDays, weekdayDay, weekLabel } from './dates';
 
 describe('agenda dates (spec 2026-10-23 controle §6.4)', () => {
   it('officeToday is the Cuiabá date', () => {
@@ -38,5 +38,19 @@ describe('week helpers (spec §6.6)', () => {
     expect(prefillStartsAt('2026-10-20', at('2026-10-20T14:20:00.000Z'))).toBe('2026-10-20T11:00');
     expect(prefillStartsAt('2026-10-20', at('2026-10-21T03:30:00.000Z'))).toBeNull(); // 23:30 in Cuiabá
     expect(prefillStartsAt('2026-10-19', at('2026-10-20T12:00:00.000Z'))).toBeNull();
+  });
+});
+
+describe('month helpers (spec §6.7)', () => {
+  it('monthGrid: 42 days from the Monday on or before the 1st', () => {
+    const oct = monthGrid('2026-10');
+    expect([oct.length, oct[0], oct[41]]).toEqual([42, '2026-09-28', '2026-11-08']);
+    const feb = monthGrid('2027-02'); // the 1st is a Monday
+    expect([feb[0], feb[41]]).toEqual(['2027-02-01', '2027-03-14']);
+  });
+  it('shiftMonth and monthLabel', () => {
+    expect(shiftMonth('2026-12', 1)).toBe('2027-01');
+    expect(shiftMonth('2026-01', -1)).toBe('2025-12');
+    expect(monthLabel('2026-10')).toBe('outubro de 2026');
   });
 });
