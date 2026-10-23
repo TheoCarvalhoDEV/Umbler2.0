@@ -2,7 +2,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import { DEFAULT_PREFERENCES, type ChatDetail, type ContactRef, type UserPreferences } from '@talk/shared';
 import { api, qk } from './api';
-import { browserNotificationAllowed, chatContact, messageAlerts, messageNotification } from './notify';
+import { browserNotificationAllowed, chatContact, messageAlerts, messageNotification, messageSound } from './notify';
+import { playSound } from './sounds';
+
+vi.mock('./sounds', () => ({ playSound: vi.fn() }));
+
+describe('message sound', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('plays once for a burst: 5 messages in 1 s, then again after 1.5 s of quiet', () => {
+    vi.useFakeTimers();
+    for (let i = 0; i < 5; i++) {
+      messageSound('drop');
+      vi.advanceTimersByTime(200);
+    }
+    expect(playSound).toHaveBeenCalledTimes(1);
+    expect(playSound).toHaveBeenCalledWith('drop');
+    vi.advanceTimersByTime(1500);
+    messageSound('bell');
+    expect(playSound).toHaveBeenCalledTimes(2);
+    expect(playSound).toHaveBeenLastCalledWith('bell');
+  });
+});
 
 const p = (over: Partial<UserPreferences> = {}): UserPreferences => ({ ...DEFAULT_PREFERENCES, ...over });
 

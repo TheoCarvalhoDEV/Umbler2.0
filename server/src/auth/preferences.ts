@@ -1,12 +1,13 @@
 // Spec 2026-10-19 §6: per-user preferences. users.preferences holds only what the user changed.
 import { z } from 'zod';
-import { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES, type UserPreferences } from '@talk/shared';
+import { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES, SOUND_VALUES, type UserPreferences } from '@talk/shared';
 
 /** Every field optional (a PUT names only what changed); an unknown field is refused. */
 export const preferencesSchema = z
   .strictObject({
     enterSends: z.boolean(),
     sounds: z.boolean(),
+    sound: z.enum(SOUND_VALUES),
     browserNotifications: z.enum(BROWSER_NOTIFICATION_MODES),
   })
   .partial();

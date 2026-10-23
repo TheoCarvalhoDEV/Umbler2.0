@@ -5,11 +5,22 @@ export const BROWSER_NOTIFICATION_MODES = ['always', 'background', 'never'] as c
 /** "Sempre" | "Só quando a aba está em segundo plano" | "Nunca". */
 export type BrowserNotificationMode = (typeof BROWSER_NOTIFICATION_MODES)[number];
 
+/** "Som da notificação", in the order the Preferências select shows them. */
+export const SOUNDS = [
+  { value: 'soft', label: 'Suave' },
+  { value: 'drop', label: 'Gota' },
+  { value: 'bell', label: 'Sino' },
+] as const;
+export type NotificationSound = (typeof SOUNDS)[number]['value'];
+export const SOUND_VALUES = SOUNDS.map((s) => s.value) as [NotificationSound, ...NotificationSound[]];
+
 export interface UserPreferences {
   /** On: Enter sends, Shift+Enter breaks the line. Off: Enter breaks the line, Ctrl/Cmd+Enter sends. */
   enterSends: boolean;
-  /** A short beep for a new contact message (never for the chat on screen in a visible tab). */
+  /** A short sound for a new contact message (never for the chat on screen in a visible tab). */
   sounds: boolean;
+  /** Which sound; optional so older literals compile, readers fall back to 'soft'. */
+  sound?: NotificationSound;
   browserNotifications: BrowserNotificationMode;
 }
 
@@ -17,5 +28,6 @@ export interface UserPreferences {
 export const DEFAULT_PREFERENCES: Readonly<UserPreferences> = {
   enterSends: true,
   sounds: true,
+  sound: 'soft',
   browserNotifications: 'background',
 };
