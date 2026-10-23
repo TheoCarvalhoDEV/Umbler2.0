@@ -283,7 +283,7 @@ function Failed({ imp, onResume, pending, tokenConfigured, error }: {
     // an analysis that stopped: there is no "Continuar", "Analisar de novo" starts another one
     return (
       <p role="alert" className={`${block} mt-5 text-sm font-semibold text-danger`}>
-        {`A análise parou: ${reason.replace('Clique em Continuar', 'Clique em Analisar de novo')}.`}
+        {`A análise parou: ${reason.replace(/Clique em Continuar( para tentar de novo)?/, 'Clique em Analisar de novo')}.`}
       </p>
     );
   }
