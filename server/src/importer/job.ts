@@ -111,7 +111,7 @@ export async function analyzeUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImpor
         byChannel.set(ch.channel.id, known);
         if (ch.organizationMember) byMember.set(ch.organizationMember.id, (byMember.get(ch.organizationMember.id) ?? 0) + 1);
         if (state === 'closed' && !candidate && ch.lastMessage?.source === 'Contact' && ch.lastMessage.messageState === 'Received') {
-          candidate = ch; // the newest one: the list is ClosedAtUTC Desc
+          candidate = ch; // the newest one: the list is CreatedAtUTC Desc
         }
       }
       progress.chatsRead += page.items.length;

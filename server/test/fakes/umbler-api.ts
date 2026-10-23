@@ -259,7 +259,9 @@ export async function startFakeUmbler() {
     if (p === '/api/v1/chats/') {
       // §4: the importer must ask for direct chats, hidden ones too, without pinned ones mixed in, in the spec's order
       const state = q.get('ChatState');
-      const order = state === 'Closed' ? 'ClosedAtUTC/Desc' : 'CreatedAtUTC/Asc';
+      // the real Umbler answers ChatOrderBy=ClosedAtUTC with 500 whatever the other filters (seen 2026-10-23)
+      if (q.get('ChatOrderBy') === 'ClosedAtUTC') return json(res, { IncidentId: 'fake', Details: 'internal error' }, 500);
+      const order = state === 'Closed' ? 'CreatedAtUTC/Desc' : 'CreatedAtUTC/Asc';
       const ok =
         q.getAll('ContactTypes').join() === 'DirectMessage' &&
         q.getAll('Visibility').sort().join() === 'Hide,HideUntilNextMessage,Show' &&
@@ -268,7 +270,7 @@ export async function startFakeUmbler() {
       if (!ok) return json(res, { error: 'unexpected chat query' }, 400);
       const list = [...byState(state ?? 'Open', world.chats)].sort((a, b) =>
         state === 'Closed'
-          ? String(b.closedAtUTC).localeCompare(String(a.closedAtUTC))
+          ? String(b.createdAtUTC).localeCompare(String(a.createdAtUTC))
           : String(a.createdAtUTC).localeCompare(String(b.createdAtUTC)),
       );
       return json(res, page(url, list));
