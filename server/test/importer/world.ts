@@ -99,3 +99,13 @@ export async function analyze(w: World): Promise<UmblerImportRow> {
   await runUmblerJob(w.ctx, depsOf(w));
   return rowOf(w, row!.id);
 }
+
+/** "Importar" after an analysis, as the start route leaves the row, then one job beat (every phase, unless it stops). */
+export async function startImport(w: World, row: UmblerImportRow, deps: JobDeps = depsOf(w)): Promise<UmblerImportRow> {
+  await w.ctx.db
+    .update(umblerImports)
+    .set({ state: 'running', phase: 'catalog', mapping: proposals(row.analysis!), startedAt: new Date() })
+    .where(eq(umblerImports.id, row.id));
+  await runUmblerJob(w.ctx, deps);
+  return rowOf(w, row.id);
+}

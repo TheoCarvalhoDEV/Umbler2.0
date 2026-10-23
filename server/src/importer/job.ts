@@ -1,15 +1,16 @@
 import { statfs } from 'node:fs/promises';
-import { eq } from 'drizzle-orm';
-import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerProgressDto } from '@talk/shared';
+import { setTimeout as delay } from 'node:timers/promises';
+import { eq, inArray } from 'drizzle-orm';
+import { UMBLER_IMPORT_PHASES, emptyUmblerCounts, type UmblerAnalysisDto, type UmblerImportPhase, type UmblerProgressDto } from '@talk/shared';
 import { errorTag } from '../bots/scheduler.js';
 import type { AppCtx } from '../ctx.js';
 import { channels, contacts, customFields, quickAnswers, sectors, tags, umblerImports, users } from '../db/schema.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
-import { FIRST_EVENT, chatQuery, fetchMessagePage } from './chats.js';
+import { FIRST_EVENT, chatQuery, fetchMessagePage, importClosedChats, importOpenChats } from './chats.js';
 import {
-  FIELD_KINDS, Stopped, UmblerError, fold, getAll, isGone, lidOf, pages, validPhone, type UmblerChannel, type UmblerChat,
-  type UmblerClient, type UmblerContact, type UmblerFieldDef, type UmblerMe, type UmblerOrganization, type UmblerQuickAnswer,
-  type UmblerSector, type UmblerTag,
+  FIELD_KINDS, Stopped, UmblerError, createUmblerClient, fold, getAll, importCatalog, importContactsPhase, importNotesPhase, isGone,
+  lidOf, pages, saveProgress, validPhone, type ImportRun, type UmblerChannel, type UmblerChat, type UmblerClient, type UmblerContact,
+  type UmblerFieldDef, type UmblerMe, type UmblerOrganization, type UmblerQuickAnswer, type UmblerSector, type UmblerTag,
 } from './umbler.js';
 
 // Spec 2026-10-21 importar-umbler §5, §6.2, §9: "Analisar", the five phases and the resume. All state lives in
@@ -195,12 +196,58 @@ export async function analyzeUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImpor
   console.info('umbler: analyzed', { importId: row.id, contacts: contactCounts.total, chats: stats.open + stats.closed, readTest: tested });
 }
 
-/** One beat (§9.3): the analysis of the 'analyzing' row; an error marks it failed with its §9.4 code. */
+// ---------- Importar (§9.1-9.3) ----------
+
+const PHASES: Record<UmblerImportPhase, (run: ImportRun) => Promise<void>> = {
+  catalog: importCatalog,
+  contacts: importContactsPhase,
+  open_chats: importOpenChats,
+  notes: importNotesPhase,
+  closed_chats: importClosedChats,
+};
+
+/** The phases from the one the row stopped in; every phase skips what umbler_map already has. */
+export async function importUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImportRow): Promise<void> {
+  if (!row.analysis || !row.mapping) throw new Error('umbler: a running import without analysis or mapping');
+  const signal = deps.signal ?? new AbortController().signal;
+  const run: ImportRun = {
+    ctx,
+    client: deps.client,
+    importId: row.id,
+    org: row.analysis.organizationId,
+    analysis: row.analysis,
+    mapping: row.mapping,
+    progress: { ...emptyProgress(), ...row.progress },
+    signal,
+    sleep: deps.sleep ?? ((ms) => delay(ms, undefined, { signal })),
+    freeBytes: deps.freeBytes ?? freeBytesOf,
+  };
+  for (let i = UMBLER_IMPORT_PHASES.indexOf(row.phase ?? 'catalog'); i < UMBLER_IMPORT_PHASES.length; i += 1) {
+    const phase = UMBLER_IMPORT_PHASES[i]!;
+    run.progress.done = 0;
+    run.progress.total = 0;
+    await saveProgress(ctx.db, run, phase);
+    await PHASES[phase](run);
+    console.info('umbler: phase done', { importId: row.id, phase });
+  }
+  const finishedAt = new Date();
+  const { done: _done, total: _total, chatsRead: _read, maps: _maps, ...counts } = run.progress;
+  const durationMs = finishedAt.getTime() - (row.startedAt ?? finishedAt).getTime();
+  await ctx.db.update(umblerImports).set({ state: 'done', finishedAt, report: { ...counts, durationMs } }).where(eq(umblerImports.id, row.id));
+  console.info('umbler: import done', { importId: row.id, chats: counts.chats.openCreated + counts.chats.closed, messages: counts.messages.total });
+}
+
+/**
+ * One beat (§9.3): advances the active row (analyzing or running) until it ends, fails or the worker stops. A stop
+ * between pages leaves it as it is; any other error marks it failed with its §9.4 code. The row is read fresh on every
+ * beat, so a failed phase never leaves its in-memory counters behind (they may include a rolled-back transaction).
+ */
 export async function runUmblerJob(ctx: AppCtx, deps: JobDeps): Promise<void> {
-  const [row] = await ctx.db.select().from(umblerImports).where(eq(umblerImports.state, 'analyzing'));
+  const [row] = await ctx.db.select().from(umblerImports).where(inArray(umblerImports.state, ['analyzing', 'running']));
   if (!row) return;
   try {
-    await analyzeUmbler(ctx, deps, row);
+    if (row.state === 'analyzing') await analyzeUmbler(ctx, deps, row);
+    else await importUmbler(ctx, deps, row);
   } catch (err) {
     if (err instanceof Stopped || deps.signal?.aborted) return;
     const code = err instanceof UmblerError ? err.code : 'unexpected';
@@ -208,4 +255,16 @@ export async function runUmblerJob(ctx: AppCtx, deps: JobDeps): Promise<void> {
     console.error('umbler: import stopped', { importId: row.id, code, route: err instanceof UmblerError ? err.route : null, err: errorTag(err) });
     await ctx.db.update(umblerImports).set({ state: 'failed', error: code }).where(eq(umblerImports.id, row.id));
   }
+}
+
+/** The worker's beat. Without UMBLER_TOKEN an active row fails with umbler_token (the token left the .env). */
+export async function umblerBeat(ctx: AppCtx, signal: AbortSignal, makeClient?: () => UmblerClient): Promise<void> {
+  const sleep = (ms: number) => delay(ms, undefined, { signal });
+  const token = ctx.config.umblerToken;
+  const client = makeClient ? makeClient() : token ? createUmblerClient({ token, sleep }) : null;
+  if (!client) {
+    await ctx.db.update(umblerImports).set({ state: 'failed', error: 'umbler_token' }).where(inArray(umblerImports.state, ['analyzing', 'running']));
+    return;
+  }
+  await runUmblerJob(ctx, { client, signal, sleep });
 }

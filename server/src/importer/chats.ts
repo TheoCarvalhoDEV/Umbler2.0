@@ -2,15 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { and, count, desc, eq, inArray, isNull, max, min, ne, sql } from 'drizzle-orm';
 import type { Tx } from '../db/client.js';
 import {
-  appointments, chatEvents, chatTags, chats, contacts, deletedChats, messages, scheduledMessages, umblerMap,
+  appointments, chatEvents, chatTags, chats, contacts, deletedChats, historyImports, messages, scheduledMessages, umblerMap,
 } from '../db/schema.js';
 import { messagePreview } from '../messages/dto.js';
 import { saveMedia } from '../messages/media.js';
 import { formatSignature, stripSignature } from '../messages/signature.js';
 import { matchCandidates, pairUp, type Candidate } from './match.js';
 import {
-  UmblerError, checkStop, isGone, maps, saveProgress, upsertContact, type ImportRun, type Query, type UmblerChat, type UmblerClient,
-  type UmblerMessage,
+  UmblerError, checkStop, getAll, isGone, maps, orgQuery, pages, saveProgress, upsertContact, type ImportRun, type Query,
+  type UmblerChat, type UmblerClient, type UmblerMessage,
 } from './umbler.js';
 
 // Spec 2026-10-21 importar-umbler §7.6-7.8: Umbler chats and their messages, page by page.
@@ -570,4 +570,62 @@ export async function importChat(run: ImportRun, chat: UmblerChat, state: 'open'
   }
   await finishChat(run, chat, st);
   return true;
+}
+
+// ---------- phases 3 and 5 (§9.1) ----------
+
+const HISTORY_WAIT_MS = 15_000;
+
+/** §9.3: the WhatsApp history copy writes into the same chats and §8 assumes one at a time: wait while one runs. */
+async function waitForHistory(run: ImportRun): Promise<void> {
+  while ((await run.ctx.db.$count(historyImports, eq(historyImports.state, 'running'))) > 0) {
+    checkStop(run);
+    await run.sleep(HISTORY_WAIT_MS);
+  }
+}
+
+/** §5.2: after copying a chat that had unread messages, its unread count must not have dropped without an agent reply. */
+async function checkUnread(run: ImportRun, before: UmblerChat): Promise<void> {
+  const page = await run.client.get<{ items?: UmblerChat[] }>(
+    '/v1/contacts/{id}/chats/',
+    { ...orgQuery(run), ChatState: 'Open', Skip: 0, Take: 50 },
+    { id: before.contact.id },
+  );
+  const after = page.items?.find((c) => c.id === before.id);
+  if (!after) return;
+  const agentReplied = after.lastMessage?.source === 'Member' && after.lastMessage.id !== before.lastMessage?.id;
+  if ((after.totalUnread ?? 0) < (before.totalUnread ?? 0) && !agentReplied) {
+    throw new UmblerError('umbler_marked_read', null, '/v1/contacts/{id}/chats/');
+  }
+}
+
+/** Phase 3 (§9.1): every open chat listed first; the ones without unread messages copied first (§5.2). */
+export async function importOpenChats(run: ImportRun): Promise<void> {
+  const list = await getAll<UmblerChat>(run.client, '/v1/chats/', chatQuery(run.org, 'open'));
+  const ordered = [...list.filter((c) => !c.totalUnread), ...list.filter((c) => (c.totalUnread ?? 0) > 0)];
+  const p = run.progress;
+  p.total = ordered.length;
+  for (const chat of ordered) {
+    checkStop(run);
+    await waitForHistory(run);
+    const read = await importChat(run, chat, 'open');
+    if (read && (chat.totalUnread ?? 0) > 0) await checkUnread(run, chat);
+    p.done += 1;
+    await saveProgress(run.ctx.db, run);
+  }
+}
+
+/** Phase 5 (§9.1): finished chats, newest first, one list page at a time (§11: memory of one page). */
+export async function importClosedChats(run: ImportRun): Promise<void> {
+  const p = run.progress;
+  p.total = run.analysis.chats.closed;
+  for await (const page of pages<UmblerChat>(run.client, '/v1/chats/', chatQuery(run.org, 'closed'))) {
+    for (const chat of page.items) {
+      checkStop(run);
+      await waitForHistory(run);
+      await importChat(run, chat, 'closed');
+      p.done += 1;
+    }
+    await saveProgress(run.ctx.db, run);
+  }
 }
