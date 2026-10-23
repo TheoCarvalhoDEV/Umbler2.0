@@ -48,7 +48,8 @@ export function AppointmentsAgenda() {
   const visaoParam = params.get('visao');
   const visao: 'lista' | 'semana' | 'mes' = visaoParam === 'semana' || visaoParam === 'mes' ? visaoParam : 'lista';
   const semanaParam = params.get('semana');
-  const monday = mondayOf(semanaParam && /^\d{4}-\d{2}-\d{2}$/.test(semanaParam) ? semanaParam : officeToday());
+  const validWeek = semanaParam && /^\d{4}-\d{2}-\d{2}$/.test(semanaParam) && !Number.isNaN(Date.parse(`${semanaParam}T12:00:00Z`));
+  const monday = mondayOf(validWeek ? semanaParam : officeToday());
 
   /** Several keys in one setParams; null deletes. */
   const update = (changes: Record<string, string | null>) =>

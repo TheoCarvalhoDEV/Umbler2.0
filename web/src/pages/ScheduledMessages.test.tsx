@@ -276,6 +276,16 @@ it('Semana: a chip opens its details with the actions; "+" pre-fills the next ho
   expect(((await screen.findByLabelText('Data e hora (horário de Cuiabá)')) as HTMLInputElement).value).toBe('2026-10-20T11:00');
 });
 
+it('a malformed ?semana= opens this week instead of crashing', async () => {
+  vi.setSystemTime(new Date('2026-10-20T14:20:00.000Z'));
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    [thisWeek]: [appointment({ startsAt: '2026-10-22T13:00:00.000Z' })],
+  });
+  renderPage('/agendamentos?visao=semana&semana=2026-13-01');
+  expect(await screen.findByRole('button', { name: /Audiência/ })).toBeTruthy();
+});
+
 it('a full range says "Mostrando os primeiros 500" (spec Review focus 3)', async () => {
   stubFetch({
     'GET /api/appointments/summary': summary,
