@@ -154,6 +154,15 @@ describe('eventText for history events', () => {
   });
 });
 
+describe('eventText for the Umbler import (spec 2026-10-21 importar-umbler §10)', () => {
+  it('describes an imported chat and one joined into a chat here', () => {
+    expect(eventText(event({ kind: 'umbler_imported', data: { count: 1234 } }), new Map())).toBe('Conversa importada do Umbler Talk: 1.234 mensagens');
+    expect(eventText(event({ kind: 'umbler_imported', data: { count: 3, merged: true } }), new Map())).toBe(
+      '3 mensagens de uma conversa aberta no Umbler Talk juntadas a esta',
+    );
+  });
+});
+
 describe('eventText for chatbot events', () => {
   const names = new Map([['s-fin', 'Financeiro'], ['u-ana', 'Ana']]);
   const bot = { botId: 'b1', botName: 'Triagem', runId: 'r1' };

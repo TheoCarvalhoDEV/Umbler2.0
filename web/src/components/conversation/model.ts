@@ -169,6 +169,12 @@ export function eventText(e: ChatEventDto, names: Map<string, string>): string {
     }
     case 'appointment_canceled':
       return `Compromisso “${String(e.data.title ?? '')}” cancelado${by}`;
+    case 'umbler_imported': {
+      const n = Number(e.data.count ?? 0).toLocaleString('pt-BR');
+      return e.data.merged === true
+        ? `${n} mensagens de uma conversa aberta no Umbler Talk juntadas a esta`
+        : `Conversa importada do Umbler Talk: ${n} mensagens`;
+    }
   }
 }
 
