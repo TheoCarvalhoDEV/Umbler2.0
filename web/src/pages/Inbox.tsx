@@ -168,7 +168,7 @@ export function Inbox() {
 
   return (
     <div className="flex h-full min-h-0 gap-3">
-      <aside className={`${card} flex w-[352px] shrink-0 flex-col overflow-hidden`}>
+      <aside className={`${card} flex w-[400px] shrink-0 flex-col overflow-hidden`}>
         <div className="flex min-h-0 flex-col gap-3.5 overflow-y-auto px-[18px] pt-5 pb-3">
           <div className="flex items-center gap-2">
             <h1 className={`${pageTitle} mr-auto`}>Conversas</h1>
