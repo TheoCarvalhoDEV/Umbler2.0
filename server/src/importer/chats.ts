@@ -356,7 +356,7 @@ async function placePage(run: ImportRun, chat: UmblerChat, st: ChatRun, all: Inc
   const m = maps(run);
   const p = run.progress;
   const known = new Set(run.analysis.members.map((x) => x.id));
-  const items = !st.localId && st.until ? all.filter((i) => i.at > st.until!) : all; // tombstone: only for a new chat
+  const items = st.until ? all.filter((i) => i.at > st.until!) : all; // tombstone: deleted here, stays out (§7), also on resume
   if (items.length === 0) return;
 
   // (1) what is in umbler_map already (a gone local row stays gone), and what §8 matches
@@ -524,7 +524,7 @@ export async function importChat(run: ImportRun, chat: UmblerChat, state: 'open'
   }
   const contactId = await contactOf(run, chat);
   if (!contactId) return false;
-  const [tomb] = mapped
+  const [tomb] = mapped?.doneAt
     ? []
     : await ctx.db
         .select({ until: max(deletedChats.until) })

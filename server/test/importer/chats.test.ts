@@ -232,6 +232,27 @@ describe('what is skipped (§7.3, §7.6)', () => {
   });
 });
 
+describe('tombstone on resume (§7)', () => {
+  it('a chat resumed without done_at (temporary file failure) still keeps out what was deleted here', async () => {
+    await importChat(run, given(umblerChat(), []) as never, 'open'); // creates the contact
+    const [maria] = await w.ctx.db.select().from(contacts).where(eq(contacts.phone, '5565999998888'));
+    await w.ctx.db.insert(deletedChats).values({ contactId: maria!.id, channelId: w.s.channelId, until: new Date('2026-08-01T10:30:00Z'), deletedAt: new Date() });
+    w.fake.world.files['f.pdf'] = { body: PDF, mime: 'application/pdf' };
+    w.fake.faults.push({ path: /^\/s3\/f\.pdf$/, status: 500, times: 4 });
+    const chat = given(umblerChat({ open: false, closedAtUTC: '2026-08-01T12:00:00Z' }), [
+      umblerMessage('T1', '2026-08-01T10:00:00Z'),
+      umblerMessage('T2', '2026-08-01T11:00:00Z', { messageType: 'File', content: null, file: file('f.pdf') }),
+    ]);
+    await importChat(run, chat as never, 'closed');
+    const mapped = (await localOf(chat.id as string))!;
+    expect(mapped.doneAt).toBeNull(); // resumed on the next run
+    await importChat(run, chat as never, 'closed');
+    expect((await localOf(chat.id as string))!.doneAt).not.toBeNull();
+    expect((await rowsOf(mapped.localId)).map((r) => r.mediaName)).toEqual(['f.pdf']);
+    expect(await w.ctx.db.$count(messages)).toBe(1);
+  });
+});
+
 describe('a second run (§9.2)', () => {
   it('a finished closed chat costs no call; an open one is read again from its last message - 1 ms and only adds what is new', async () => {
     const done = given(umblerChat({ open: false, closedAtUTC: '2026-08-01T11:00:00Z' }), [umblerMessage('D1', '2026-08-01T10:00:00Z')]);
