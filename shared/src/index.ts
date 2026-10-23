@@ -18,7 +18,7 @@ export {
   reactBlock, replyBlock, editBlock, deleteBlock, forwardBlock, isSingleEmoji, noteEditBlock, noteDeleteBlock,
 } from './message-actions.js';
 export type * from './message-actions.js';
-export { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES } from './preferences.js';
+export { BROWSER_NOTIFICATION_MODES, DEFAULT_PREFERENCES, SOUNDS, SOUND_VALUES } from './preferences.js';
 export type * from './preferences.js';
 export { SEARCH_MIN_CHARS, SEARCH_MAX_CHARS, SEARCH_LIMIT, FOLD_FROM, FOLD_TO, foldText } from './search.js';
 export { CHAT_SORTS, DEFAULT_CHAT_SORT, BULK_MAX } from './chat-list.js';
