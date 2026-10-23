@@ -110,7 +110,14 @@ export async function claimUmblerTwin(
   scope: { contactId: string; channelId: string },
   ev: Comparable & { externalId: string },
 ): Promise<boolean> {
-  const [pair] = pairUp([ev], await matchCandidates(tx, scope, [ev], 'umbler'));
+  let candidates = await matchCandidates(tx, scope, [ev], 'umbler');
+  // §8.2: Umbler location/contact cards are stored as 'text' (§7.7) but the phone sends them as 'unsupported' without text
+  if (ev.kind === 'unsupported' && !normalizeText(ev.text)) {
+    candidates = candidates.map((c) =>
+      c.kind === 'text' && /^(Localização|Contato): /.test(c.text ?? '') ? { ...c, kind: 'unsupported', text: null } : c,
+    );
+  }
+  const [pair] = pairUp([ev], candidates);
   if (!pair) return false;
   await tx.update(messages).set({ externalId: ev.externalId }).where(eq(messages.id, pair.row.id));
   return true;

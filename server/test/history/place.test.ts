@@ -265,4 +265,19 @@ describe('placeRecords and rows imported from Umbler (spec 2026-10-21 importar-u
     expect((await place([rec({ id: 'um', at: '2026-10-10T12:00:00Z', text: 'texto um' })])).inserted).toBe(0);
     expect(await ctx.db.$count(messages)).toBe(2);
   });
+
+  it('pairs an Umbler location row (text with the §7.7 body) with an unsupported row from the phone', async () => {
+    const contactId = await newContact(ctx, { phone: PHONE });
+    const chatId = await insertChat(ctx, { channelId: s.channelId, sectorId: s.defaultSector, contactId, state: 'closed' });
+    const [fromUmbler] = await ctx.db
+      .insert(messages)
+      .values({ chatId, channelId: s.channelId, direction: 'in', kind: 'text', body: 'Localização: Praça https://maps.google.com/?q=1,2', status: 'read', sentAt: at('2026-10-10T12:00:03Z') })
+      .returning();
+    await ctx.db.insert(umblerMap).values({ kind: 'message', umblerId: 'U2', localId: fromUmbler!.id });
+
+    const loc = rec({ id: 'loc', at: '2026-10-10T12:00:00Z', messageType: 'locationMessage', message: { locationMessage: {} } });
+    expect((await place([loc])).inserted).toBe(0);
+    const rows = await ctx.db.select().from(messages);
+    expect(rows.map((m) => [m.externalId, m.chatId === chatId])).toEqual([['loc', true]]);
+  });
 });
