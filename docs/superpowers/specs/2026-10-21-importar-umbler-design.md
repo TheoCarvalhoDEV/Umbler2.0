@@ -20,7 +20,7 @@ Trazer **tudo** o que o escritório tem no Umbler Talk para o sistema novo antes
 - Nunca chama `GET /v1/chats/{id}/` (é o que o app do Umbler chama ao **abrir** uma conversa) nem `/v1/messages/{id}/` (o mesmo `MessageModel` já vem em `relative-messages`; chamar por mensagem seriam centenas de milhares de requisições).
 - Logs só com ids do Umbler, ids nossos, contagens, fase e código do erro; nunca texto, telefone, nome, e-mail, URL de arquivo ou o token. Erros guardam `status` + rota em forma de modelo (`GET /v1/chats/{chatId}/relative-messages/ → 500`).
 - Importação **nunca** conta como não lida (exceto o `totalUnread` de conversa aberta, §7.6), nunca entra em triagem, nunca dispara bot, `startChannelBot`, `resumeOnReply`, aviso ou envio ao WhatsApp.
-- Migração gerada pelo drizzle-kit (`0009_importar_umbler`), nunca editada à mão. Nenhuma dependência nova (o servidor falso dos testes usa `node:http`). Textos em pt-BR; identificadores em inglês; cores só pelos tokens do tema.
+- Migração gerada pelo drizzle-kit (`0010_importar_umbler`, depois da `0009_compromissos`), nunca editada à mão. Nenhuma dependência nova (o servidor falso dos testes usa `node:http`). Textos em pt-BR; identificadores em inglês; cores só pelos tokens do tema.
 - `server/src/importer/cli.ts` e o script `import:umbler` saem; `docs/IMPLANTACAO.md` §5 é reescrita para a tela (§13).
 
 ## 4. API do Umbler: o que usamos
@@ -155,6 +155,8 @@ Os últimos ~3,5 meses existem nos dois lados: no Umbler e no histórico que o c
 - **Efeito no Umbler → nossa linha:** nada é inserido; a linha existente fica (id, `external_id`, status, arquivo) e ganha: `chat_id` = a conversa importada a que ela pertence (se for outra), `author_id` = atendente mapeado (se estava nulo), registro em `umbler_map`, e o arquivo do Umbler se não tinha (§7.8). A conversa de onde saiu tem `last_message_at`/prévia (e, se for conversa de histórico, `created_at`/`closed_at`) recalculados; conversa de histórico que fica sem mensagens é apagada (`chat.removed`).
 - **Ao contrário (WhatsApp → linha do Umbler):** `placeRecords` (importação do histórico e recuperação) passa a usar o mesmo casamento antes de inserir: se acha uma linha que está em `umbler_map` e tem `external_id` nulo, só grava o `external_id` nela e conta como já existente. Cobre a releitura de QR depois da virada, quando o celular manda de novo os ~3,5 meses.
 - Notas, mensagens de conversas de canais diferentes e contatos diferentes nunca casam. Contato só-LID ainda não juntado não casa (por isso a junção da §7.4 vem antes).
+
+- **Conversa de histórico que fica vazia** depois do casamento: antes de apagá-la, as mensagens agendadas e os compromissos dela (com os lembretes) passam para a conversa importada, como na junção de contatos com LID (spec dos compromissos §3.8). Nada pendente se perde.
 
 ## 9. Execução, idempotência e retomada
 ### 9.1 Fases (na ordem)
