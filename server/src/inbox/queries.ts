@@ -59,7 +59,7 @@ function decodeCursor(cursor: string, sort: ChatSort): Cursor {
   return c;
 }
 
-const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 export async function toChatListItem(db: Db | Tx, chat: ChatRow, userId: string): Promise<ChatListItem> {
   const [contact] = await db
@@ -335,7 +335,7 @@ const SNIPPET_BEFORE = 40;
 const SNIPPET_AFTER = 80;
 
 /** The SQL side of foldText: same table, so "AÇÃO" and "acao" meet. coalesce: a null column never matches. */
-const folded = (col: AnyColumn) => sql`translate(lower(coalesce(${col}, '')), ${FOLD_FROM}, ${FOLD_TO})`;
+export const folded = (col: AnyColumn) => sql`translate(lower(coalesce(${col}, '')), ${FOLD_FROM}, ${FOLD_TO})`;
 
 /**
  * Spec 2026-10-19 §4: texts, captions, notes and file names of this chat that contain `q`, ignoring case and accents,

@@ -2,17 +2,18 @@
 // scheduled message (scheduled_messages.reminder_id), sent by delivery.ts like any other. This module only creates,
 // moves in place, deletes (pending only) and cancels those rows, always with status = 'pending' in the WHERE.
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lt, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
-  appointmentTimeProblem, fillReminderText, reminderSendAt, reminderTextProblem, remindersProblem, scheduleTimeProblem,
-  type AppointmentDto, type AppointmentTab, type ReminderInput,
+  APPOINTMENT_CANCELED, APPOINTMENT_RANGE_LIMIT, APPOINTMENT_RANGE_MAX_DAYS, appointmentStatusProblem, foldText, officeDateOf, officeDayRange, shiftOfficeDate, appointmentTimeProblem, fillReminderText, reminderSendAt, reminderTextProblem, remindersProblem, scheduleTimeProblem,
+  type AppointmentDto, type AppointmentPreset, type AppointmentSummaryDto, type AppointmentStatus, type AppointmentTab, type ReminderInput,
 } from '@talk/shared';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
 import { appointmentReminders, appointments, chats, contacts, scheduledMessages, users } from '../db/schema.js';
 import { getChatForUser, type ChatRow } from '../inbox/chats.js';
 import { addEvent } from '../inbox/events.js';
+import { escapeLike, folded } from '../inbox/queries.js';
 import { canSee, visibleChatsWhere, type AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, notFound } from '../lib/http-error.js';
 import { canManage } from './scheduled.js';
@@ -20,6 +21,10 @@ import { canManage } from './scheduled.js';
 export const NO_CHAT_WITH_CONTACT = 'Você não tem conversa com este contato; comece uma em Nova conversa';
 // ponytail: one page of 100 per tab, no cursor (spec §10); add keyset paging on (starts_at, id) if an office ever keeps more.
 const LIST_LIMIT = 100;
+const DAY = 24 * 60 * 60_000;
+// ponytail: "A confirmar" looks 7 days ahead and "A marcar" 60 days back (spec 2026-10-23 §5); older unmarked ones fall out of the counters.
+const TO_CONFIRM_MS = 7 * DAY;
+const TO_MARK_MS = 60 * DAY;
 
 /** POST /api/appointments; the route makes sure exactly one of chatId / contactId is set. */
 export interface AppointmentInput {
@@ -29,7 +34,7 @@ export interface AppointmentInput {
 const canceler = alias(users, 'canceler');
 
 /** The appointments `where` picks (over appointments ⋈ chats), with the contact, the names and each reminder's situation. */
-async function appointmentDtos(db: Db, user: AuthUser, where: SQL | undefined, order: SQL[]): Promise<AppointmentDto[]> {
+async function appointmentDtos(db: Db, user: AuthUser, where: SQL | undefined, order: SQL[], limit = LIST_LIMIT): Promise<AppointmentDto[]> {
   const rows = await db
     .select({
       a: appointments,
@@ -44,7 +49,7 @@ async function appointmentDtos(db: Db, user: AuthUser, where: SQL | undefined, o
     .leftJoin(canceler, eq(canceler.id, appointments.canceledBy))
     .where(where)
     .orderBy(...order)
-    .limit(LIST_LIMIT);
+    .limit(limit);
   if (rows.length === 0) return [];
   // a reminder without a scheduled message is "Não criado" ('skipped')
   const reminders = await db
@@ -55,7 +60,10 @@ async function appointmentDtos(db: Db, user: AuthUser, where: SQL | undefined, o
     .from(appointmentReminders)
     .leftJoin(scheduledMessages, eq(scheduledMessages.reminderId, appointmentReminders.id))
     .where(inArray(appointmentReminders.appointmentId, rows.map((row) => row.a.id)));
-  return rows.map(({ a, chat, ...r }) => ({
+  return rows.map(({ a, chat, ...r }) => {
+    // decision: also needs the chat, like every write (spec §2)
+    const canMark = !a.canceledAt && canManage(user, a) && canSee(user, chat);
+    return {
     id: a.id,
     chatId: a.chatId,
     contact: { id: r.contactId, name: r.contactName, phone: r.contactPhone },
@@ -80,9 +88,11 @@ async function appointmentDtos(db: Db, user: AuthUser, where: SQL | undefined, o
         error: x.error,
       }))
       .sort((p, q) => p.sendAt.localeCompare(q.sendAt)),
-    // decision: also needs the chat, like every write (spec §2)
-    canEdit: !a.canceledAt && canManage(user, a) && canSee(user, chat),
-  }));
+    status: a.status,
+    canEdit: canMark,
+    canMark,
+    };
+  });
 }
 
 async function dtoOf(db: Db, user: AuthUser, id: string): Promise<AppointmentDto> {
@@ -156,20 +166,86 @@ export async function listChatAppointments(ctx: AppCtx, user: AuthUser, chatId: 
   );
 }
 
-/** Spec §3.5: the Agenda's "Compromissos": mine (an admin: everyone's); Próximos next first, the other tabs newest first. */
-export async function listAppointments(ctx: AppCtx, user: AuthUser, tab: AppointmentTab): Promise<AppointmentDto[]> {
-  const now = ctx.botRuntime.now();
-  const mine = user.role === 'admin' ? undefined : eq(appointments.authorId, user.id);
-  const when =
-    tab === 'canceled'
-      ? isNotNull(appointments.canceledAt)
-      : and(isNull(appointments.canceledAt), tab === 'upcoming' ? gte(appointments.startsAt, now) : lt(appointments.startsAt, now));
-  const order =
-    tab === 'upcoming' ? [asc(appointments.startsAt), asc(appointments.id)] : [desc(appointments.startsAt), desc(appointments.id)];
-  return appointmentDtos(ctx.db, user, and(when, mine), order);
+export interface AppointmentFilters { authorId?: string; sectorId?: string; q?: string }
+export interface AppointmentListParams extends AppointmentFilters {
+  tab: AppointmentTab; from?: Date; to?: Date; status?: AppointmentStatus; preset?: AppointmentPreset;
 }
 
-export const APPOINTMENT_CANCELED = 'Este compromisso foi cancelado';
+/** Author (an attendant: always themselves, whatever was asked), sector and search; a blank search is no search. */
+export function filtersWhere(user: AuthUser, f: AppointmentFilters): SQL | undefined {
+  const author = user.role === 'admin' ? f.authorId : user.id;
+  const needle = f.q?.trim();
+  let search: SQL | undefined;
+  if (needle) {
+    const p = `%${escapeLike(foldText(needle))}%`;
+    const digits = needle.replace(/\D/g, '');
+    search = or(
+      like(folded(contacts.name), p), like(folded(appointments.title), p), digits.length >= 4 ? like(contacts.phone, `%${digits}%`) : undefined,
+    );
+  }
+  return and(author ? eq(appointments.authorId, author) : undefined, f.sectorId ? eq(chats.sectorId, f.sectorId) : undefined, search);
+}
+
+/** The counter cards' rules (spec 2026-10-23 §5), shared with the summary: never a cancelled one. */
+export function presetWhere(preset: AppointmentPreset, now: Date): SQL {
+  const live = isNull(appointments.canceledAt);
+  const today = officeDateOf(now);
+  const day = (n: number) => {
+    const { from, to } = officeDayRange(shiftOfficeDate(today, n));
+    return and(live, gte(appointments.startsAt, from), lt(appointments.startsAt, to))!;
+  };
+  const t = now.getTime();
+  switch (preset) {
+    case 'today': return day(0);
+    case 'tomorrow': return day(1);
+    case 'toConfirm':
+      return and(live, eq(appointments.status, 'scheduled'), gte(appointments.startsAt, now), lt(appointments.startsAt, new Date(t + TO_CONFIRM_MS)))!;
+    case 'toMark':
+      return and(
+        live, inArray(appointments.status, ['scheduled', 'confirmed']),
+        gte(appointments.startsAt, new Date(t - TO_MARK_MS)), lt(appointments.startsAt, now),
+      )!;
+  }
+}
+
+/**
+ * Spec §3.5 and 2026-10-23 §4: the Agenda's "Compromissos": mine (an admin: everyone's), then the filters.
+ * Which rows: a preset, else a range (from inclusive, to exclusive, cancelled too), else the tab.
+ * Próximos, the range and the first four presets run next first; the other tabs and "A marcar" newest first.
+ */
+export async function listAppointments(ctx: AppCtx, user: AuthUser, p: AppointmentListParams): Promise<AppointmentDto[]> {
+  const now = ctx.botRuntime.now();
+  const range = p.from || p.to;
+  if (range) {
+    if (!p.from || !p.to || p.to <= p.from || p.to.getTime() - p.from.getTime() > APPOINTMENT_RANGE_MAX_DAYS * DAY) throw badRequest('Período inválido');
+  }
+  const tabWhen =
+    p.tab === 'canceled'
+      ? isNotNull(appointments.canceledAt)
+      : and(isNull(appointments.canceledAt), p.tab === 'upcoming' ? gte(appointments.startsAt, now) : lt(appointments.startsAt, now));
+  const when = p.preset
+    ? presetWhere(p.preset, now)
+    : p.from && p.to ? and(gte(appointments.startsAt, p.from), lt(appointments.startsAt, p.to)) : tabWhen;
+  const newestFirst = p.preset ? p.preset === 'toMark' : !range && p.tab !== 'upcoming';
+  const order = newestFirst ? [desc(appointments.startsAt), desc(appointments.id)] : [asc(appointments.startsAt), asc(appointments.id)];
+  const status = p.status ? and(eq(appointments.status, p.status), isNull(appointments.canceledAt)) : undefined;
+  return appointmentDtos(ctx.db, user, and(when, filtersWhere(user, p), status), order, range && !p.preset ? APPOINTMENT_RANGE_LIMIT : LIST_LIMIT);
+}
+
+/** Spec 2026-10-23 section 5: the four counters in one query, with the list's Atendente/Setor/Busca filters. */
+export async function appointmentSummary(ctx: AppCtx, user: AuthUser, f: AppointmentFilters): Promise<AppointmentSummaryDto> {
+  const now = ctx.botRuntime.now();
+  const count = (k: AppointmentPreset) => sql<number>`count(*) filter (where ${presetWhere(k, now)})`.mapWith(Number);
+  const [row] = await ctx.db
+    .select({ today: count('today'), tomorrow: count('tomorrow'), toConfirm: count('toConfirm'), toMark: count('toMark') })
+    .from(appointments)
+    .innerJoin(chats, eq(chats.id, appointments.chatId))
+    .innerJoin(contacts, eq(contacts.id, chats.contactId))
+    .where(filtersWhere(user, f));
+  return { today: row.today, tomorrow: row.tomorrow, toConfirm: row.toConfirm, toMark: row.toMark };
+}
+
+export { APPOINTMENT_CANCELED };
 
 type AppointmentRow = typeof appointments.$inferSelect;
 
@@ -245,7 +321,11 @@ export async function updateAppointment(
     }
     await tx
       .update(appointments)
-      .set({ title, startsAt, ...(patch.note !== undefined ? { note: patch.note } : {}) })
+      .set({
+        title, startsAt, ...(patch.note !== undefined ? { note: patch.note } : {}),
+        // a new time starts the control over (spec 2026-10-23 §3.4); Confirmado stays
+        ...(moved && (locked.status === 'attended' || locked.status === 'missed') ? { status: 'scheduled' as const } : {}),
+      })
       .where(eq(appointments.id, id));
     if (moved || title !== locked.title) await recalcReminders(tx, { ...locked, title, startsAt }, name, now);
     if (moved) {
@@ -277,5 +357,21 @@ export async function cancelAppointment(ctx: AppCtx, user: AuthUser, id: string)
     return a.chatId;
   });
   await ctx.hub.publishChat(chatId);
+  return dtoOf(ctx.db, user, id);
+}
+
+/** Spec 2026-10-23 §3: set the situation. The same status again is a no-op (200); no event, no publish (the Agenda polls). */
+export async function setAppointmentStatus(ctx: AppCtx, user: AuthUser, id: string, status: AppointmentStatus): Promise<AppointmentDto> {
+  await manageableContact(ctx, user, id);
+  const now = ctx.botRuntime.now();
+  await ctx.db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(appointments).where(eq(appointments.id, id)).for('update');
+    if (!locked) throw notFound();
+    if (locked.canceledAt) throw conflict(APPOINTMENT_CANCELED);
+    if (locked.status === status) return;
+    const problem = appointmentStatusProblem(locked, status, now);
+    if (problem) throw badRequest(problem);
+    await tx.update(appointments).set({ status }).where(eq(appointments.id, id));
+  });
   return dtoOf(ctx.db, user, id);
 }

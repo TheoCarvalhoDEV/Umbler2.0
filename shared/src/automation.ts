@@ -152,3 +152,42 @@ export function fillReminderText(text: string, v: { nome: string; titulo: string
   const values: Record<string, string> = { nome: v.nome, titulo: v.titulo, data, hora };
   return text.replace(/\{(nome|titulo|data|hora)\}/g, (_, key: string) => values[key]);
 }
+
+// ---------- Controle de compromissos (spec 2026-10-23 controle-compromissos §3, §5) ----------
+
+export const APPOINTMENT_STATUSES = ['scheduled', 'confirmed', 'attended', 'missed'] as const;
+export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
+/** Counter cards of the Agenda: Hoje, Amanhã, A confirmar, A marcar. */
+export const APPOINTMENT_PRESETS = ['today', 'tomorrow', 'toConfirm', 'toMark'] as const;
+export type AppointmentPreset = (typeof APPOINTMENT_PRESETS)[number];
+export const APPOINTMENT_RANGE_MAX_DAYS = 43;
+export const APPOINTMENT_RANGE_LIMIT = 500;
+export const APPOINTMENT_CANCELED = 'Este compromisso foi cancelado';
+
+/** The office date 'YYYY-MM-DD' of an instant (Cuiabá, never the host zone). */
+export function officeDateOf(d: Date): string {
+  return isoToOfficeLocal(d.toISOString()).slice(0, 10);
+}
+/** Calendar arithmetic on 'YYYY-MM-DD'; UTC parts only, so the host zone and DST play no part. */
+export function shiftOfficeDate(date: string, days: number): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+}
+/** [00:00 that day, 00:00 next day) in office time. */
+export function officeDayRange(date: string): { from: Date; to: Date } {
+  return {
+    from: new Date(officeLocalToIso(`${date}T00:00`)!),
+    to: new Date(officeLocalToIso(`${shiftOfficeDate(date, 1)}T00:00`)!),
+  };
+}
+/** Why this status cannot be set now, or null. Same words on the server (409/400) and in the web (which actions to offer). */
+export function appointmentStatusProblem(
+  a: { startsAt: Date; canceledAt: Date | null }, status: AppointmentStatus, now: Date,
+): string | null {
+  if (a.canceledAt) return APPOINTMENT_CANCELED;
+  if (status === 'confirmed' && a.startsAt.getTime() <= now.getTime()) return 'O horário deste compromisso já passou';
+  if ((status === 'attended' || status === 'missed') && officeDateOf(a.startsAt) > officeDateOf(now)) {
+    return 'Só dá para marcar presença a partir do dia do compromisso';
+  }
+  return null;
+}

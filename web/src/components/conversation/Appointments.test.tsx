@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import { DEFAULT_APPOINTMENT_REMINDERS, type AppointmentDto } from '@talk/shared';
 import { confirmDialog } from '../../lib/confirm';
-import { AppointmentDialog, ChatAppointmentsDialog } from './Appointments';
+import { AppointmentDialog, AppointmentItem, ChatAppointmentsDialog } from './Appointments';
 
 vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
 
@@ -40,7 +40,7 @@ function stubFetch(routes: Record<string, unknown>) {
 const appointment = (over: Partial<AppointmentDto> = {}): AppointmentDto => ({
   id: 'a1', chatId: 'c1', contact: { id: 'k1', name: 'Maria Cliente', phone: '5565999999999' }, authorId: 'u1', authorName: 'Ana Lima',
   title: 'Audiência', startsAt: '2026-10-21T18:00:00.000Z', note: 'Levar RG', canceledAt: null, canceledByName: null,
-  createdAt: '2026-10-20T12:00:00.000Z', canEdit: true,
+  createdAt: '2026-10-20T12:00:00.000Z', canEdit: true, status: 'scheduled', canMark: true,
   reminders: [
     { id: 'r1', amount: 2, unit: 'days', text: 'Olá', sendAt: '2026-10-19T18:00:00.000Z', status: 'skipped', scheduledId: null, error: null },
     { id: 'r2', amount: 1, unit: 'hours', text: 'Olá', sendAt: '2026-10-21T17:00:00.000Z', status: 'pending', scheduledId: 's2', error: null },
@@ -242,5 +242,69 @@ describe('ChatAppointmentsDialog (spec §3.4)', () => {
     expect(fireEvent(inner, new Event('cancel', { bubbles: true, cancelable: true }))).toBe(false); // preventDefault was called
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Novo compromisso' })).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Compromissos de Maria Cliente' })).toBeTruthy();
+  });
+});
+
+describe('AppointmentItem situation (spec 2026-10-23 controle §6.5)', () => {
+  const show = (over: Partial<AppointmentDto> = {}) => renderUi(<ul><AppointmentItem item={appointment(over)} /></ul>);
+  const btn = (name: string) => screen.queryByRole('button', { name });
+  const posted = (status: string) =>
+    waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/appointments/a1/status', body: { status } }));
+
+  it('tomorrow and Agendado: the badge and only Confirmar, which posts confirmed', async () => {
+    stubFetch({ 'POST /api/appointments/a1/status': appointment({ status: 'confirmed' }) });
+    show(); // 21/10 14:00 in Cuiabá
+    expect(screen.getByText('Agendado')).toBeTruthy();
+    expect(btn('Compareceu')).toBeNull();
+    expect(btn('Faltou')).toBeNull();
+    fireEvent.click(btn('Confirmar')!);
+    await posted('confirmed');
+  });
+
+  it('Confirmado: Desfazer confirmação posts scheduled', async () => {
+    stubFetch({ 'POST /api/appointments/a1/status': appointment() });
+    show({ status: 'confirmed' });
+    expect(screen.getByText('Confirmado')).toBeTruthy();
+    expect(btn('Confirmar')).toBeNull();
+    fireEvent.click(btn('Desfazer confirmação')!);
+    await posted('scheduled');
+  });
+
+  it('22:00 today in Cuiabá (already tomorrow in Tokyo): Confirmar, Compareceu and Faltou, none pressed (Review Focus 3)', () => {
+    stubFetch({});
+    show({ startsAt: '2026-10-21T02:00:00.000Z' });
+    expect(btn('Confirmar')).toBeTruthy();
+    expect(btn('Compareceu')!.getAttribute('aria-pressed')).toBe('false');
+    expect(btn('Faltou')!.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('past and Faltou: Faltou pressed (again → scheduled), Remarcar opens the edit form, no Confirmar', async () => {
+    stubFetch({ 'POST /api/appointments/a1/status': appointment() });
+    show({ startsAt: '2026-10-19T18:00:00.000Z', status: 'missed' });
+    expect(btn('Confirmar')).toBeNull();
+    expect(btn('Faltou')!.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(btn('Faltou')!);
+    await posted('scheduled');
+    fireEvent.click(btn('Remarcar')!);
+    expect(await screen.findByRole('dialog', { name: 'Editar compromisso' })).toBeTruthy();
+  });
+
+  it('no status buttons when cancelled or without canMark; a cancelled one shows only "Cancelado" (spec Review focus 4)', () => {
+    stubFetch({});
+    show({ canceledAt: '2026-10-20T11:00:00.000Z', canEdit: false, canMark: false });
+    expect(screen.getByText('Cancelado')).toBeTruthy();
+    expect(screen.queryByText('Agendado')).toBeNull();
+    expect(btn('Confirmar')).toBeNull();
+    cleanup();
+    show({ canEdit: false, canMark: false });
+    expect(screen.getByText('Agendado')).toBeTruthy();
+    expect(btn('Confirmar')).toBeNull();
+  });
+
+  it('a refused change shows the reason under the item', async () => {
+    stubFetch({}); // every call answers 500 "inesperado"
+    show();
+    fireEvent.click(btn('Confirmar')!);
+    expect((await screen.findByRole('alert')).textContent).toContain('inesperado');
   });
 });

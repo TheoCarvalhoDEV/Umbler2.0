@@ -321,7 +321,7 @@ describe('api routes of the 2026-10-21 compromissos delivery', () => {
     const { reminders } = DEFAULT_APPOINTMENT_REMINDERS;
     const input = { contactId: 'k1', title: 'Audiência', startsAt: '2026-10-21T18:00:00.000Z', signature: false, reminders };
     await api.appointments.listForChat('c1');
-    await api.appointments.list('past');
+    await api.appointments.list({ tab: 'past' });
     await api.appointments.create(input);
     await api.appointments.update('a1', { note: null });
     await api.appointments.cancel('a1');

@@ -110,6 +110,7 @@ describe('NotificationToasts', () => {
     });
     expect(screen.getByText('Mensagens agendadas')).toBeTruthy();
     expect(screen.queryByText(/Chatbot/)).toBeNull();
+    expect(screen.getByRole('link', { name: /Mensagem agendada não enviada/ }).getAttribute('href')).toBe('/agendamentos?aba=mensagens&status=failed');
     fireEvent.click(screen.getByRole('link', { name: /Mensagem agendada não enviada/ }));
     expect(screen.getByText('Página de agendamentos')).toBeTruthy();
   });

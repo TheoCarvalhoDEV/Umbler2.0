@@ -78,6 +78,13 @@
       "when": 1792778236245,
       "tag": "0010_importar_umbler",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792790782808,
+      "tag": "0011_situacao_compromissos",
+      "breakpoints": true
     }
   ]
 }

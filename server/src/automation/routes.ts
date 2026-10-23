@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { APPOINTMENT_LIMITS, APPOINTMENT_TABS, SCHEDULE_TEXT_MAX, SCHEDULED_TABS } from '@talk/shared';
+import { APPOINTMENT_LIMITS, APPOINTMENT_PRESETS, APPOINTMENT_STATUSES, APPOINTMENT_TABS, SCHEDULE_TEXT_MAX, SCHEDULED_TABS } from '@talk/shared';
 import { reminderList } from '../catalog/settings.js';
 import { readParts } from '../chats/routes.js';
 import type { AppCtx } from '../ctx.js';
-import { cancelAppointment, createAppointment, listAppointments, listChatAppointments, updateAppointment } from './appointments.js';
+import { appointmentSummary, cancelAppointment, createAppointment, listAppointments, listChatAppointments, setAppointmentStatus, updateAppointment } from './appointments.js';
 import { cancelScheduled, createScheduled, listChatScheduled, listScheduled, updateScheduled } from './scheduled.js';
 
 const idParams = z.object({ id: z.uuid() });
@@ -31,7 +31,16 @@ const appointmentBody = z
     reminders: reminderList,
   })
   .refine((b) => (b.chatId === undefined) !== (b.contactId === undefined), 'Escolha o cliente');
-const appointmentQuery = z.object({ tab: z.enum(APPOINTMENT_TABS).default('upcoming') });
+const appointmentQuery = z.object({
+  tab: z.enum(APPOINTMENT_TABS).default('upcoming'),
+  from: sendAt.optional(),
+  to: sendAt.optional(),
+  authorId: z.uuid().optional(),
+  sectorId: z.uuid().optional(),
+  status: z.enum(APPOINTMENT_STATUSES).optional(),
+  preset: z.enum(APPOINTMENT_PRESETS).optional(),
+  q: z.string().trim().max(80).optional(),
+});
 /** Spec §3.3: title, time and note only (decision 3); null or "" clears the note. */
 const appointmentPatch = z
   .object({ title: appointmentTitle.optional(), startsAt: sendAt.optional(), note: appointmentNote.nullable().optional() })
@@ -70,7 +79,15 @@ export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): voi
 
   app.get('/api/chats/:id/appointments', async (req) => listChatAppointments(ctx, req.user, idParams.parse(req.params).id));
 
-  app.get('/api/appointments', async (req) => listAppointments(ctx, req.user, appointmentQuery.parse(req.query).tab));
+  app.get('/api/appointments/summary', async (req) => {
+    const { authorId, sectorId, q } = appointmentQuery.parse(req.query);
+    return appointmentSummary(ctx, req.user, { authorId, sectorId, q: q || undefined });
+  });
+
+  app.get('/api/appointments', async (req) => {
+    const q = appointmentQuery.parse(req.query);
+    return listAppointments(ctx, req.user, { ...q, from: q.from ? new Date(q.from) : undefined, to: q.to ? new Date(q.to) : undefined, q: q.q || undefined });
+  });
 
   app.patch('/api/appointments/:id', async (req) => {
     const { id } = idParams.parse(req.params);
@@ -83,4 +100,7 @@ export function registerAutomationRoutes(app: FastifyInstance, ctx: AppCtx): voi
   });
 
   app.post('/api/appointments/:id/cancel', async (req) => cancelAppointment(ctx, req.user, idParams.parse(req.params).id));
+
+  app.post('/api/appointments/:id/status', async (req) =>
+    setAppointmentStatus(ctx, req.user, idParams.parse(req.params).id, z.object({ status: z.enum(APPOINTMENT_STATUSES) }).parse(req.body).status));
 }

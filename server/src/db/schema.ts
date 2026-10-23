@@ -15,7 +15,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type {
-  BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
+  AppointmentStatus, BotGraph, BotRunState, BotRunStep, BotRunVars, ChatEventKind, HistoryImportState, HistoryPeriod, MessageChangeSource,
   ReminderUnit, ScheduledStatus, UmblerAnalysisDto, UmblerImportError, UmblerImportPhase, UmblerImportState, UmblerMappingDto,
   UmblerProgressDto, UmblerReportDto, UserPreferences,
 } from '@talk/shared';
@@ -371,7 +371,7 @@ export const messageFavorites = pgTable('message_favorites', {
 
 /**
  * Spec 2026-10-21 compromissos §5.1: an appointment kept by hand, tied to one chat (its contact comes from the chat).
- * No status column: cancelled = canceled_at set; upcoming / past compare starts_at with now.
+ * Cancelled = canceled_at set; upcoming / past compare starts_at with now. `status` is the office's control (spec 2026-10-23).
  */
 export const appointments = pgTable(
   'appointments',
@@ -383,6 +383,7 @@ export const appointments = pgTable(
     startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
     note: text('note'), // internal; never sent, never in an event
     signature: boolean('signature').notNull().default(true), // "Enviar com minha assinatura", applied to the reminders
+    status: text('status').$type<AppointmentStatus>().notNull().default('scheduled'),
     canceledAt: timestamp('canceled_at', { withTimezone: true }),
     canceledBy: uuid('canceled_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
