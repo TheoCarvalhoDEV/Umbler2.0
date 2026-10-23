@@ -184,6 +184,8 @@ type DialogProps = {
   contactName?: string | null;
   /** Edit this one. Without it and without chatId (the Agenda), "Cliente" picks the contact and the server picks the chat. */
   appointment?: AppointmentDto;
+  /** New one only: the office-local 'YYYY-MM-DDTHH:mm' the time starts with (the calendar's "+"). */
+  initialStartsAt?: string;
   onClose: () => void;
 };
 
@@ -223,7 +225,7 @@ function AppointmentForm(props: DialogProps & { dialogTitle: string; defaults: R
   const refresh = useRefresh();
   const a = props.appointment;
   const ids = { client: useId(), title: useId(), when: useId(), note: useId() };
-  const initialLocal = a ? isoToOfficeLocal(a.startsAt) : '';
+  const initialLocal = a ? isoToOfficeLocal(a.startsAt) : (props.initialStartsAt ?? '');
   const [contact, setContact] = useState<ContactDto | null>(null);
   const [query, setQuery] = useState('');
   const [title, setTitle] = useState(a?.title ?? '');

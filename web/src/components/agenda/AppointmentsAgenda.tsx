@@ -11,7 +11,8 @@ import { button, fieldSelect, searchInput, searchPill, tab as tabClass, tabList 
 import { api, qk } from '../../lib/api';
 import { useCurrentUser } from '../../lib/auth';
 import { useDebounced } from '../../lib/hooks';
-import { dayHeading, officeToday } from './dates';
+import { WeekView } from './CalendarViews';
+import { dayHeading, mondayOf, officeToday } from './dates';
 
 export type AgendaFilters = Pick<AppointmentListQuery, 'authorId' | 'sectorId' | 'status' | 'q'>;
 
@@ -25,13 +26,14 @@ const COUNTERS: Array<{ preset: AppointmentPreset; key: keyof AppointmentSummary
 const isTab = (v: string | null): v is AppointmentTab => (APPOINTMENT_TABS as readonly string[]).includes(v ?? '');
 const isStatus = (v: string | null): v is AppointmentStatus => (APPOINTMENT_STATUSES as readonly string[]).includes(v ?? '');
 const isPreset = (v: string | null): v is AppointmentPreset => (APPOINTMENT_PRESETS as readonly string[]).includes(v ?? '');
+const VIEWS = [['lista', 'Lista'], ['semana', 'Semana'], ['mes', 'Mês']] as const;
 const errorText = 'text-[13px] font-semibold text-danger';
 
 /** Spec 2026-10-23 controle §6: the Compromissos tab: counters, toolbar, period tabs and the Lista grouped by day. */
 export function AppointmentsAgenda() {
   const [params, setParams] = useSearchParams();
   const isAdmin = useCurrentUser().role === 'admin';
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<{ initialStartsAt?: string } | null>(null);
 
   // An old link carried the period in ?situacao=; it is read as ?periodo= and dropped on the next write.
   const situacao = params.get('situacao');
@@ -43,6 +45,10 @@ export function AppointmentsAgenda() {
   const authorParam = isAdmin ? params.get('atendente') || undefined : undefined; // an attendant is limited to their own server-side
   const sectorParam = params.get('setor') || undefined;
   const busca = params.get('busca') ?? '';
+  const visaoParam = params.get('visao');
+  const visao: 'lista' | 'semana' | 'mes' = visaoParam === 'semana' || visaoParam === 'mes' ? visaoParam : 'lista';
+  const semanaParam = params.get('semana');
+  const monday = mondayOf(semanaParam && /^\d{4}-\d{2}-\d{2}$/.test(semanaParam) ? semanaParam : officeToday());
 
   /** Several keys in one setParams; null deletes. */
   const update = (changes: Record<string, string | null>) =>
@@ -65,7 +71,7 @@ export function AppointmentsAgenda() {
   const summaryQuery = { authorId: authorParam, sectorId: sectorParam, q };
 
   // ponytail: polls every 30 s like the messages tab (spec §10: no real-time notice on the page)
-  const list = useQuery({ queryKey: qk.appointmentList(listQuery), queryFn: () => api.appointments.list(listQuery), refetchInterval: 30_000 });
+  const list = useQuery({ queryKey: qk.appointmentList(listQuery), queryFn: () => api.appointments.list(listQuery), refetchInterval: 30_000, enabled: visao === 'lista' });
   const summary = useQuery({ queryKey: qk.appointmentSummary(summaryQuery), queryFn: () => api.appointments.summary(summaryQuery), refetchInterval: 30_000 });
   const users = useQuery({ queryKey: qk.users, queryFn: () => api.users.list(), enabled: isAdmin }).data ?? [];
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: () => api.sectors.list() }).data ?? [];
@@ -148,11 +154,21 @@ export function AppointmentsAgenda() {
             Limpar filtros
           </button>
         )}
-        <button type="button" onClick={() => setCreating(true)} className={`${button('primary')} ml-auto`}>
+        <button type="button" onClick={() => setCreating({})} className={`${button('primary')} ml-auto`}>
           <PlusIcon size={16} aria-hidden /> Novo compromisso
         </button>
       </div>
-      {!preset && (
+      <div role="tablist" aria-label="Visualização" className={tabList}>
+        {VIEWS.map(([v, label]) => (
+          <button key={v} type="button" role="tab" aria-selected={v === visao} onClick={() => update({ visao: v === 'lista' ? null : v })} className={tabClass(v === visao)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {visao === 'semana' && (
+        <WeekView monday={monday} filters={filters} onWeek={(m) => update({ semana: m })} onCreate={(initialStartsAt) => setCreating({ initialStartsAt })} />
+      )}
+      {visao === 'lista' && !preset && (
         <div role="tablist" aria-label="Situação dos compromissos" className={tabList}>
           {APPOINTMENT_TABS.map((t) => (
             <button key={t} type="button" role="tab" aria-selected={t === tab} onClick={() => update({ periodo: t })} className={tabClass(t === tab)}>
@@ -161,14 +177,14 @@ export function AppointmentsAgenda() {
           ))}
         </div>
       )}
-      {list.isPending && <p className="text-sm text-muted">Carregando…</p>}
-      {list.isError && (
+      {visao === 'lista' && list.isPending && <p className="text-sm text-muted">Carregando…</p>}
+      {visao === 'lista' && list.isError && (
         <p role="alert" className={errorText}>
           Não foi possível carregar os compromissos.
         </p>
       )}
-      {list.data?.length === 0 && <p className="text-sm text-muted">Nenhum compromisso aqui.</p>}
-      {groups.map((g) => (
+      {visao === 'lista' && list.data?.length === 0 && <p className="text-sm text-muted">Nenhum compromisso aqui.</p>}
+      {visao === 'lista' && groups.map((g) => (
         <section key={g.day} className="max-w-[800px]">
           <h2 className={`sticky top-0 z-10 bg-surface py-1.5 text-[13px] font-bold ${g.day === today ? 'text-primary' : 'text-muted'}`}>
             {dayHeading(g.day, today)}
@@ -180,7 +196,7 @@ export function AppointmentsAgenda() {
           </ul>
         </section>
       ))}
-      {creating && <AppointmentDialog onClose={() => setCreating(false)} />}
+      {creating && <AppointmentDialog initialStartsAt={creating.initialStartsAt} onClose={() => setCreating(null)} />}
     </>
   );
 }

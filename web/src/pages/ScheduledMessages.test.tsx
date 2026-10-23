@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { DEFAULT_APPOINTMENT_REMINDERS, type AppointmentDto, type Me, type ScheduledMessageDto } from '@talk/shared';
+import { DEFAULT_APPOINTMENT_REMINDERS, officeDayRange, type AppointmentDto, type Me, type ScheduledMessageDto } from '@talk/shared';
 import { ScheduledMessagesPage } from './ScheduledMessages';
 
 // jsdom has no modal <dialog> API; the browser opens ChatDialogs' Modal with showModal()
@@ -226,4 +226,61 @@ it('?periodo=past opens Passados (the old ?situacao=past twin is the test above)
   renderPage('/agendamentos?periodo=past');
   expect(await screen.findByText('Nenhum compromisso aqui.')).toBeTruthy();
   expect(screen.getByRole('tab', { name: 'Passados' }).getAttribute('aria-selected')).toBe('true');
+});
+
+const rangeKey = (firstDay: string, lastDay: string) =>
+  `GET /api/appointments?${new URLSearchParams({ from: officeDayRange(firstDay).from.toISOString(), to: officeDayRange(lastDay).to.toISOString() })}`;
+const thisWeek = rangeKey('2026-10-19', '2026-10-25');
+
+it('Semana: 7 days from Monday, today marked, chips in their Cuiabá day, ◀ ▶ Hoje move the range (§6.6, Review Focus 3)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    'GET /api/appointments?tab=upcoming': [],
+    [thisWeek]: [
+      appointment({ id: 'a1', title: 'Audiência', startsAt: '2026-10-21T02:00:00.000Z' }), // ter. 20, 22:00 in Cuiabá
+      appointment({ id: 'a2', title: 'Perícia', startsAt: '2026-10-22T13:00:00.000Z', canceledAt: '2026-10-20T11:00:00.000Z', canEdit: false, canMark: false }),
+    ],
+    [rangeKey('2026-10-26', '2026-11-01')]: [],
+    [rangeKey('2026-10-12', '2026-10-18')]: [],
+  });
+  renderPage();
+  fireEvent.click(await screen.findByRole('tab', { name: 'Semana' }));
+  const days = within(await screen.findByRole('list', { name: 'Dias da semana' })).getAllByRole('listitem');
+  expect(days.map((d) => d.getAttribute('aria-label'))).toEqual(['seg. 19', 'ter. 20', 'qua. 21', 'qui. 22', 'sex. 23', 'sáb. 24', 'dom. 25']);
+  expect(days[1]!.getAttribute('aria-current')).toBe('date');
+  expect(await within(days[1]!).findByRole('button', { name: /Audiência/ })).toBeTruthy();
+  expect(within(days[3]!).getByRole('button', { name: /Perícia/ }).className).toContain('line-through');
+  expect(screen.getByText('19 – 25 de out. de 2026')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Próxima semana' }));
+  expect(await screen.findByText('26 de out. – 1 de nov. de 2026')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Hoje' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Semana anterior' }));
+  expect(await screen.findByText('12 – 18 de out. de 2026')).toBeTruthy();
+  expect(keys()).toEqual(expect.arrayContaining([thisWeek, rangeKey('2026-10-26', '2026-11-01'), rangeKey('2026-10-12', '2026-10-18')]));
+});
+
+it('Semana: a chip opens its details with the actions; "+" pre-fills the next hour today; no "+" on a past day (§6.6, §6.8)', async () => {
+  vi.setSystemTime(new Date('2026-10-20T14:20:00.000Z')); // 10:20 in Cuiabá
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    [thisWeek]: [appointment({ startsAt: '2026-10-22T13:00:00.000Z' })],
+    'GET /api/settings/appointment-reminders': DEFAULT_APPOINTMENT_REMINDERS,
+  });
+  renderPage('/agendamentos?visao=semana&semana=2026-10-21'); // any day of the week opens its Monday
+  fireEvent.click(await screen.findByRole('button', { name: /Audiência/ }));
+  const details = await screen.findByRole('dialog', { name: 'Detalhes do compromisso' });
+  expect(within(details).getByRole('button', { name: 'Confirmar' })).toBeTruthy();
+  fireEvent.click(within(details).getByRole('button', { name: 'Fechar' }));
+  expect(screen.queryByRole('button', { name: 'Novo compromisso em seg. 19' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Novo compromisso em ter. 20' }));
+  expect(((await screen.findByLabelText('Data e hora (horário de Cuiabá)')) as HTMLInputElement).value).toBe('2026-10-20T11:00');
+});
+
+it('a full range says "Mostrando os primeiros 500" (spec Review focus 3)', async () => {
+  stubFetch({
+    'GET /api/appointments/summary': summary,
+    [thisWeek]: Array.from({ length: 500 }, (_, i) => appointment({ id: `a${i}` })),
+  });
+  renderPage('/agendamentos?visao=semana');
+  expect(await screen.findByText('Mostrando os primeiros 500')).toBeTruthy();
 });
