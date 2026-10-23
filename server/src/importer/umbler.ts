@@ -524,3 +524,167 @@ export async function importCatalog(run: ImportRun): Promise<void> {
     await saveProgress(tx, run, 'contacts'); // its counters are not idempotent: the catalog never runs twice
   });
 }
+
+// ---------- phase 2: contacts (§7.4), phase 4: their notes (§7.5) ----------
+
+const CONTACT_BATCH = 100;
+
+/**
+ * §7.4: phone first, then LID; fills only what is empty. No valid phone but a LID → a LID-only contact; neither → null
+ * (counted). Writes the umbler_map row in the same transaction; `blocked` only on a new contact.
+ */
+export async function upsertContact(tx: Tx, c: UmblerContact, counts: UmblerProgress['contacts']): Promise<string | null> {
+  const phone = validPhone(c.phoneNumber);
+  const lid = lidOf(c.lid);
+  if (!phone && !lid) {
+    counts.skipped += 1;
+    return null;
+  }
+  const [byPhone] = phone ? await tx.select().from(contacts).where(eq(contacts.phone, phone)) : [];
+  const [byLid] = lid ? await tx.select().from(contacts).where(eq(contacts.lid, lid)) : [];
+  const found = byPhone ?? byLid;
+  let id: string;
+  if (found) {
+    // never overwrite data already edited here; a LID owned by another contact is never copied
+    await tx
+      .update(contacts)
+      .set({
+        name: found.name ?? str(c.name),
+        phone: found.phone ?? phone,
+        lid: found.lid ?? (byLid ? null : lid),
+        email: found.email ?? str(c.email),
+        landline: found.landline ?? str(c.landline),
+        address: found.address ?? toAddress(c.address),
+      })
+      .where(eq(contacts.id, found.id));
+    id = found.id;
+    counts.completed += 1;
+  } else {
+    const [row] = await tx
+      .insert(contacts)
+      .values({
+        name: str(c.name), phone, lid, email: str(c.email), landline: str(c.landline), address: toAddress(c.address),
+        blocked: c.isBlocked ?? false,
+      })
+      .returning({ id: contacts.id });
+    id = row!.id;
+    if (phone) counts.created += 1;
+    else counts.lidOnly += 1;
+  }
+  await tx.insert(umblerMap).values({ kind: 'contact', umblerId: c.id, localId: id }).onConflictDoNothing();
+  return id;
+}
+
+async function importContactBatch(run: ImportRun, list: UmblerContact[]): Promise<void> {
+  if (list.length === 0) return;
+  const m = maps(run);
+  const p = run.progress;
+  const mapped = await run.ctx.db
+    .select({ umblerId: umblerMap.umblerId })
+    .from(umblerMap)
+    .where(and(eq(umblerMap.kind, 'contact'), inArray(umblerMap.umblerId, list.map((c) => c.id))));
+  const done = new Set(mapped.map((r) => r.umblerId));
+  const todo = list.filter((c) => !done.has(c.id));
+  // §4.1: the list ignored includeCustomFields → one call per contact, before the transaction
+  if (Object.keys(m.fields).length > 0) {
+    for (const c of todo) {
+      if (c.customFields !== undefined) continue;
+      checkStop(run);
+      c.customFields = await run.client
+        .get<NonNullable<UmblerContact['customFields']>>('/v1/contacts/{id}/custom-fields/', orgQuery(run), { id: c.id })
+        .catch((err: unknown) => {
+          if (isGone(err)) return [];
+          throw err;
+        });
+    }
+  }
+  const pairs: Array<{ lid: string; phone: string }> = [];
+  await run.ctx.db.transaction(async (tx) => {
+    for (const c of todo) {
+      const id = await upsertContact(tx, c, p.contacts);
+      if (!id) continue;
+      const tagRows = (c.tags ?? []).flatMap((t) => (m.tags[t.id] ? [{ contactId: id, tagId: m.tags[t.id]! }] : []));
+      if (tagRows.length) await tx.insert(contactTags).values(tagRows).onConflictDoNothing();
+      const valueRows = (c.customFields ?? []).flatMap((f) => {
+        const field = m.fields[f.customFieldDefinitionId];
+        const value = field ? fieldValue(f.value, field.kind) : null;
+        return field && value !== null ? [{ contactId: id, fieldId: field.id, value }] : [];
+      });
+      if (valueRows.length) await tx.insert(contactFieldValues).values(valueRows).onConflictDoNothing();
+      const phone = validPhone(c.phoneNumber);
+      const lid = lidOf(c.lid);
+      if (phone && lid) pairs.push({ lid, phone });
+    }
+    p.done += list.length;
+    await saveProgress(tx, run);
+  });
+  // §7.4: a LID-only contact the WhatsApp history created joins the phone one before any chat (§8 needs a single contact)
+  await mergeLidPairs(run.ctx, pairs);
+}
+
+/** Phase 2 (§9.1): the whole contact list, 100 per transaction; contacts already in umbler_map are skipped. */
+export async function importContactsPhase(run: ImportRun): Promise<void> {
+  const fieldIds = Object.keys(maps(run).fields);
+  run.progress.total = run.analysis.contacts.total;
+  let batch: UmblerContact[] = [];
+  const query = { ...orgQuery(run), includeGroups: false, State: 'All', includeCustomFields: fieldIds };
+  for await (const page of pages<UmblerContact>(run.client, '/v1/contacts/', query)) {
+    checkStop(run);
+    batch.push(...page.items);
+    if (batch.length >= CONTACT_BATCH) {
+      await importContactBatch(run, batch);
+      batch = [];
+    }
+  }
+  await importContactBatch(run, batch);
+}
+
+/** Phase 4 (§7.5): one notes call per imported contact still without done_at; a 404 (deleted in Umbler) is skipped. */
+export async function importNotesPhase(run: ImportRun): Promise<void> {
+  const { db } = run.ctx;
+  const m = maps(run);
+  const p = run.progress;
+  const todo = await db
+    .select({ umblerId: umblerMap.umblerId, localId: umblerMap.localId })
+    .from(umblerMap)
+    .where(and(eq(umblerMap.kind, 'contact'), isNull(umblerMap.doneAt)));
+  p.total = todo.length;
+  for (const row of todo) {
+    checkStop(run);
+    let notes: UmblerNote[] = [];
+    try {
+      notes = await run.client.get<UmblerNote[]>('/v1/contacts/{id}/notes/', orgQuery(run), { id: row.umblerId });
+    } catch (err) {
+      if (!isGone(err)) throw err;
+      p.gone += 1;
+    }
+    await db.transaction(async (tx) => {
+      const [contact] = await tx.select({ id: contacts.id }).from(contacts).where(eq(contacts.id, row.localId));
+      const have = notes.length
+        ? await tx
+            .select({ umblerId: umblerMap.umblerId })
+            .from(umblerMap)
+            .where(and(eq(umblerMap.kind, 'note'), inArray(umblerMap.umblerId, notes.map((n) => n.id))))
+        : [];
+      const copied = new Set(have.map((r) => r.umblerId));
+      for (const n of contact ? notes : []) {
+        if (copied.has(n.id)) continue;
+        const [note] = await tx
+          .insert(contactNotes)
+          .values({
+            contactId: contact!.id, body: n.content, pinned: n.pinned ?? false, createdAt: new Date(n.createdAtUTC),
+            authorId: (n.createdBy && m.members[n.createdBy]?.id) || null,
+          })
+          .returning({ id: contactNotes.id });
+        await tx.insert(umblerMap).values({ kind: 'note', umblerId: n.id, localId: note!.id });
+        p.notes += 1;
+      }
+      await tx
+        .update(umblerMap)
+        .set({ doneAt: new Date() })
+        .where(and(eq(umblerMap.kind, 'contact'), eq(umblerMap.umblerId, row.umblerId)));
+      p.done += 1;
+      await saveProgress(tx, run);
+    });
+  }
+}
