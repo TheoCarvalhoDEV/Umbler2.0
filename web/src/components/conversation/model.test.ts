@@ -160,6 +160,10 @@ describe('eventText for the Umbler import (spec 2026-10-21 importar-umbler §10)
     expect(eventText(event({ kind: 'umbler_imported', data: { count: 3, merged: true } }), new Map())).toBe(
       '3 mensagens de uma conversa aberta no Umbler Talk juntadas a esta',
     );
+    expect(eventText(event({ kind: 'umbler_imported', data: { count: 1 } }), new Map())).toBe('Conversa importada do Umbler Talk: 1 mensagem');
+    expect(eventText(event({ kind: 'umbler_imported', data: { count: 1, merged: true } }), new Map())).toBe(
+      '1 mensagem de uma conversa aberta no Umbler Talk juntada a esta',
+    );
   });
 });
 

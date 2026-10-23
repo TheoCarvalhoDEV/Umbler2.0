@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { emptyUmblerCounts, type UmblerAnalysisDto, type UmblerImportDto, type UmblerImportStatusDto } from '@talk/shared';
 import { confirmDialog } from '../../lib/confirm';
-import { UmblerImportSettings, durationText } from './UmblerImportSettings';
+import { UmblerImportSettings, channelHint, durationText } from './UmblerImportSettings';
 
 vi.mock('../../lib/confirm', () => ({ confirmDialog: vi.fn(async () => true) }));
 
@@ -31,12 +31,15 @@ const imp = (over: Partial<UmblerImportDto> = {}): UmblerImportDto => ({
 });
 
 let status: UmblerImportStatusDto;
+let postError: string | null;
 const calls: Array<{ method: string; path: string; body: unknown }> = [];
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
 
 beforeEach(() => {
   calls.length = 0;
+  postError = null;
   status = { tokenConfigured: true, current: null };
+  vi.mocked(confirmDialog).mockClear();
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname;
     const method = init?.method ?? 'GET';
@@ -45,6 +48,7 @@ beforeEach(() => {
     if (method === 'GET' && path === '/api/channels') return json([{ id: 'ch1', name: 'WhatsApp escritório', status: 'connected', phone: '5565999990000' }]);
     if (method === 'GET' && path === '/api/sectors') return json([{ id: 's1', name: 'Atendimento', position: 0, isDefault: true }]);
     if (method === 'GET' && path === '/api/users') return json([{ id: 'u1', name: 'Ana', email: 'ana@x', role: 'agent', signature: null, active: true, sectorIds: [], avatarUrl: null }]);
+    if (method === 'POST' && postError) return json({ error: postError }, 400);
     if (method === 'POST') return json(imp({ state: 'running' }));
     return json({ error: 'inesperado' }, 500);
   }));
@@ -106,12 +110,55 @@ describe('Importar do Umbler (spec 2026-10-21 importar-umbler §6)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Importar' }));
 
     await waitFor(() => expect(calls.find((c) => c.path === '/api/umbler-import/i1/start')).toBeTruthy());
+    // the chats of channels set to "Não importar" (900 + 4) do not come
     expect(vi.mocked(confirmDialog)).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Importar 2.360 contatos e 9.575 conversas do Umbler?', confirmLabel: 'Importar' }),
+      expect.objectContaining({ title: 'Importar 2.360 contatos e 8.671 conversas do Umbler?', confirmLabel: 'Importar' }),
     );
     expect(calls.find((c) => c.path === '/api/umbler-import/i1/start')!.body).toEqual({
       mapping: { channels: { CH_OLD: 'none', CH_WEB: 'none' }, sectors: { SEC1: 's1', SEC3: 'create' }, members: { M_CARLA: 'none' } },
     });
+  });
+
+  it('one chat: singular', () => {
+    expect(channelHint({ ...analysis.channels[1]!, chats: 1 }, 'none', [])).toBe('1 conversa deste canal não vem.');
+  });
+
+  it('without the token: "Importar" and "Continuar" are disabled', async () => {
+    status = { tokenConfigured: false, current: imp() };
+    renderPage();
+    expect(((await screen.findByRole('button', { name: 'Importar' })) as HTMLButtonElement).disabled).toBe(true);
+    cleanup();
+    status = { tokenConfigured: false, current: imp({ state: 'failed', phase: 'contacts', error: 'umbler_token', startedAt: '2026-10-21T12:00:00.000Z' }) };
+    renderPage();
+    expect(((await screen.findByRole('button', { name: 'Continuar' })) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('a refused start or resume shows its error next to the button', async () => {
+    postError = 'Escolha um destino para cada canal, setor e atendente.';
+    status = { tokenConfigured: true, current: imp() };
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Importar' }));
+    const error = await screen.findByText(postError);
+    expect(error.parentElement).toBe(screen.getByRole('button', { name: 'Importar' }).parentElement);
+    expect(screen.getAllByText(postError)).toHaveLength(1);
+
+    cleanup();
+    status = { tokenConfigured: true, current: imp({ state: 'failed', phase: 'contacts', error: 'umbler_429', startedAt: '2026-10-21T12:00:00.000Z' }) };
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Continuar' }));
+    expect((await screen.findByText(postError)).parentElement).toBe(screen.getByRole('button', { name: 'Continuar' }).parentElement);
+  });
+
+  it('"Analisar de novo" after an analysis asks first: the choices made below are lost', async () => {
+    status = { tokenConfigured: true, current: imp() };
+    renderPage();
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false);
+    fireEvent.click(await screen.findByRole('button', { name: 'Analisar de novo' }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmDialog).mock.calls[0]![0]).toMatchObject({ title: 'Analisar o Umbler de novo?', confirmLabel: 'Analisar de novo' });
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Analisar de novo' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/umbler-import/analyze')).toBe(true));
   });
 
   it('a block (automatic rules on) is shown and keeps "Importar" disabled', async () => {
@@ -127,6 +174,12 @@ describe('Importar do Umbler (spec 2026-10-21 importar-umbler §6)', () => {
     expect(await screen.findByText('Etapa 3 de 5: conversas abertas — 120 de 135')).toBeTruthy();
     expect(screen.getByText('Casadas com o histórico do WhatsApp: 0')).toBeTruthy();
     expect(screen.getByText('Pode fechar esta tela: a importação continua no servidor e retoma sozinha se o sistema reiniciar.')).toBeTruthy();
+
+    cleanup();
+    // the office closed chats in Umbler after "Analisar": more than the analysis counted
+    status = { tokenConfigured: true, current: imp({ state: 'running', phase: 'closed_chats', startedAt: '2026-10-21T12:00:00.000Z', progress: { ...counts, done: 140 } }) };
+    renderPage();
+    expect(await screen.findByText('Etapa 5 de 5: conversas finalizadas — 140 de 140')).toBeTruthy();
   });
 
   it('failed: the reason and "Continuar"; a failed analysis only offers "Analisar de novo"', async () => {
@@ -142,6 +195,11 @@ describe('Importar do Umbler (spec 2026-10-21 importar-umbler §6)', () => {
     expect(await screen.findByText(/^A análise parou: O Umbler recusou o token/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Continuar' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Analisar de novo' })).toBeTruthy();
+
+    cleanup();
+    status = { tokenConfigured: true, current: imp({ state: 'failed', error: 'umbler_429', analysis: null }) };
+    renderPage();
+    expect(await screen.findByText('A análise parou: O Umbler limitou as requisições. Clique em Analisar de novo daqui a alguns minutos.')).toBeTruthy();
   });
 
   it('done: when it ended, how long it took, and the report', async () => {

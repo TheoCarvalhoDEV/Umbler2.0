@@ -70,7 +70,7 @@ type ChannelRow = UmblerAnalysisDto['channels'][number];
 
 /** §6.2/§6.3 under a channel's selector: what its destination means. */
 export function channelHint(ch: ChannelRow, target: string, ours: ChannelDto[]): string | null {
-  if (target === 'none') return `${n(ch.chats)} conversas deste canal não vêm.`;
+  if (target === 'none') return ch.chats === 1 ? '1 conversa deste canal não vem.' : `${n(ch.chats)} conversas deste canal não vêm.`;
   const to = ours.find((c) => c.id === target);
   if (!to || !ch.phone || to.phone === ch.phone) return null;
   if (target === ch.proposal) {
@@ -97,11 +97,13 @@ function Blocks({ blocks }: { blocks: string[] }) {
   ));
 }
 
-function Analysis({ imp, analysis: a, onStart, pending }: {
+function Analysis({ imp, analysis: a, onStart, pending, tokenConfigured, error }: {
   imp: UmblerImportDto;
   analysis: UmblerAnalysisDto;
   onStart: (mapping: UmblerMappingDto) => void;
   pending: boolean;
+  tokenConfigured: boolean;
+  error: unknown;
 }) {
   const channels = useQuery({ queryKey: qk.channels, queryFn: api.channels.list });
   const sectors = useQuery({ queryKey: qk.sectors, queryFn: api.sectors.list });
@@ -115,10 +117,11 @@ function Analysis({ imp, analysis: a, onStart, pending }: {
   const set = (group: keyof UmblerMappingDto, id: string, value: string) =>
     setMapping((m) => ({ ...m, [group]: { ...m[group], [id]: value } }));
   const contactsToImport = a.contacts.total - a.contacts.withoutAddress;
+  const chatsToImport = a.chats.open + a.chats.closed - a.channels.reduce((sum, ch) => sum + (mapping.channels[ch.id] === 'none' ? ch.chats : 0), 0);
 
   async function confirmStart() {
     const ok = await confirmDialog({
-      title: `Importar ${n(contactsToImport)} contatos e ${n(a.chats.open + a.chats.closed)} conversas do Umbler?`,
+      title: `Importar ${n(contactsToImport)} contatos e ${n(chatsToImport)} conversas do Umbler?`,
       body: 'A cópia roda em segundo plano e pode levar algumas horas.',
       confirmLabel: 'Importar',
       danger: false,
@@ -235,10 +238,16 @@ function Analysis({ imp, analysis: a, onStart, pending }: {
         <Lines lines={a.warnings} />
       </SettingsSection>
 
-      <div className="mt-7 flex flex-wrap gap-2">
-        <button type="button" disabled={pending || imp.blocks.length > 0} onClick={() => void confirmStart()} className={btnPrimary}>
+      <div className="mt-7 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button
+          type="button"
+          disabled={pending || !tokenConfigured || imp.blocks.length > 0}
+          onClick={() => void confirmStart()}
+          className={btnPrimary}
+        >
           Importar
         </button>
+        <ErrorText error={error} />
       </div>
     </>
   );
@@ -247,7 +256,8 @@ function Analysis({ imp, analysis: a, onStart, pending }: {
 function Running({ imp }: { imp: UmblerImportDto }) {
   const phase = imp.phase ?? 'catalog';
   const p = imp.progress;
-  const of = p && p.total > 0 ? ` — ${n(p.done)} de ${n(p.total)}` : '';
+  // the office may close chats in Umbler after "Analisar": the list then brings more than the analysis counted
+  const of = p && p.total > 0 ? ` — ${n(p.done)} de ${n(Math.max(p.total, p.done))}` : '';
   return (
     <SettingsSection title="Importando">
       <p role="status" className="text-sm font-semibold">
@@ -261,13 +271,19 @@ function Running({ imp }: { imp: UmblerImportDto }) {
   );
 }
 
-function Failed({ imp, onResume, pending }: { imp: UmblerImportDto; onResume: () => void; pending: boolean }) {
+function Failed({ imp, onResume, pending, tokenConfigured, error }: {
+  imp: UmblerImportDto;
+  onResume: () => void;
+  pending: boolean;
+  tokenConfigured: boolean;
+  error: unknown;
+}) {
   const reason = UMBLER_IMPORT_ERRORS[imp.error ?? 'unexpected'].replace(/\.$/, '');
   if (!imp.startedAt) {
-    // an analysis that stopped: "Analisar de novo" starts another one
+    // an analysis that stopped: there is no "Continuar", "Analisar de novo" starts another one
     return (
       <p role="alert" className={`${block} mt-5 text-sm font-semibold text-danger`}>
-        {`A análise parou: ${reason}.`}
+        {`A análise parou: ${reason.replace('Clique em Continuar', 'Clique em Analisar de novo')}.`}
       </p>
     );
   }
@@ -276,9 +292,12 @@ function Failed({ imp, onResume, pending }: { imp: UmblerImportDto; onResume: ()
       <p role="alert" className="text-sm font-semibold text-danger">{`A importação parou: ${reason}. O que já entrou fica.`}</p>
       <Blocks blocks={imp.blocks} />
       {imp.progress && <Lines lines={progressLines(imp.progress)} />}
-      <button type="button" disabled={pending || imp.blocks.length > 0} onClick={onResume} className={`${btnPrimary} mt-4`}>
-        Continuar
-      </button>
+      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button type="button" disabled={pending || !tokenConfigured || imp.blocks.length > 0} onClick={onResume} className={btnPrimary}>
+          Continuar
+        </button>
+        <ErrorText error={error} />
+      </div>
     </SettingsSection>
   );
 }
@@ -306,13 +325,29 @@ export function UmblerImportSettings() {
       return state === 'analyzing' || state === 'running' ? POLL_MS : false;
     },
   });
+  // `near`: where its error shows, by "Analisar" or by the Importar / Continuar button
   const act = useMutation({
-    mutationFn: (run: () => Promise<unknown>) => run(),
+    mutationFn: (v: { near: 'analyze' | 'go'; run: () => Promise<unknown> }) => v.run(),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.umblerImport }),
   });
+  const errorNear = (near: 'analyze' | 'go') => (act.variables?.near === near ? act.error : null);
   if (!status.data) return <Loading error={status.error} />;
   const { tokenConfigured, current } = status.data;
   const active = current?.state === 'analyzing' || current?.state === 'running';
+
+  async function analyze() {
+    // a new analysis resets every choice below to its proposals
+    if (current?.state === 'analyzed') {
+      const ok = await confirmDialog({
+        title: 'Analisar o Umbler de novo?',
+        body: 'Os destinos escolhidos abaixo voltam às sugestões da nova análise.',
+        confirmLabel: 'Analisar de novo',
+        danger: false,
+      });
+      if (!ok) return;
+    }
+    act.mutate({ near: 'analyze', run: () => api.umblerImport.analyze() });
+  }
 
   return (
     <>
@@ -338,7 +373,7 @@ export function UmblerImportSettings() {
               <button
                 type="button"
                 disabled={!tokenConfigured || act.isPending}
-                onClick={() => act.mutate(() => api.umblerImport.analyze())}
+                onClick={() => void analyze()}
                 className={current ? btnSecondary : btnPrimary}
               >
                 {current ? 'Analisar de novo' : 'Analisar'}
@@ -347,7 +382,7 @@ export function UmblerImportSettings() {
           }
         />
       </SettingsSection>
-      <ErrorText error={act.error} />
+      <ErrorText error={errorNear('analyze')} />
 
       {current?.state === 'analyzing' && (
         <p role="status" className={`${block} mt-5 text-sm font-semibold`}>
@@ -360,12 +395,20 @@ export function UmblerImportSettings() {
           imp={current}
           analysis={current.analysis}
           pending={act.isPending}
-          onStart={(mapping) => act.mutate(() => api.umblerImport.start(current.id, mapping))}
+          tokenConfigured={tokenConfigured}
+          error={errorNear('go')}
+          onStart={(mapping) => act.mutate({ near: 'go', run: () => api.umblerImport.start(current.id, mapping) })}
         />
       )}
       {current?.state === 'running' && <Running imp={current} />}
       {current?.state === 'failed' && (
-        <Failed imp={current} pending={act.isPending} onResume={() => act.mutate(() => api.umblerImport.resume(current.id))} />
+        <Failed
+          imp={current}
+          pending={act.isPending}
+          tokenConfigured={tokenConfigured}
+          error={errorNear('go')}
+          onResume={() => act.mutate({ near: 'go', run: () => api.umblerImport.resume(current.id) })}
+        />
       )}
       {current?.state === 'done' && <Done imp={current} />}
     </>
