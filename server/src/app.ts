@@ -19,6 +19,7 @@ import { registerSettingsRoutes } from './catalog/settings.js';
 import { registerTagRoutes } from './catalog/tags.js';
 import { registerUserRoutes } from './catalog/users.js';
 import { registerContactRoutes } from './contacts/routes.js';
+import { registerUmblerImportRoutes } from './importer/routes.js';
 import { z } from 'zod';
 import type { AppCtx } from './ctx.js';
 import { HttpError } from './lib/http-error.js';
@@ -82,6 +83,7 @@ export async function buildApp(ctx: AppCtx, opts: BuildAppOptions = {}): Promise
   registerAutomationRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
   registerBotRoutes(app, ctx);
+  registerUmblerImportRoutes(app, ctx);
 
   // Spec §2: the compiled React front is served at /. Any other GET outside /api, /ws and /webhooks is a
   // client-side route, so it gets index.html. Keep this block last in buildApp.
