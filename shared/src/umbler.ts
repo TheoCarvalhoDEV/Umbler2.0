@@ -20,6 +20,7 @@ export const UMBLER_PHASE_LABELS: Record<UmblerImportPhase, string> = {
 /** §9.4: why an import stopped (umbler_imports.error keeps only the code). `unexpected` is a database or program error. */
 export const UMBLER_IMPORT_ERRORS = {
   umbler_token: 'O Umbler recusou o token (expirado ou apagado). Gere outro, troque UMBLER_TOKEN no .env e reinicie o sistema.',
+  umbler_orgs: 'O token dá acesso a mais de uma organização ativa no Umbler e o importador não sabe qual é a do escritório. Avise o suporte técnico.',
   umbler_429: 'O Umbler limitou as requisições. Clique em Continuar daqui a alguns minutos.',
   umbler_unavailable: 'O Umbler não respondeu. Clique em Continuar para tentar de novo.',
   umbler_marked_read: 'Uma leitura marcou conversa como lida no Umbler; a importação parou por segurança.',

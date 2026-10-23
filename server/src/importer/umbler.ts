@@ -193,6 +193,7 @@ export interface UmblerMe {
   organizations?: Array<{
     id: string;
     name: string;
+    active?: boolean; // false: an organization the user left or that was closed (GET on it answers 403)
     permissions?: string[];
     allowedSectors?: { allSectorsEnable?: boolean } | null;
     allowedChannels?: { allChannelsEnable?: boolean } | null;

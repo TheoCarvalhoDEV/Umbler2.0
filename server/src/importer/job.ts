@@ -59,7 +59,10 @@ async function readTest(client: UmblerClient, org: string, chat: UmblerChat): Pr
 export async function analyzeUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImportRow): Promise<void> {
   const c = deps.client;
   const me = await c.get<UmblerMe>('/v1/members/me/');
-  const ref = me.organizations?.[0]; // ponytail: the office has exactly one organization (§4)
+  // §4: the office's organization is the token's only active one; an old, deactivated one may come first (403 on it)
+  const active = (me.organizations ?? []).filter((o) => o.active !== false);
+  if (active.length > 1) throw new UmblerError('umbler_orgs', null, '/v1/members/me/'); // never guess between two offices
+  const ref = active[0];
   if (!ref) throw new UmblerError('umbler_token', null, '/v1/members/me/');
   const q = { organizationId: ref.id };
   const org = await c.get<UmblerOrganization>('/v1/organizations/{id}/', {}, { id: ref.id });
