@@ -22,7 +22,7 @@ services:
       retries: 30
 
   evolution:
-    image: evoapicloud/evolution-api:v2.3.7
+    build: ./evolution # Evolution oficial + conserto do Baileys; a tag fica no FROM de evolution/Dockerfile
     environment:
       SERVER_URL: http://localhost:8081
       AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?copie .env.dev.example para .env.dev}

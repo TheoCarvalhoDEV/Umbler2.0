@@ -175,21 +175,21 @@ Até dois erros sobre o papel `postgres` (`current user cannot be dropped`, `rol
 
 ### 6.2 Atualizar a Evolution API (com volta)
 
-A Evolution usa tag fixa no `docker-compose.yml` (hoje `evoapicloud/evolution-api:v2.3.7`). Nunca use `latest`.
+A Evolution usa tag fixa no `FROM` de `evolution/Dockerfile` (hoje `evoapicloud/evolution-api:v2.3.7`). Nunca use `latest`. O Dockerfile aplica um conserto no Baileys: sem ele, depois de o canal ficar fora do ar, a fila de mensagens pendentes para nos primeiros 100 itens e as mensagens novas não chegam. O comentário no Dockerfile explica o conserto.
 
 1. Leia as notas da nova versão em https://github.com/EvolutionAPI/evolution-api/releases.
 2. Anote a tag atual e faça um dump só do banco da Evolution:
 
 ```bash
 cd /opt/talk
-grep 'evolution-api:' docker-compose.yml | tee -a data/backup/evolution-tags.txt
+grep '^FROM' evolution/Dockerfile | tee -a data/backup/evolution-tags.txt
 docker compose exec -T postgres pg_dump -U postgres -Fc evolution > data/backup/evolution-antes-da-atualizacao.dump
 ```
 
-3. Troque a tag no `docker-compose.yml`, por exemplo `v2.3.7` por `v2.3.8`, e suba:
+3. Troque a tag no `FROM` de `evolution/Dockerfile`, por exemplo `v2.3.7` por `v2.3.8`, e suba. Se o build falhar com "Baileys mudou", a nova versão mexeu no trecho consertado. Nesse caso, veja se ela já resolve o problema e ajuste ou remova o conserto.
 
 ```bash
-docker compose pull evolution
+docker compose build --pull evolution
 docker compose up -d evolution
 docker compose logs --tail 50 evolution
 ```
@@ -200,10 +200,10 @@ docker compose logs --tail 50 evolution
 
 ```bash
 docker compose stop evolution
-# devolva a tag anterior no docker-compose.yml (está em data/backup/evolution-tags.txt)
+# devolva a tag anterior no FROM de evolution/Dockerfile (está em data/backup/evolution-tags.txt)
 docker compose exec -T postgres psql -U postgres -c 'DROP DATABASE evolution' -c 'CREATE DATABASE evolution OWNER evolution'
 docker compose exec -T postgres pg_restore -U postgres -d evolution < data/backup/evolution-antes-da-atualizacao.dump
-docker compose up -d evolution
+docker compose up -d --build evolution
 ```
 
 Se o canal não voltar a **Conectado**, use **Gerar novo QR / Reconectar** (seção 4).
