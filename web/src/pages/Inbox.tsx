@@ -7,6 +7,7 @@ import {
 } from '@talk/shared';
 import { api, ApiError, qk } from '../lib/api';
 import { useMe } from '../lib/auth';
+import { useDebounced } from '../lib/hooks';
 import { confirmDialog } from '../lib/confirm';
 import { BulkBar } from '../components/inbox/BulkBar';
 import { ChatListItem } from '../components/inbox/ChatListItem';
@@ -22,15 +23,6 @@ const TABS: Array<{ tab: ChatTab; label: string }> = [
   { tab: 'waiting', label: 'Esperando' },
   { tab: 'closed', label: 'Finalizados' },
 ];
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
 
 /** Infinite chat list under qk.chatList(f), pageParam = cursor. applyWsEvent (Task 15) keeps it fresh. */
 function useChatList(f: ChatListFilters) {

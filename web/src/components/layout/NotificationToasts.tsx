@@ -12,7 +12,7 @@ export const TOAST_MS = 8000;
 const titleOf = (n: NotificationDto) => n.title.trim() || 'Notificação do chatbot';
 /** Spec 2026-10-20 agendamentos §3.3: a failed scheduled message opens "Agendamentos → Falharam"; a bot's notice, its chat. */
 const failed = (n: NotificationDto) => n.kind === 'scheduled_failed';
-const targetOf = (n: NotificationDto) => (failed(n) ? '/agendamentos?status=failed' : `/chats/${n.chatId}`);
+const targetOf = (n: NotificationDto) => (failed(n) ? '/agendamentos?aba=mensagens&status=failed' : `/chats/${n.chatId}`);
 const footerOf = (n: NotificationDto) => (failed(n) ? 'Mensagens agendadas' : `Chatbot ${n.botName}`);
 
 /** notify_agent (spec §4): an 8 s toast plus a browser notification when allowed. Mount once in AppLayout. */
