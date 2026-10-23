@@ -29,7 +29,8 @@ export function chatQuery(org: string, state: 'open' | 'closed'): Query {
     IncludePinneds: false,
     ...(state === 'open'
       ? { ChatState: 'Open', ChatOrderBy: 'CreatedAtUTC', Order: 'Asc' }
-      : { ChatState: 'Closed', ChatOrderBy: 'ClosedAtUTC', Order: 'Desc' }),
+      : // newest first by creation: the real Umbler answers ChatOrderBy=ClosedAtUTC with 500 (seen 2026-10-23)
+        { ChatState: 'Closed', ChatOrderBy: 'CreatedAtUTC', Order: 'Desc' }),
   };
 }
 

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { channels } from '../../src/db/schema.js';
-import { umblerChat, umblerMessage } from '../fakes/umbler-api.js';
+import { ORG, umblerChat, umblerMessage } from '../fakes/umbler-api.js';
 import { analyze, importWorld, proposals, testAnalysis, type World } from './world.js';
 
 let w: World;
@@ -106,5 +106,22 @@ describe('Analisar (spec 2026-10-21 importar-umbler §6.2)', () => {
     expect(row).toMatchObject({ state: 'failed', error: 'umbler_token', analysis: null });
     expect(JSON.stringify(row)).not.toContain('tok-teste');
     expect(JSON.stringify(logs)).not.toContain('tok-teste');
+  });
+
+  it('uses the active organization when the token also sees an old, deactivated one (the real Umbler answers it with 403)', async () => {
+    const me = w.fake.world.me as { organizations: Array<Record<string, unknown>> };
+    me.organizations.unshift({ ...me.organizations[0], id: 'ORG_ANTIGA', name: 'Escritório antigo', active: false });
+    const row = await analyze(w);
+    expect(row).toMatchObject({ state: 'analyzed', error: null });
+    expect(row.analysis!.organizationId).toBe(ORG);
+    expect(w.fake.calls(/ORG_ANTIGA/)).toEqual([]);
+  });
+
+  it('stops with umbler_orgs, before reading anything else, when the token sees more than one active organization', async () => {
+    const me = w.fake.world.me as { organizations: Array<Record<string, unknown>> };
+    me.organizations.push({ ...me.organizations[0], id: 'ORG_OUTRA', name: 'Outra empresa' });
+    const row = await analyze(w);
+    expect(row).toMatchObject({ state: 'failed', error: 'umbler_orgs', analysis: null });
+    expect(w.fake.requests.map((r) => r.path)).toEqual(['/api/v1/members/me/']);
   });
 });
