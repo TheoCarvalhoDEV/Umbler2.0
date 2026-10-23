@@ -7,7 +7,7 @@ import {
 import { messagePreview } from '../messages/dto.js';
 import { saveMedia } from '../messages/media.js';
 import { formatSignature, stripSignature } from '../messages/signature.js';
-import type { Candidate } from './match.js';
+import { matchCandidates, pairUp, type Candidate } from './match.js';
 import {
   UmblerError, checkStop, isGone, maps, saveProgress, upsertContact, type ImportRun, type Query, type UmblerChat, type UmblerClient,
   type UmblerMessage,
@@ -367,7 +367,17 @@ async function placePage(run: ImportRun, chat: UmblerChat, st: ChatRun, all: Inc
     .where(and(eq(umblerMap.kind, 'message'), inArray(umblerMap.umblerId, items.map((i) => i.umblerId))));
   const mapped = new Map(mappedRows.map((r) => [r.umblerId, r]));
   const fresh = items.filter((i) => !mapped.has(i.umblerId));
-  const match = new Map<string, { row: Candidate; diffMs: number }>(); // the §8 match with the WhatsApp history: next task
+  const comparable = fresh.filter((i) => i.kind !== 'note'); // a note never matches (§8)
+  const scope = { contactId: st.contactId, channelId: st.channelId };
+  const pairs = pairUp(
+    comparable.map((i) => ({ direction: i.direction, kind: i.matchKind, text: i.matchText, at: i.at })),
+    await matchCandidates(ctx.db, scope, comparable, 'ours'),
+  );
+  const match = new Map<string, { row: Candidate; diffMs: number }>();
+  comparable.forEach((i, n) => {
+    const pair = pairs[n];
+    if (pair) match.set(i.umblerId, pair);
+  });
 
   // (2) files: new rows, matched rows without a file (§7.8 "ganho"), and mapped rows whose file was unavailable
   const jobs: FileJob[] = [];
