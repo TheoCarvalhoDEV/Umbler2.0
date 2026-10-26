@@ -105,7 +105,17 @@ export interface ContactNoteDto { id: string; body: string; pinned: boolean; aut
 export interface CustomFieldDto { id: string; name: string; kind: 'text' | 'number' | 'date' | 'cpf' | 'cnpj'; position: number }
 export interface QuickAnswerDto { id: string; name: string; body: string; hasAttachment: boolean; visibility: 'all' | 'owner'; ownerId: string | null }
 export interface TriageMenuDto { enabled: boolean; welcomeText: string; invalidText: string; options: Array<{ key: string; label: string; sectorId: string }> }
-export interface SettingsDto { closingMessage: string; triageMenu: TriageMenuDto; botRunningBehavior: BotRunningBehavior }
+export interface SettingsDto {
+  closingMessage: string; triageMenu: TriageMenuDto; botRunningBehavior: BotRunningBehavior; returningContact: ReturningContactDto;
+}
+/**
+ * Ajustes → Conversas "Cliente que volta": a contact whose last chat was closed at most `days` days ago gets the new chat in
+ * that chat's sector, with its attendant when still active, and skips the chatbot and the triage. A last chat that never left
+ * the default sector without an attendant (nobody routed it) does not count.
+ */
+export interface ReturningContactDto { enabled: boolean; days: number }
+export const RETURNING_CONTACT_DAYS = { min: 1, max: 365 } as const;
+export const DEFAULT_RETURNING_CONTACT: ReturningContactDto = { enabled: true, days: 90 };
 /** Spec 2026-10-20 agendamentos §3. `chatId` = the chat it was scheduled in; `sentChatId` = where it went (a new chat when that one was closed). */
 export interface ScheduledMessageDto { id: string; chatId: string; contact: { id: string; name: string | null; phone: string | null };
   authorId: string; authorName: string; body: string; signature: boolean; attachment: { name: string; mime: string; size: number } | null;

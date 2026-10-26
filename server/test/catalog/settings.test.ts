@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_APPOINTMENT_REMINDERS, DEFAULT_AUTO_RULES } from '@talk/shared';
-import { getAppointmentReminders, getAutoRules, getBotRunningBehavior } from '../../src/catalog/settings.js';
+import { DEFAULT_APPOINTMENT_REMINDERS, DEFAULT_AUTO_RULES, DEFAULT_RETURNING_CONTACT } from '@talk/shared';
+import { getAppointmentReminders, getAutoRules, getBotRunningBehavior, getReturningContact } from '../../src/catalog/settings.js';
 import { settings } from '../../src/db/schema.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics } from '../helpers.js';
 
@@ -61,11 +61,11 @@ it('saves the closing message and triage menu (admin only) and validates the men
 
   const saved = await put(admin, body);
   expect(saved.statusCode).toBe(200);
-  expect(saved.json()).toEqual({ ...body, botRunningBehavior: 'ask' }); // omitted → default
+  expect(saved.json()).toEqual({ ...body, botRunningBehavior: 'ask', returningContact: DEFAULT_RETURNING_CONTACT }); // omitted → default
 
   const got = await app.inject({ method: 'GET', url: '/api/settings', headers: agent });
   expect(got.statusCode).toBe(200);
-  expect(got.json()).toEqual({ ...body, botRunningBehavior: 'ask' });
+  expect(got.json()).toEqual({ ...body, botRunningBehavior: 'ask', returningContact: DEFAULT_RETURNING_CONTACT });
 
   // Stored as spec §4 snake_case, which triage/getTriageMenu reads.
   const [row] = await ctx.db.select().from(settings).where(eq(settings.key, 'triage_menu'));
@@ -180,4 +180,21 @@ it('appointment reminders: the defaults for everyone, saved by an admin only, va
   // a broken stored value reads as the defaults
   await ctx.db.update(settings).set({ value: { reminders: 'sim' } }).where(eq(settings.key, 'appointment_reminders'));
   expect(await getAppointmentReminders(ctx.db)).toEqual(DEFAULT_APPOINTMENT_REMINDERS);
+});
+
+it('"Cliente que volta": on for 90 days by default, saved with PUT /api/settings and validated', async () => {
+  const base = { closingMessage: '', triageMenu: { enabled: false, welcomeText: '', invalidText: '', options: [] } };
+  expect(await getReturningContact(ctx.db)).toEqual({ enabled: true, days: 90 });
+
+  expect((await put(admin, { ...base, returningContact: { enabled: true, days: 0 } })).statusCode).toBe(400);
+  expect((await put(admin, { ...base, returningContact: { enabled: true, days: 366 } })).statusCode).toBe(400);
+  expect((await put(agent, { ...base, returningContact: { enabled: false, days: 30 } })).statusCode).toBe(403);
+
+  const saved = await put(admin, { ...base, returningContact: { enabled: false, days: 30 } });
+  expect(saved.statusCode).toBe(200);
+  expect(saved.json().returningContact).toEqual({ enabled: false, days: 30 });
+  expect(await getReturningContact(ctx.db)).toEqual({ enabled: false, days: 30 });
+
+  await ctx.db.update(settings).set({ value: { enabled: 'sim' } }).where(eq(settings.key, 'returning_contact'));
+  expect(await getReturningContact(ctx.db)).toEqual(DEFAULT_RETURNING_CONTACT); // invalid stored value reads as the default
 });

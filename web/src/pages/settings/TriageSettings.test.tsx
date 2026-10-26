@@ -18,6 +18,7 @@ const initial: SettingsDto = {
     options: [{ key: '1', label: 'Boletos', sectorId: 's-fin' }],
   },
   botRunningBehavior: 'ask',
+  returningContact: { enabled: true, days: 90 },
 };
 let settings: SettingsDto;
 const calls: Array<{ method: string; path: string; body: unknown }> = [];
