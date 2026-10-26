@@ -78,9 +78,9 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [signature, setSignature] = useState(readSignaturePref);
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const [botOpen, setBotOpen] = useState(false);
-  const [stickerOpen, setStickerOpen] = useState(false);
+  // one toolbar panel at a time (Emoji, Figurinhas, Chatbot)
+  const [panel, setPanel] = useState<'emoji' | 'sticker' | 'bot' | null>(null);
+  const togglePanel = (p: 'emoji' | 'sticker' | 'bot') => setPanel((open) => (open === p ? null : p));
   const [scheduling, setScheduling] = useState(false);
   const [pickerDismissed, setPickerDismissed] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -89,6 +89,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   // 409 BOT_RUNNING (spec §5.5 "ask"): submit() waits on this dialog, then resends with the choice
   const [botAsk, setBotAsk] = useState<{ runs: BotRunningErrorBody['runs']; resolve: (a: BotAction | null) => void } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null); // the text box and its "/" picker
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recorder = useAudioRecorder();
   const isNote = mode === 'note';
@@ -105,6 +106,26 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
   useEffect(() => {
     setHighlight(0);
   }, [pickerQuery]);
+
+  // a click anywhere else closes the open panel and the "/" picker; Escape closes the panel (as RowMenu does)
+  const pickerOpen = pickerQuery !== null;
+  useEffect(() => {
+    if (!panel && !pickerOpen) return;
+    const outside = (e: Event) => {
+      const target = e.target as Element;
+      if (!target.closest?.('[data-composer-panel]')) setPanel(null);
+      if (!boxRef.current?.contains(target)) setPickerDismissed(true);
+    };
+    const escape = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setPanel(null);
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [panel, pickerOpen]);
 
   function changeText(value: string) {
     setText(value);
@@ -354,7 +375,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
           </div>
         ) : (
           <>
-            <div className="relative">
+            <div ref={boxRef} className="relative">
               {pickerQuery !== null && <QuickAnswerPicker answers={matches} highlight={highlight} onPick={(a) => void pickAnswer(a)} />}
               <textarea
                 ref={textareaRef}
@@ -399,11 +420,11 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
               >
                 <Lightning size={20} />
               </ToolButton>
-              <div className="relative">
-                <ToolButton label="Emoji" onClick={() => setEmojiOpen((o) => !o)}>
+              <div data-composer-panel className="relative">
+                <ToolButton label="Emoji" onClick={() => togglePanel('emoji')}>
                   <Smiley size={20} />
                 </ToolButton>
-                {emojiOpen && (
+                {panel === 'emoji' && (
                   <div className={`${menu} absolute bottom-full left-0 z-10 mb-2 grid w-72 grid-cols-8 gap-1`}>
                     {EMOJIS.map((emoji) => (
                       <button
@@ -413,7 +434,7 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                         className="grid aspect-square place-items-center rounded-full text-lg transition-colors hover:bg-sidebar-hover"
                         onClick={() => {
                           insertAtCursor(emoji);
-                          setEmojiOpen(false);
+                          setPanel(null);
                         }}
                       >
                         {emoji}
@@ -423,24 +444,24 @@ export function Composer({ chatId, replyTo, onClearReply }: ComposerProps) {
                 )}
               </div>
               {!isNote && (
-                <div className="relative">
-                  <ToolButton label="Figurinhas" onClick={() => setStickerOpen((o) => !o)}>
+                <div data-composer-panel className="relative">
+                  <ToolButton label="Figurinhas" onClick={() => togglePanel('sticker')}>
                     <Sticker size={20} />
                   </ToolButton>
-                  {stickerOpen && (
+                  {panel === 'sticker' && (
                     <StickerPanel
                       onPick={(messageId) => void sendSticker({ messageId })}
                       onPickFile={(file) => void sendSticker({ file })}
-                      onClose={() => setStickerOpen(false)}
+                      onClose={() => setPanel(null)}
                     />
                   )}
                 </div>
               )}
-              <div className="relative">
-                <ToolButton label="Chatbot" onClick={() => setBotOpen((o) => !o)}>
+              <div data-composer-panel className="relative">
+                <ToolButton label="Chatbot" onClick={() => togglePanel('bot')}>
                   <Robot size={20} />
                 </ToolButton>
-                {botOpen && <BotPanel chatId={chatId} onClose={() => setBotOpen(false)} />}
+                {panel === 'bot' && <BotPanel chatId={chatId} onClose={() => setPanel(null)} />}
               </div>
               {!isNote && (
                 <label className="ml-1 flex h-10 cursor-pointer items-center gap-2 rounded-full px-3 text-xs font-semibold text-fg-2 transition-colors hover:bg-panel">

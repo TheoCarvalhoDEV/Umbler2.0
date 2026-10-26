@@ -299,6 +299,39 @@ describe('Composer with a running chatbot', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Chatbot' }));
     expect(screen.queryByText('Executar chatbot')).toBeNull();
   });
+
+  it('a click anywhere else or Escape closes the open panel, and opening another panel closes the first', async () => {
+    stubFetch({ 'GET /api/bots/manual': [], 'GET /api/chats/c1/bot-runs': [], 'GET /api/stickers/recent': [] });
+    renderComposer();
+    fireEvent.click(screen.getByRole('button', { name: 'Chatbot' }));
+    expect(await screen.findByText('Executar chatbot')).toBeTruthy();
+    fireEvent.pointerDown(screen.getByText('Executar chatbot')); // inside the panel: stays open
+    expect(screen.getByText('Executar chatbot')).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByText('Executar chatbot')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Emoji' }));
+    expect(screen.getByRole('button', { name: '😀' })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Chatbot' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Chatbot' }));
+    expect(screen.queryByRole('button', { name: '😀' })).toBeNull();
+    expect(await screen.findByText('Executar chatbot')).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByText('Executar chatbot')).toBeNull();
+  });
+
+  it('a click outside the box closes the "/" quick answer picker; a click in the box keeps it', async () => {
+    stubFetch({ 'GET /api/quick-answers': ANSWERS });
+    renderComposer();
+    fireEvent.change(box(), { target: { value: '/' } });
+    expect(await screen.findByRole('option', { name: /Boas-vindas/ })).toBeTruthy();
+    fireEvent.pointerDown(box());
+    expect(screen.getByRole('option', { name: /Boas-vindas/ })).toBeTruthy();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(box().value).toBe('/');
+  });
 });
 
 describe('Composer stickers', () => {
