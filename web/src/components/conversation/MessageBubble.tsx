@@ -13,6 +13,7 @@ import { applyWsEvent } from '../../lib/ws';
 import { EditHistoryDialog, ForwardDialog, MediaViewer } from './MessageDialogs';
 import { MessageMenu, menuItems, type MenuAction } from './MessageMenu';
 import { deletedTag, editedTag, errorMessage, previewText, timeOfDay } from './model';
+import { whatsappText } from './whatsappText';
 
 const chip = 'rounded-full bg-surface px-1.5 text-sm leading-6 shadow-float';
 
@@ -371,7 +372,7 @@ export function MessageBubble({ m, onReply, chatOpen = false, highlighted = fals
         ) : m.kind === 'unsupported' ? (
           <p className={`text-sm italic ${meta}`}>Mensagem não suportada</p>
         ) : (
-          m.body && <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>
+          m.body && <p className="whitespace-pre-wrap break-words text-sm">{whatsappText(m.body)}</p>
         )}
         <div className={`mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-0.5 text-[11px] leading-[14px] tabular-nums ${meta}`}>
           {m.deleted && (

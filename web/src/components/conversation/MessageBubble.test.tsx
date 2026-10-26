@@ -394,3 +394,11 @@ describe('MessageBubble scheduled mark (spec 2026-10-20 agendamentos §3.3)', ()
     expect(renderBubble(base).querySelector('[data-tag="scheduled"]')).toBeNull();
   });
 });
+
+describe('MessageBubble WhatsApp formatting', () => {
+  it('shows *Atendente: Nayara.:* in bold, without the asterisks', () => {
+    const c = renderBubble({ ...base, body: '*Atendente: Nayara.:*\nolá boa tarde' });
+    expect(c.querySelector('strong')?.textContent).toBe('Atendente: Nayara.:');
+    expect(c.textContent).not.toContain('*');
+  });
+});
