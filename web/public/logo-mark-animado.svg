@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="JVO">
+  <!-- Identidade visual JVO, animada: os traços se desenham uma vez (≈2,9 s) e o desenho final fica parado.
+       Mesmos caminhos e cores de web/public/logo-mark.svg. pathLength="1" faz cada traço andar de 0 a 1. -->
+  <style>
+    .draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 0.8s cubic-bezier(.4,0,.2,1) forwards; }
+    .balao   { animation-delay: 0.1s; }
+    .cauda   { animation-delay: 0.45s; }
+    .arco    { animation-delay: 0.85s; animation-duration: 0.4s; }
+    .j       { animation-delay: 1.15s; }
+    .v-esq   { animation-delay: 1.75s; animation-duration: 0.4s; }
+    .v-dir   { animation-delay: 2.15s; animation-duration: 0.45s; }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .draw { animation: none; stroke-dashoffset: 0; }
+    }
+  </style>
+  <rect width="100" height="100" rx="22" fill="#0e302c"/>
+  <g fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path class="draw balao" pathLength="1" stroke="#ffffff" d="M61 72 H37 C25.5 72 17 63.5 17 52 V39 C17 27.5 25.5 19 37 19 H63 C74.5 19 83 27.5 83 39 V51"/>
+    <path class="draw cauda" pathLength="1" stroke="#ffffff" d="M28 70.5 L27.5 82 L44 72"/>
+    <path class="draw arco" pathLength="1" stroke="#4ecdb1" d="M83 51 V52 C83 63.5 74.5 72 63 72 H61"/>
+  </g>
+  <g fill="none" stroke-width="7.5" stroke-linejoin="round">
+    <path class="draw j" pathLength="1" stroke="#ffffff" stroke-linecap="butt" d="M37 32.5 V49 C37 54.5 34 57.5 29.5 57.5 C26.5 57.5 24.5 56 23.5 53.5"/>
+    <path class="draw v-esq" pathLength="1" stroke="#ffffff" stroke-linecap="butt" d="M45.5 32.5 L55.5 56"/>
+    <path class="draw v-dir" pathLength="1" stroke="#4ecdb1" stroke-linecap="round" d="M55.5 56 L66.5 33"/>
+  </g>
+</svg>

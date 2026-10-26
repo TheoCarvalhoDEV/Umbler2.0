@@ -24,7 +24,7 @@ export default function Login() {
     <main className="flex min-h-dvh flex-wrap gap-3 bg-ground p-3">
       {/* The rail colour in both themes: the gold logo is drawn for a dark background. */}
       <section className="flex max-w-full min-h-[300px] flex-[1_1_560px] flex-col justify-between gap-10 rounded-card bg-rail px-8 py-10 text-rail-fg md:px-12">
-        <img src="/logo-mark.svg" alt="" className="size-10" />
+        <img src="/logo-mark-animado.svg" alt="" className="size-10" />
         <div className="flex max-w-[460px] flex-col gap-3">
           <p className="text-[13px] leading-[18px] font-semibold text-rail-badge">Atendimento</p>
           <p className="text-[30px] leading-[38px] font-bold tracking-[-0.02em] text-nav-on">Todas as conversas do escritório em um só lugar.</p>
