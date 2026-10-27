@@ -219,7 +219,7 @@ function Analysis({ imp, analysis: a, onStart, pending, tokenConfigured, error }
               description={`${m.email} · ${m.active ? 'ativo' : 'inativo'} no Umbler · ${n(m.chats)} conversas`}
               control={
                 <select id={id} value={mapping.members[m.id]} onChange={(e) => set('members', m.id, e.target.value)} className={`${fieldSelect} w-64`}>
-                  {users.data.map((u) => (
+                  {users.data.filter((u) => !u.deleted).map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.active ? u.name : `${u.name} (inativo)`}
                     </option>

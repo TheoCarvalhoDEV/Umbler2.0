@@ -426,7 +426,8 @@ async function importFields(tx: Tx, list: UmblerFieldDef[], c: UmblerProgress) {
 
 /** §7.2: link to the chosen user (nothing in it changes), or create an inactive agent nobody can log in as. */
 async function importMembers(tx: Tx, list: UmblerAnalysisDto['members'], mapping: Record<string, string>, c: UmblerProgress) {
-  const rows = await tx.select({ id: users.id, email: users.email, active: users.active }).from(users);
+  // a deleted attendant is not linked: "create" makes a new inactive account even with the same e-mail
+  const rows = await tx.select({ id: users.id, email: users.email, active: users.active }).from(users).where(isNull(users.deletedAt));
   const byId = new Map(rows.map((u) => [u.id, u]));
   const byEmail = new Map(rows.map((u) => [fold(u.email), u]));
   const map: UmblerCatalogMaps['members'] = {};

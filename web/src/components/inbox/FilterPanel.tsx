@@ -39,7 +39,7 @@ export function FilterPanel({ value, onChange, sectors, users, tags }: Props) {
         <select id={ids.owner} value={value.ownerId} onChange={(e) => set({ ownerId: e.target.value })} className={fieldSelect}>
           <option value="">Todos</option>
           <option value={NO_OWNER}>Sem atendente</option>
-          {users.map((u) => (
+          {users.filter((u) => !u.deleted).map((u) => (
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}
         </select>

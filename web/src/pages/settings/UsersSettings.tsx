@@ -57,6 +57,16 @@ export function UsersSettings() {
     save.mutate(() => send(`/api/users/${u.id}`, 'PATCH', { active: !u.active }));
   }
 
+  async function remove(u: UserDto) {
+    const ok = await confirmDialog({
+      title: `Excluir ${u.name}?`,
+      body: 'A pessoa sai da lista e não entra mais no sistema. As conversas abertas dela voltam para a fila do setor. O nome continua nas mensagens, notas e compromissos que ela fez. Não dá para desfazer.',
+      confirmLabel: 'Excluir atendente',
+      cancelLabel: 'Manter',
+    });
+    if (ok) save.mutate(() => send(`/api/users/${u.id}`, 'DELETE'));
+  }
+
   // no empty state: the admin looking at it is always on the list
   return (
     <>
@@ -86,7 +96,7 @@ export function UsersSettings() {
       {!target && <ErrorText error={save.error} />}
 
       <ul className="mt-5">
-        {users.data.map((u) => {
+        {users.data.filter((u) => !u.deleted).map((u) => {
           const sectorsText = u.sectorIds.map((id) => sectorName.get(id)).filter(Boolean).join(', ');
           return (
             <ListRow
@@ -113,6 +123,7 @@ export function UsersSettings() {
                       danger: u.active,
                       disabled: save.isPending,
                     },
+                    u.id !== me.id && { label: 'Excluir', onSelect: () => void remove(u), danger: true, disabled: save.isPending },
                   ]}
                 />
               }

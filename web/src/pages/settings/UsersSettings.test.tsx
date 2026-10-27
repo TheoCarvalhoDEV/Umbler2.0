@@ -17,12 +17,13 @@ HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
 const me: Me = { id: 'u-admin', name: 'Admin Teste', email: 'admin@teste.local', role: 'admin', signature: null, sectorIds: [], seeAllSectors: false, avatarUrl: null };
 const sectors: SectorDto[] = [{ id: 's-fin', name: 'Financeiro', position: 0, isDefault: true }];
 const user = (over: Partial<UserDto>): UserDto => ({
-  id: 'u', name: 'U', email: 'u@teste.local', role: 'agent', signature: null, active: true, sectorIds: [], avatarUrl: null, ...over,
+  id: 'u', name: 'U', email: 'u@teste.local', role: 'agent', signature: null, active: true, deleted: false, sectorIds: [], avatarUrl: null, ...over,
 });
 const users: UserDto[] = [
   user({ id: 'u-admin', name: 'Admin Teste', email: 'admin@teste.local', role: 'admin' }),
   user({ id: 'u-ana', name: 'Ana Financeiro', email: 'ana@teste.local', sectorIds: ['s-fin'] }),
   user({ id: 'u-old', name: 'Carlos Inativo', email: 'carlos@teste.local', active: false }),
+  user({ id: 'u-gone', name: 'Dora Excluída', email: 'dora@teste.local', active: false, deleted: true }),
 ];
 
 const calls: Array<{ method: string; path: string; body: unknown }> = [];
@@ -106,5 +107,25 @@ describe('Settings › Atendentes', () => {
       body: { name: 'Ana Souza', email: 'ana@teste.local', role: 'agent', signature: null, sectorIds: ['s-fin'] },
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('a deleted attendant is not on the list', () => {
+    expect(screen.queryByText('Dora Excluída')).toBeNull();
+  });
+
+  it('asks before deleting (never yourself) and sends DELETE', async () => {
+    openMenu('Admin Teste');
+    expect(within(row('Admin Teste')).queryByRole('button', { name: 'Excluir' })).toBeNull();
+
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    openMenu('Ana Financeiro');
+    fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmDialog).mock.calls[0]![0]).toMatchObject({ title: 'Excluir Ana Financeiro?', confirmLabel: 'Excluir atendente' });
+    expect(mutations()).toHaveLength(0);
+
+    openMenu('Ana Financeiro');
+    fireEvent.click(screen.getByRole('button', { name: 'Excluir' }));
+    await waitFor(() => expect(mutations()).toEqual([{ method: 'DELETE', path: '/api/users/u-ana', body: undefined }]));
   });
 });

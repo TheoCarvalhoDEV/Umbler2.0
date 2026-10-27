@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, type SQL } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { UserDto } from '@talk/shared';
@@ -6,7 +6,7 @@ import { hashPassword } from '../auth/password.js';
 import { deleteUserSessions } from '../auth/sessions.js';
 import type { AppCtx } from '../ctx.js';
 import type { Db, Tx } from '../db/client.js';
-import { sectors, userSectors, users } from '../db/schema.js';
+import { chatEvents, chats, sectors, userSectors, users } from '../db/schema.js';
 import { sendAvatarFile, userAvatarUrl } from '../media/avatar-files.js';
 import type { AuthUser } from '../inbox/visibility.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/http-error.js';
@@ -39,6 +39,7 @@ async function listUserDtos(db: Db, where?: SQL): Promise<UserDto[]> {
     role: u.role,
     signature: u.signature,
     active: u.active,
+    deleted: u.deletedAt !== null,
     sectorIds: links.filter((l) => l.userId === u.id).map((l) => l.sectorId),
     avatarUrl: userAvatarUrl(u),
   }));
@@ -67,8 +68,8 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
   const killSessions = p.active === false || passwordHash !== undefined;
   let scopeChanged = false;
   await ctx.db.transaction(async (tx) => {
-    const [current] = await tx.select({ role: users.role }).from(users).where(eq(users.id, id));
-    if (!current) throw notFound('Usuário não encontrado');
+    const [current] = await tx.select({ role: users.role }).from(users).where(and(eq(users.id, id), isNull(users.deletedAt)));
+    if (!current) throw notFound('Usuário não encontrado'); // a deleted attendant is never changed again
     const set = {
       name: p.name,
       email: p.email,
@@ -79,7 +80,7 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
       passwordHash,
       signature: p.signature === undefined ? undefined : p.signature || null,
     };
-    if (p.email && (await tx.$count(users, and(eq(users.email, p.email), ne(users.id, id))))) {
+    if (p.email && (await tx.$count(users, and(eq(users.email, p.email), ne(users.id, id), isNull(users.deletedAt))))) {
       throw conflict('E-mail já cadastrado');
     }
     if (Object.values(set).some((v) => v !== undefined)) await tx.update(users).set(set).where(eq(users.id, id));
@@ -96,6 +97,42 @@ async function updateUser(ctx: AppCtx, actor: AuthUser, id: string, p: UserPatch
   });
   // A live socket keeps the role/sectors it had at connect time: drop it so the client reconnects fresh.
   if (killSessions || scopeChanged) ctx.hub.disconnectUser(id);
+  return getUserDto(ctx.db, id);
+}
+
+/**
+ * "Excluir atendente": out of the team for good (no sign-in, no sessions), the e-mail free for a new account. Their open
+ * chats go back to the sector queue, each with a "transferred" event by the admin, as a manual transfer to "Sem atendente".
+ */
+async function deleteUser(ctx: AppCtx, actor: AuthUser, id: string): Promise<UserDto> {
+  if (id === actor.id) throw badRequest('Você não pode excluir o próprio usuário');
+  const moved = await ctx.db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(users)
+      .set({ active: false, deletedAt: new Date() })
+      .where(and(eq(users.id, id), isNull(users.deletedAt)))
+      .returning({ id: users.id });
+    if (!row) throw notFound('Usuário não encontrado');
+    const open = await tx
+      .update(chats)
+      .set({ ownerId: null, private: false })
+      .where(and(eq(chats.ownerId, id), eq(chats.state, 'open')))
+      .returning({ id: chats.id, sectorId: chats.sectorId });
+    if (open.length) {
+      await tx.insert(chatEvents).values(
+        open.map((c) => ({
+          chatId: c.id,
+          kind: 'transferred' as const,
+          data: { fromSectorId: c.sectorId, toSectorId: c.sectorId, fromOwnerId: id, toOwnerId: null },
+          authorId: actor.id,
+        })),
+      );
+    }
+    await deleteUserSessions(tx, id);
+    return open.map((c) => c.id);
+  });
+  ctx.hub.disconnectUser(id);
+  for (const chatId of moved) await ctx.hub.publishChat(chatId);
   return getUserDto(ctx.db, id);
 }
 
@@ -141,10 +178,10 @@ export function registerUserRoutes(app: FastifyInstance, ctx: AppCtx): void {
     return updateUser(ctx, req.user, id, Patch.parse(req.body));
   });
 
-  // Soft delete: users stay referenced by messages, notes and events.
+  // "Excluir atendente": a soft delete, because messages, notes, events and appointments keep pointing at the user.
   app.delete('/api/users/:id', async (req) => {
     if (req.user.role !== 'admin') throw forbidden();
     const { id } = IdParams.parse(req.params);
-    return updateUser(ctx, req.user, id, { active: false });
+    return deleteUser(ctx, req.user, id);
   });
 }

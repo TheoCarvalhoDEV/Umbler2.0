@@ -1,6 +1,6 @@
 import { statfs } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, isNull } from 'drizzle-orm';
 import { UMBLER_IMPORT_PHASES, emptyUmblerCounts, type UmblerAnalysisDto, type UmblerImportPhase, type UmblerProgressDto } from '@talk/shared';
 import { errorTag } from '../bots/scheduler.js';
 import type { AppCtx } from '../ctx.js';
@@ -126,7 +126,7 @@ export async function analyzeUmbler(ctx: AppCtx, deps: JobDeps, row: UmblerImpor
   const tested = candidate ? await readTest(c, ref.id, candidate) : 'not_done';
 
   const ourSectors = await ctx.db.select({ id: sectors.id, name: sectors.name }).from(sectors);
-  const ourUsers = await ctx.db.select({ id: users.id, email: users.email }).from(users);
+  const ourUsers = await ctx.db.select({ id: users.id, email: users.email }).from(users).where(isNull(users.deletedAt)); // a deleted attendant is never proposed
   const ourChannels = await ctx.db
     .select({ id: channels.id, phone: channels.phone, status: channels.status })
     .from(channels)
