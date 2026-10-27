@@ -33,7 +33,7 @@ const app = await buildApp(ctx, {
   // so trust the private ranges instead: a public peer can never spoof X-Forwarded-For.
   trustProxy: 'loopback,linklocal,uniquelocal',
   logger: {
-    level: 'info',
+    level: process.env.LOG_LEVEL || 'info', // scripts/servidor.mjs keeps only warnings and errors
     serializers: {
       // the webhook secret sits in the URL path; never write it to the request log
       req: (r) => ({ method: r.method, url: r.url?.replace(/^\/webhooks\/evolution\/[^/?]+/, '/webhooks/evolution/***') }),

@@ -159,6 +159,10 @@ Para restaurar no mesmo computador ou num computador novo (Git Bash, na raiz do 
 4. Copie `E:/TalkBackup/arquivos/` para `data/dev-media/`.
 5. Rode `npm run dev:up` de novo e suba o servidor. O canal volta conectado. Se pedir o QR, leia de novo no celular.
 
+## Servidor do escritório (Windows)
+
+Um computador do escritório ligado 24 horas, com acesso pela internet por túnel do Cloudflare: [docs/SERVIDOR-WINDOWS.md](docs/SERVIDOR-WINDOWS.md). Resumo: `npm run servidor`.
+
 ## Testes
 
 ```bash
