@@ -15,6 +15,7 @@
     "dev:down": "docker compose -f docker-compose.dev.yml --env-file .env.dev down",
     "dev": "node scripts/dev.mjs",
     "dev:admin": "npm run dev:admin -w server --",
+    "backup": "node scripts/backup-local.mjs",
     "build": "npm run build -w web",
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces"
