@@ -39,6 +39,9 @@
   --color-success: #5cc98f;
   --color-success-soft: #132f20;
   --color-online: #34d399;
+  /* Relatórios: the two series, checked with the dataviz validator against this surface (light pair below). */
+  --color-chart-1: #20a88f;
+  --color-chart-2: #d95926;
   --color-bubble-in: #1b2724;
   --color-bubble-out: #134a41;
   --color-bubble-meta: #a9cfc6; /* time and ticks on a sent bubble */
@@ -122,6 +125,8 @@
   --color-success: #146c3a;
   --color-success-soft: #e6f4ec;
   --color-online: #10b981;
+  --color-chart-1: #0d9488;
+  --color-chart-2: #eb6834;
   --color-bubble-in: #ffffff;
   --color-bubble-out: #d5f0e9;
   --color-bubble-meta: #2d4a44;

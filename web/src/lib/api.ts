@@ -37,6 +37,7 @@ import type {
   ReminderInput,
   SaveVersionInput,
   ScheduledMessageDto,
+  ReportDto,
   ScheduledTab,
   SectorDto,
   SettingsDto,
@@ -396,6 +397,8 @@ export const api = Object.assign(call, {
     start: (id: string, mapping: UmblerMappingDto) => request<UmblerImportDto>('POST', `/api/umbler-import/${enc(id)}/start`, { mapping }),
     resume: (id: string) => request<UmblerImportDto>('POST', `/api/umbler-import/${enc(id)}/resume`),
   },
+  /** Relatórios (admin): office dates, both included. */
+  report: (from: string, to: string) => request<ReportDto>('GET', `/api/reports?from=${enc(from)}&to=${enc(to)}`),
 });
 
 /** React Query keys. Everything chat-related lives under ['chats'] so one invalidation refreshes it all. */
@@ -436,6 +439,8 @@ export const qk = {
   appointmentList: (q: AppointmentListQuery) => ['chats', 'appointments', 'list', q] as const,
   appointmentSummary: (f: AppointmentFiltersQuery) => ['chats', 'appointments', 'summary', f] as const,
   appointmentReminders: ['settings', 'appointment-reminders'] as const,
+  /** Under ['chats'] so the WS reconnect invalidation refreshes it too. */
+  report: (from: string, to: string) => ['chats', 'report', from, to] as const,
   channels: ['channels'] as const,
   bots: ['bots'] as const,
   bot: (id: string) => ['bots', 'detail', id] as const,

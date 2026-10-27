@@ -9,6 +9,7 @@ import { ContactsPage } from './pages/Contacts';
 import ConversationPage from './pages/Conversation';
 import { Inbox } from './pages/Inbox';
 import Login from './pages/Login';
+import { ReportsPage } from './pages/Reports';
 import { ScheduledMessagesPage } from './pages/ScheduledMessages';
 import { SettingsPage } from './pages/settings/SettingsPage';
 
@@ -63,6 +64,7 @@ export const routes: RouteObject[] = [
       { path: 'contacts', element: <ContactsPage /> },
       { path: 'contacts/new', element: <ContactNewPage /> },
       { path: 'agendamentos', element: <ScheduledMessagesPage /> },
+      { path: 'relatorios', element: <ReportsPage /> },
       { path: 'configuracoes/:section?', element: <SettingsPage /> },
       { path: '*', element: <NotFound /> },
     ],

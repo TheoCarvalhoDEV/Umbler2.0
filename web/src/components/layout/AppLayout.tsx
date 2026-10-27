@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
-import { CalendarDotsIcon, ChatIcon, RobotIcon, SignOutIcon, SlidersIcon, UsersIcon, type Icon } from '@phosphor-icons/react';
+import { CalendarDotsIcon, ChartBarIcon, ChatIcon, RobotIcon, SignOutIcon, SlidersIcon, UsersIcon, type Icon } from '@phosphor-icons/react';
 import { useUnreadChats } from '../../pages/Inbox';
 import { useCurrentUser, useLogout } from '../../lib/auth';
 import { Avatar } from '../Avatar';
@@ -109,7 +109,7 @@ function UserMenu() {
   );
 }
 
-/** Conversas (with the unread badge), Agenda (the Agendamentos page), Contatos, Chatbot (admins: the settings page is admin only) and Ajustes. */
+/** Conversas (with the unread badge), Agenda (the Agendamentos page), Contatos, Relatórios and Chatbot (admins only) and Ajustes. */
 function MainNav() {
   const me = useCurrentUser();
   const unread = useUnreadChats('inbox');
@@ -119,6 +119,7 @@ function MainNav() {
       <NavItem to="/chats" label="Conversas" icon={ChatIcon} badge={unread} />
       <NavItem to="/agendamentos" label="Agenda" icon={CalendarDotsIcon} />
       <NavItem to="/contacts" label="Contatos" icon={UsersIcon} />
+      {me.role === 'admin' && <NavItem to="/relatorios" label="Relatórios" icon={ChartBarIcon} />}
       {me.role === 'admin' && <NavItem to="/configuracoes/chatbots" label="Chatbot" icon={RobotIcon} />}
       <NavItem to="/configuracoes" label="Ajustes" icon={SlidersIcon} active={onBots ? false : undefined} />
     </>
