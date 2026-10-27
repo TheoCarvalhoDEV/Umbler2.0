@@ -131,6 +131,33 @@ export interface AppointmentFiltersQuery { authorId?: string; sectorId?: string;
 export interface AppointmentListQuery extends AppointmentFiltersQuery {
   tab?: AppointmentTab; from?: string; to?: string; status?: AppointmentStatus; preset?: AppointmentPreset }
 export interface AppointmentSummaryDto { today: number; tomorrow: number; toConfirm: number; toMark: number }
+/**
+ * Relatórios (admins): GET /api/reports?from=&to=, office dates, both included. Phone-history chats stay out. Times are seconds,
+ * medians, and count only replies by a person in the system (not the chatbot, triage or the office phone); null = nothing to measure.
+ */
+export const REPORT_MAX_DAYS = 366;
+export interface ReportDto {
+  from: string;
+  to: string;
+  totals: {
+    newChats: number; closedChats: number; openNow: number; waitingNow: number;
+    /** From the client's first message to the first reply, in chats the client started in the period. */
+    firstResponseSec: number | null;
+    /** Share of those first replies within 15 minutes, 0–100. */
+    within15Pct: number | null;
+    /** From each client message still unanswered to the reply, along the whole conversation. */
+    replySec: number | null;
+    /** Chats where a chatbot ran in the period. */
+    botChats: number;
+  };
+  days: Array<{ day: string; newChats: number; closedChats: number }>;
+  /** Every sector (by position); a chat counts in its current sector. */
+  sectors: Array<{ id: string; name: string; newChats: number; closedChats: number; firstResponseSec: number | null }>;
+  /** Whoever worked in the period, deleted attendants included; chats = chats they wrote in, closedChats = chats they finalized. */
+  agents: Array<{ id: string; name: string; chats: number; closedChats: number; messages: number; firstResponseSec: number | null }>;
+  /** Client messages received: [weekday, 0 = Monday … 6 = Sunday][office hour 0–23]. */
+  peak: number[][];
+}
 export type WsEvent =
   | { type: 'chat.updated'; chat: ChatListItem }
   | { type: 'chat.removed'; chatId: string }
