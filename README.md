@@ -133,6 +133,36 @@ Abra **http://localhost:5173** e entre com o admin. Primeiros passos:
 
 Para desligar: `Ctrl+C` no `npm run dev` e `npm run dev:down` (os dados ficam no volume do Docker). Para apagar tudo: `docker compose -f docker-compose.dev.yml --env-file .env.dev down -v`.
 
+## Backup e mudança de computador
+
+Vale para a instalação acima (`docker-compose.dev.yml`). Em produção, veja [docs/IMPLANTACAO.md](docs/IMPLANTACAO.md).
+
+```bash
+npm run backup -- E:/TalkBackup   # use uma pasta em OUTRO disco
+```
+
+O backup grava na pasta:
+- `banco/banco-AAAA-MM-DD.sql`: os bancos `talk` e `evolution`, ou seja, conversas, setores, atendentes, etiquetas, notas, chatbots, ajustes e a sessão do WhatsApp. Ficam os 7 últimos.
+- `arquivos/`: fotos, áudios e documentos. Só copia o que é novo ou mudou, e nunca apaga.
+- `.env.dev`: as senhas. Sem elas, o banco restaurado não abre. Quem lê a pasta lê tudo, então trate a pasta como o próprio `.env.dev`.
+
+Para restaurar no mesmo computador ou num computador novo (Git Bash, na raiz do projeto, com `npm install` feito):
+
+1. **Desligue o sistema no computador antigo**: pare o servidor e rode `npm run dev:down`. O WhatsApp não pode ficar conectado em dois lugares.
+2. Copie o `.env.dev` do backup para a raiz do projeto.
+3. Restaure o banco. O servidor do app tem que estar parado, porque com conexões abertas o `DROP DATABASE` do dump falha:
+   ```bash
+   npm run dev:up
+   docker compose -f docker-compose.dev.yml --env-file .env.dev stop evolution
+   docker exec -i talk-dev-postgres-1 psql -q -U postgres -d postgres < E:/TalkBackup/banco/banco-AAAA-MM-DD.sql > /dev/null
+   ```
+4. Copie `E:/TalkBackup/arquivos/` para `data/dev-media/`.
+5. Rode `npm run dev:up` de novo e suba o servidor. O canal volta conectado. Se pedir o QR, leia de novo no celular.
+
+## Servidor do escritório (Windows)
+
+Um computador do escritório ligado 24 horas, com acesso pela internet por túnel do Cloudflare: [docs/SERVIDOR-WINDOWS.md](docs/SERVIDOR-WINDOWS.md). Resumo: `npm run servidor`.
+
 ## Testes
 
 ```bash
