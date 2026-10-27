@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getChannelQr } from '../../src/channels/service.js';
-import { channels, chats, contacts, messageEdits, messages } from '../../src/db/schema.js';
+import { channels, chats, contacts, messageEdits, messages, settings, users } from '../../src/db/schema.js';
 import { handleInbound, MEDIA_UNAVAILABLE, type IngestHooks } from '../../src/messages/ingest.js';
 import { parseEvolutionWebhook } from '../../src/whatsapp/parse.js';
 import type { InboundEvent } from '../../src/whatsapp/types.js';
@@ -526,5 +526,82 @@ describe('handleInbound: office reactions, deletes and edits', () => {
   it('stores the content hash of a downloaded file (dedupes recent stickers)', async () => {
     await ingest(msg({ kind: 'sticker', body: null, hasMedia: true, mediaMime: 'image/webp' }));
     expect((await allMessages())[0]!.mediaSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('handleInbound: a contact who comes back (Ajustes → Conversas "Cliente que volta")', () => {
+  const DAY = 86_400_000;
+  const withBotHook = () => {
+    const calls: string[] = [];
+    const hooks: IngestHooks = {
+      ...triage.hooks,
+      startChannelBot: async (_ctx, chat) => {
+        calls.push(`bot:${chat.id}`);
+        return false;
+      },
+    };
+    return { calls, hooks };
+  };
+  /** The contact's first chat, served in Financeiro by Ana, closed `daysAgo` days ago. */
+  async function servedAndClosed(daysAgo: number, over: Partial<typeof chats.$inferInsert> = {}) {
+    await ingest(msg({ body: 'Olá' }));
+    const [first] = await allChats();
+    await ctx.db
+      .update(chats)
+      .set({ sectorId: seed.sectorA, ownerId: seed.agentA.id, state: 'closed', closedAt: new Date(Date.now() - daysAgo * DAY), waiting: false, unread: 0, ...over })
+      .where(eq(chats.id, first!.id));
+    return first!;
+  }
+  const secondChat = async (firstId: string) => (await allChats()).find((c) => c.id !== firstId)!;
+
+  it('goes straight to the sector and attendant of the last chat, without the chatbot or the triage', async () => {
+    const first = await servedAndClosed(10);
+    const bot = withBotHook();
+    await handleInbound(ctx, [msg({ body: 'voltei' })], bot.hooks);
+
+    const second = await secondChat(first.id);
+    expect(second).toMatchObject({ state: 'open', sectorId: seed.sectorA, ownerId: seed.agentA.id, waiting: true, triagePending: false });
+    expect(bot.calls).toEqual([]);
+    expect(triage.calls).toEqual([`start:${first.id}`]); // only the first chat had the triage
+    const assigned = (await eventsOf(ctx, second.id)).filter((e) => e.kind === 'assigned');
+    expect(assigned.map((e) => e.data)).toEqual([{ ownerId: seed.agentA.id, previousOwnerId: null }]);
+  });
+
+  it('an attendant who is no longer active: the chat waits in that sector, without anyone', async () => {
+    const first = await servedAndClosed(10);
+    await ctx.db.update(users).set({ active: false }).where(eq(users.id, seed.agentA.id));
+    await ingest(msg({ body: 'voltei' }));
+
+    expect(await secondChat(first.id)).toMatchObject({ sectorId: seed.sectorA, ownerId: null });
+    expect(triage.calls).toEqual([`start:${first.id}`]);
+  });
+
+  it('runs the usual flow when the last chat closed longer ago than the window', async () => {
+    const first = await servedAndClosed(91); // default window: 90 days
+    await ingest(msg({ body: 'voltei' }));
+
+    const second = await secondChat(first.id);
+    expect(second).toMatchObject({ sectorId: seed.defaultSector, ownerId: null });
+    expect(triage.calls).toEqual([`start:${first.id}`, `start:${second.id}`]);
+  });
+
+  it('runs the usual flow when the rule is off', async () => {
+    const first = await servedAndClosed(10);
+    const value = { enabled: false, days: 90 };
+    await ctx.db.insert(settings).values({ key: 'returning_contact', value }).onConflictDoUpdate({ target: settings.key, set: { value } });
+    await ingest(msg({ body: 'voltei' }));
+
+    const second = await secondChat(first.id);
+    expect(second).toMatchObject({ sectorId: seed.defaultSector, ownerId: null });
+    expect(triage.calls).toEqual([`start:${first.id}`, `start:${second.id}`]);
+  });
+
+  it('ignores the chats imported from the phone history', async () => {
+    const first = await servedAndClosed(10, { history: true });
+    await ingest(msg({ body: 'voltei' }));
+
+    const second = await secondChat(first.id);
+    expect(second).toMatchObject({ sectorId: seed.defaultSector, ownerId: null });
+    expect(triage.calls).toEqual([`start:${first.id}`, `start:${second.id}`]);
   });
 });

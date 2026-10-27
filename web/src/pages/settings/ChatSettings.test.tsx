@@ -9,6 +9,7 @@ const initial: SettingsDto = {
   closingMessage: 'Obrigado pelo contato!',
   triageMenu: { enabled: false, welcomeText: '', invalidText: '', options: [] },
   botRunningBehavior: 'ask',
+  returningContact: { enabled: true, days: 90 },
 };
 let settings: SettingsDto;
 const calls: Array<{ method: string; path: string; body: unknown }> = [];
@@ -75,4 +76,21 @@ it('Descartar puts the fields back and hides the save bar', async () => {
   expect(text.value).toBe('Obrigado pelo contato!');
   expect(screen.queryByRole('button', { name: 'Salvar' })).toBeNull();
   expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+});
+
+it('"Cliente que volta": turns the rule off and changes the days, saved with the other settings', async () => {
+  renderChatSettings();
+
+  const rule = await screen.findByRole('switch', { name: 'Cliente que volta vai direto para o último atendimento' });
+  expect(rule.getAttribute('aria-checked')).toBe('true');
+  const days = screen.getByLabelText('Até quantos dias depois de finalizada') as HTMLInputElement;
+  expect(days.value).toBe('90');
+
+  fireEvent.change(days, { target: { value: '30' } });
+  fireEvent.click(rule);
+  expect(days.disabled).toBe(true); // the days only matter while the rule is on
+  fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+
+  await screen.findByText('Alterações salvas.');
+  expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ ...initial, returningContact: { enabled: false, days: 30 } });
 });

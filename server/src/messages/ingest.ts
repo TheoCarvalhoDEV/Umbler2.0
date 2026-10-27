@@ -9,6 +9,7 @@ import { resumeBotsOnReply, startChannelBot } from '../bots/hooks.js';
 import type { InboundReply } from '../bots/registry.js';
 import { addEvent } from '../inbox/events.js';
 import { findOrOpenChat, getDefaultSectorId, type ChatRow } from '../inbox/chats.js';
+import { returningDestination } from '../inbox/returning.js';
 import { handleTriageReply, startTriage } from '../triage/triage.js';
 import { normalizePhoneBR } from '../whatsapp/phone.js';
 import type { InboundEvent } from '../whatsapp/types.js';
@@ -165,7 +166,7 @@ async function applyEdit(ctx: AppCtx, channelId: string, ev: EditEvent): Promise
 
 async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, hooks: Required<IngestHooks>): Promise<void> {
   const inbound = ev.direction === 'in';
-  let stored: { messageId: string; createdAt: Date; chat: ChatRow; created: boolean };
+  let stored: { messageId: string; createdAt: Date; chat: ChatRow; created: boolean; returning: boolean };
   try {
     // Inside this transaction only `tx` may be used: PGlite serializes transactions, so touching ctx.db here would deadlock.
     stored = await ctx.db.transaction(async (tx) => {
@@ -179,11 +180,16 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
       const contact = (await resolveContact(tx, ev))?.contact;
       if (!contact || contact.blocked) throw new Skip();
 
+      const defaultSectorId = await getDefaultSectorId(tx);
+      // ponytail: looked up on every inbound message (one small query), only used when the chat is new
+      const back = inbound ? await returningDestination(tx, contact.id, defaultSectorId, new Date()) : null;
       const { chat, created } = await findOrOpenChat(tx, {
         contactId: contact.id,
         channelId,
-        init: { sectorId: await getDefaultSectorId(tx), ownerId: null, waiting: inbound, triagePending: false, createdBy: null },
+        init: { sectorId: back?.sectorId ?? defaultSectorId, ownerId: back?.ownerId ?? null, waiting: inbound, triagePending: false, createdBy: null },
       });
+      const returning = created && back !== null;
+      if (returning && back.ownerId) await addEvent(tx, chat.id, 'assigned', { ownerId: back.ownerId, previousOwnerId: null }, null);
 
       const replyToId = await replyToIdOf(tx, channelId, ev.replyToExternalId);
 
@@ -224,7 +230,7 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
         .where(eq(chats.id, chat.id))
         .returning();
 
-      return { messageId: inserted.id, createdAt: inserted.createdAt, chat: updated, created };
+      return { messageId: inserted.id, createdAt: inserted.createdAt, chat: updated, created, returning };
     });
   } catch (err) {
     if (err instanceof Skip) return;
@@ -241,7 +247,8 @@ async function ingestMessage(ctx: AppCtx, channelId: string, ev: MessageEvent, h
   if (inbound) {
     if (stored.created) {
       // Spec §5.1: a channel bot has priority; the triage runs only when no bot took the new chat.
-      if (!(await hooks.startChannelBot(ctx, stored.chat))) await hooks.startTriage(ctx, stored.chat);
+      // A contact who comes back went straight to their last sector and attendant ("Cliente que volta"): no bot, no triage.
+      if (!stored.returning && !(await hooks.startChannelBot(ctx, stored.chat))) await hooks.startTriage(ctx, stored.chat);
     } else {
       // What the contact typed: an agent signature in front (a reply sent from another installation of this system) is not part of the answer.
       const answer = ev.body === null ? null : stripSignature(ev.body);

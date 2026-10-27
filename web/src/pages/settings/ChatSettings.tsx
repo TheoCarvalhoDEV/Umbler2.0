@@ -1,9 +1,9 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { BotRunningBehavior, SettingsDto } from '@talk/shared';
+import { RETURNING_CONTACT_DAYS, type BotRunningBehavior, type ReturningContactDto, type SettingsDto } from '@talk/shared';
 import { api, qk } from '../../lib/api';
-import { fieldArea, fieldSelect } from '../../components/ui';
-import { Loading, PageHeader, SaveBar, SettingRow, SettingsSection, send, useSend } from '../../components/settings/common';
+import { field, fieldArea, fieldSelect } from '../../components/ui';
+import { Loading, PageHeader, SaveBar, SettingRow, SettingsSection, Switch, send, useSend } from '../../components/settings/common';
 
 const BEHAVIORS: Array<{ value: BotRunningBehavior; label: string }> = [
   { value: 'ask', label: 'Perguntar' },
@@ -20,26 +20,72 @@ export function ChatSettings() {
 function ChatSettingsForm({ settings }: { settings: SettingsDto }) {
   const [text, setText] = useState(settings.closingMessage);
   const [behavior, setBehavior] = useState<BotRunningBehavior>(settings.botRunningBehavior);
+  const [returning, setReturning] = useState<ReturningContactDto>(settings.returningContact);
   const textId = useId();
   const behaviorId = useId();
+  const daysId = useId();
   const save = useSend(qk.settings);
-  const dirty = text.trim() !== settings.closingMessage.trim() || behavior !== settings.botRunningBehavior;
+  const dirty =
+    text.trim() !== settings.closingMessage.trim() ||
+    behavior !== settings.botRunningBehavior ||
+    returning.enabled !== settings.returningContact.enabled ||
+    returning.days !== settings.returningContact.days;
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    save.mutate(() => send('/api/settings', 'PUT', { ...settings, closingMessage: text.trim(), botRunningBehavior: behavior }));
+    save.mutate(() =>
+      send('/api/settings', 'PUT', { ...settings, closingMessage: text.trim(), botRunningBehavior: behavior, returningContact: returning }),
+    );
   }
 
   function discard() {
     setText(settings.closingMessage);
     setBehavior(settings.botRunningBehavior);
+    setReturning(settings.returningContact);
     save.reset();
   }
 
   return (
     <>
-      <PageHeader title="Conversas" description="Como uma conversa termina e o que acontece quando o atendente escreve com um chatbot rodando." />
+      <PageHeader
+        title="Conversas"
+        description="Para onde vai o cliente que volta, como uma conversa termina e o que acontece quando o atendente escreve com um chatbot rodando."
+      />
       <form onSubmit={submit}>
+        <SettingsSection title="Cliente que volta">
+          <SettingRow
+            label="Cliente que volta vai direto para o último atendimento"
+            description="Quando um cliente escreve de novo depois de a conversa ser finalizada, a conversa nova abre no mesmo setor e com o mesmo atendente da última, sem chatbot e sem triagem. Se o atendente estiver inativo, ela fica no setor, sem atendente. Conversas que ficaram no setor padrão sem atendente não contam."
+            control={
+              <Switch
+                label="Cliente que volta vai direto para o último atendimento"
+                checked={returning.enabled}
+                onChange={(enabled) => setReturning((r) => ({ ...r, enabled }))}
+              />
+            }
+          />
+          <SettingRow
+            label="Até quantos dias depois de finalizada"
+            htmlFor={daysId}
+            description="Depois desse prazo, o cliente passa pelo chatbot ou pela triagem como um cliente novo."
+            control={
+              <div className="w-40 max-w-full">
+                <input
+                  id={daysId}
+                  type="number"
+                  required
+                  step={1}
+                  min={RETURNING_CONTACT_DAYS.min}
+                  max={RETURNING_CONTACT_DAYS.max}
+                  disabled={!returning.enabled}
+                  value={returning.days}
+                  onChange={(e) => setReturning((r) => ({ ...r, days: Number(e.target.value) }))}
+                  className={field}
+                />
+              </div>
+            }
+          />
+        </SettingsSection>
         <SettingsSection title="Encerramento">
           <SettingRow
             wide
