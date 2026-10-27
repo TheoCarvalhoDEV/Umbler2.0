@@ -69,7 +69,7 @@ export const authRoutes: FastifyPluginAsync<{ ctx: AppCtx }> = async (app, { ctx
       const [user] = await ctx.db
         .select({ id: users.id, passwordHash: users.passwordHash, active: users.active })
         .from(users)
-        .where(sql`lower(${users.email}) = ${email}`);
+        .where(sql`lower(${users.email}) = ${email} and ${users.deletedAt} is null`); // a deleted attendant never signs in
       const ok = await verifyPassword(user?.passwordHash ?? (await (dummyHash ??= hashPassword('dummy-password'))), password);
       if (!user || !ok) {
         if (failures.size > 10_000) failures.clear(); // ponytail: memory cap against email rotation

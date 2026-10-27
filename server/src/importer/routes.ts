@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { UmblerAnalysisDto, UmblerImportDto, UmblerImportStatusDto, UmblerMappingDto, UmblerProgressDto } from '@talk/shared';
@@ -67,7 +67,7 @@ async function validMapping(db: Db, a: UmblerAnalysisDto, m: UmblerMappingDto): 
   const ids = async (rows: Promise<Array<{ id: string }>>) => new Set((await rows).map((r) => r.id));
   const ourChannels = await ids(db.select({ id: channels.id }).from(channels));
   const ourSectors = await ids(db.select({ id: sectors.id }).from(sectors));
-  const ourUsers = await ids(db.select({ id: users.id }).from(users));
+  const ourUsers = await ids(db.select({ id: users.id }).from(users).where(isNull(users.deletedAt)));
   return (
     a.channels.every((ch) => m.channels[ch.id] === 'none' || (ch.whatsapp && ourChannels.has(m.channels[ch.id] ?? ''))) &&
     a.sectors.every((s) => m.sectors[s.id] === 'create' || ourSectors.has(m.sectors[s.id] ?? '')) &&

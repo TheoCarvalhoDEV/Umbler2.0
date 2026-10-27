@@ -15,7 +15,10 @@ export async function seedAdmin(db: Db, input: { email: string; name: string; pa
   if (!email.includes('@') || !name) throw badRequest('Informe --email e --name');
   if (input.password.length < 8) throw badRequest('A senha precisa de pelo menos 8 caracteres');
 
-  const [existing] = await db.select({ id: users.id }).from(users).where(sql`lower(${users.email}) = ${email}`);
+  const [existing] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.email}) = ${email} and ${users.deletedAt} is null`);
   if (existing) throw conflict('Já existe um usuário com este e-mail');
 
   const id = randomUUID();

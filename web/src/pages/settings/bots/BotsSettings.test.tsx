@@ -18,7 +18,7 @@ const sectors: SectorDto[] = [
   { id: 's-jur', name: 'Jurídico', position: 2, isDefault: false },
 ];
 const user = (over: Partial<UserDto>): UserDto => ({
-  id: 'u', name: 'U', email: 'u@teste.local', role: 'agent', signature: null, active: true, sectorIds: [], avatarUrl: null, ...over,
+  id: 'u', name: 'U', email: 'u@teste.local', role: 'agent', signature: null, active: true, deleted: false, sectorIds: [], avatarUrl: null, ...over,
 });
 const users: UserDto[] = [
   user({ id: 'u-ana', name: 'Ana Financeiro', sectorIds: ['s-fin'] }),

@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
-import { users } from '../../src/db/schema.js';
+import { and, eq } from 'drizzle-orm';
+import { chatEvents, chats, contacts, users } from '../../src/db/schema.js';
 import { loginAs, makeTestApp, makeTestCtx, seedBasics, TEST_ORIGIN } from '../helpers.js';
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -144,4 +144,52 @@ it('keeps seeAllSectors when the PATCH repeats the current role', async () => {
   expect((await call('PATCH', `/api/users/${uid}`, admin, { role: 'admin', name: 'Outro Adm 2' })).statusCode).toBe(200);
   const [row] = await ctx.db.select().from(users).where(eq(users.id, uid));
   expect(row.seeAllSectors).toBe(true);
+});
+
+describe('Excluir atendente (DELETE /api/users/:id)', () => {
+  it('takes the attendant out of the team: cannot sign in, marked deleted, the name stays for the history', async () => {
+    const spy = vi.spyOn(ctx.hub, 'disconnectUser');
+    const res = await call('DELETE', `/api/users/${seed.agentA.id}`, admin);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: seed.agentA.id, active: false, deleted: true });
+
+    expect((await call('GET', '/api/auth/me', agent)).statusCode).toBe(401);
+    expect(spy).toHaveBeenCalledWith(seed.agentA.id);
+    expect((await login(seed.agentA.email, 'senha-teste-123')).statusCode).not.toBe(200);
+
+    // still listed, so old messages and notes keep the name; the web hides it from the team and the pickers
+    const list = (await call('GET', '/api/users', admin)).json() as Array<{ id: string; name: string; deleted: boolean }>;
+    expect(list.find((u) => u.id === seed.agentA.id)).toMatchObject({ name: seed.agentA.name, deleted: true });
+    expect(list.find((u) => u.id === seed.agentB.id)).toMatchObject({ deleted: false });
+  });
+
+  it('frees the e-mail for a new account, which signs in normally', async () => {
+    await call('DELETE', `/api/users/${seed.agentA.id}`, admin);
+    const created = await call('POST', '/api/users', admin, { name: 'Ana de volta', email: seed.agentA.email, password: 'senha-nova-789' });
+    expect(created.statusCode).toBe(200);
+    const res = await login(seed.agentA.email, 'senha-nova-789');
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ name: 'Ana de volta' });
+  });
+
+  it('sends the open chats of the attendant back to the sector queue, with a transfer event', async () => {
+    const [contact] = await ctx.db.insert(contacts).values({ phone: '5565988887777', name: 'Cliente' }).returning();
+    const [open] = await ctx.db
+      .insert(chats)
+      .values({ contactId: contact!.id, channelId: seed.channelId, sectorId: seed.sectorA, ownerId: seed.agentA.id, state: 'open' })
+      .returning();
+    await call('DELETE', `/api/users/${seed.agentA.id}`, admin);
+
+    const [after] = await ctx.db.select().from(chats).where(eq(chats.id, open!.id));
+    expect(after).toMatchObject({ ownerId: null, sectorId: seed.sectorA, state: 'open' });
+    const [ev] = await ctx.db.select().from(chatEvents).where(and(eq(chatEvents.chatId, open!.id), eq(chatEvents.kind, 'transferred')));
+    expect(ev).toMatchObject({ authorId: seed.admin.id, data: { fromOwnerId: seed.agentA.id, toOwnerId: null, toSectorId: seed.sectorA } });
+  });
+
+  it('refuses to delete yourself, and a deleted attendant can no longer be changed', async () => {
+    expect((await call('DELETE', `/api/users/${seed.admin.id}`, admin)).statusCode).toBe(400);
+    await call('DELETE', `/api/users/${seed.agentA.id}`, admin);
+    expect((await call('DELETE', `/api/users/${seed.agentA.id}`, admin)).statusCode).toBe(404);
+    expect((await call('PATCH', `/api/users/${seed.agentA.id}`, admin, { active: true })).statusCode).toBe(404);
+  });
 });

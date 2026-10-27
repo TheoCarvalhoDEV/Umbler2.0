@@ -24,20 +24,26 @@ import type {
 const id = () => uuid('id').primaryKey().$defaultFn(() => randomUUID());
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow();
 
-export const users = pgTable('users', {
-  id: id(),
-  name: text('name').notNull(),
-  email: text('email').notNull().unique(),
-  passwordHash: text('password_hash').notNull(),
-  role: text('role').$type<'admin' | 'agent'>().notNull(),
-  signature: text('signature'),
-  active: boolean('active').notNull().default(true),
-  seeAllSectors: boolean('see_all_sectors').notNull().default(false),
-  avatarPath: text('avatar_path'),
-  createdAt: createdAt(),
-  // Spec 2026-10-19 §6: only what the user changed; readPreferences (auth/preferences.ts) fills in the defaults.
-  preferences: jsonb('preferences').$type<Partial<UserPreferences>>().notNull().default({}),
-});
+export const users = pgTable(
+  'users',
+  {
+    id: id(),
+    name: text('name').notNull(),
+    email: text('email').notNull(), // unique among the users not deleted (index below): a deleted attendant frees the e-mail
+    passwordHash: text('password_hash').notNull(),
+    role: text('role').$type<'admin' | 'agent'>().notNull(),
+    signature: text('signature'),
+    active: boolean('active').notNull().default(true),
+    seeAllSectors: boolean('see_all_sectors').notNull().default(false),
+    avatarPath: text('avatar_path'),
+    createdAt: createdAt(),
+    // Spec 2026-10-19 §6: only what the user changed; readPreferences (auth/preferences.ts) fills in the defaults.
+    preferences: jsonb('preferences').$type<Partial<UserPreferences>>().notNull().default({}),
+    // "Excluir atendente": out of the team and of every picker, never signs in again; the row stays so the history keeps the name
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('users_email_active_unique').on(t.email).where(sql`${t.deletedAt} is null`)],
+);
 
 export const sessions = pgTable('sessions', {
   id: text('id').primaryKey(), // SHA-256 hex of the cookie token

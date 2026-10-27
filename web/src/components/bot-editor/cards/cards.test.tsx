@@ -18,8 +18,8 @@ const catalog: EditorCatalog = {
     { id: 's-jur', name: 'Jurídico', position: 2, isDefault: false },
   ],
   users: [
-    { id: 'u-ana', name: 'Ana Financeiro', email: 'ana@teste.local', role: 'agent', signature: null, active: true, sectorIds: ['s-fin'], avatarUrl: null },
-    { id: 'u-old', name: 'Inativo', email: 'old@teste.local', role: 'agent', signature: null, active: false, sectorIds: [], avatarUrl: null },
+    { id: 'u-ana', name: 'Ana Financeiro', email: 'ana@teste.local', role: 'agent', signature: null, active: true, deleted: false, sectorIds: ['s-fin'], avatarUrl: null },
+    { id: 'u-old', name: 'Inativo', email: 'old@teste.local', role: 'agent', signature: null, active: false, deleted: false, sectorIds: [], avatarUrl: null },
   ],
   tags: [{ id: 't-vip', name: 'VIP', emoji: null, color: 'blue', position: 0 }],
   customFields: [{ id: 'f-cpf', name: 'CPF', kind: 'cpf', position: 0 }],
