@@ -13,7 +13,7 @@ const report = (from: string, to: string): ReportDto => ({
   days: [{ day: from, newChats: 4, closedChats: 2 }],
   sectors: [{ id: 's1', name: 'Financeiro', newChats: 4, closedChats: 2, firstResponseSec: 600 }],
   agents: [{ id: 'u1', name: 'Ana Lima', chats: 2, closedChats: 1, messages: 9, firstResponseSec: null }],
-  peak: Array.from({ length: 7 }, () => Array<number>(24).fill(0)),
+  peak: Array.from({ length: 7 }, (_, d) => Array.from({ length: 24 }, (_, h) => (d === 3 && h === 15 ? 12 : d === 0 && h === 9 ? 5 : 0))),
 });
 
 const urls = () => vi.mocked(fetch).mock.calls.map(([input]) => new URL(String(input), 'http://localhost').search);
@@ -57,7 +57,10 @@ it('opens on the last 7 days and shows the numbers, sectors and attendants', asy
   expect(await screen.findByText('1.234')).toBeTruthy();
   expect(urls()).toEqual(['?from=2026-10-21&to=2026-10-27']);
   expect(screen.getByText('31 min')).toBeTruthy(); // first reply
+  expect(screen.getByText('Metade dos clientes esperou até 31 min pela primeira resposta.')).toBeTruthy();
   expect(screen.getByText('33%')).toBeTruthy();
+  expect(screen.getByRole('meter', { name: 'Respondidos em até 15 min' }).getAttribute('aria-valuenow')).toBe('33');
+  expect(screen.getByText(/O mais cheio: quinta, das 15h às 16h, com 12 mensagens\./)).toBeTruthy();
   const sectors = screen.getByRole('heading', { name: 'Por setor' }).closest('section')!;
   expect(within(sectors).getByRole('rowheader', { name: 'Financeiro' })).toBeTruthy();
   expect(within(sectors).getByText('10 min')).toBeTruthy();
