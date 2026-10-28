@@ -67,18 +67,18 @@ unset SEED_ADMIN_PASSWORD
 
 Saída esperada: `Administrador criado: voce@jvo.adv.br`.
 
-Depois disso, entre em `https://talk.jvo.adv.br` e crie os demais usuários pela tela de Configurações.
+Depois disso, entre em `https://talk.jvo.adv.br` e crie os demais usuários em Ajustes › Atendentes.
 
 ## 4. Conectar o WhatsApp
 
-1. Entre como administrador e vá em **Configurações → Canais**.
+1. Entre como administrador e vá em **Ajustes › Canais**.
 2. Crie o canal. Em **Período do histórico** escolha **3 meses**, **12 meses** ou **Tudo** e clique em **Gerar novo QR / Reconectar**. Enquanto o código é preparado a tela mostra "Gerando QR code…".
 3. No celular do escritório: WhatsApp → **Aparelhos conectados** → **Conectar um aparelho** → leia o QR.
 4. O status muda para **Conectado** e aparece "Importando histórico… N mensagens". O celular manda o histórico recente (cerca de 3,5 meses, mesmo com "12 meses" ou "Tudo") e o sistema copia em segundo plano por até 1 hora. No fim: "Histórico importado: N mensagens, desde DD/MM/AAAA".
 
 Atenção: conectar o mesmo número aqui desconecta o número do Umbler Talk. Faça isso só no dia da virada (seção 10).
 
-Se o canal cair (logout pelo celular, QR expirado), depois de 1 minuto os administradores veem na caixa de entrada a faixa "Canal X desconectado: leia o QR code em Configurações › Canais". Repita os passos 2 e 3. **Importar histórico** copia de novo o que a Evolution já guardou, sem ler o QR.
+Se o canal cair (logout pelo celular, QR expirado), depois de 1 minuto os administradores veem na caixa de entrada a faixa "Canal X desconectado: leia o QR code em Ajustes › Canais". Repita os passos 2 e 3. **Importar histórico** copia de novo o que a Evolution já guardou, sem ler o QR.
 
 ### 4.1 Histórico do WhatsApp e LGPD
 
@@ -88,7 +88,7 @@ A Evolution guarda o histórico que o celular manda a cada leitura de QR (`DATAB
 - a mídia não fica na Evolution: o sistema baixa só a das últimas 3 semanas para `data/media`;
 - esse banco já está no backup diário (`pg_dumpall`, seção 7) e segue as mesmas regras de acesso e retenção do núcleo. O dump fica maior.
 
-Não há tela para apagar o histórico da Evolution. Depois que a importação terminou ("Histórico importado…" em Configurações › Canais), você pode apagar da Evolution as mensagens com mais de N dias. O que já foi importado continua no sistema. Use N de pelo menos **30**: o botão **Baixar** e a recuperação de mensagens perdidas usam as linhas recentes. **Importar histórico** só traz de novo o que ainda estiver na Evolution.
+Não há tela para apagar o histórico da Evolution. Depois que a importação terminou ("Histórico importado…" em Ajustes › Canais), você pode apagar da Evolution as mensagens com mais de N dias. O que já foi importado continua no sistema. Use N de pelo menos **30**: o botão **Baixar** e a recuperação de mensagens perdidas usam as linhas recentes. **Importar histórico** só traz de novo o que ainda estiver na Evolution.
 
 ```bash
 docker compose exec postgres psql -U postgres -d evolution
@@ -316,7 +316,7 @@ curl -fsS https://talk.jvo.adv.br/api/health
 ```
 
 8. Se o IP mudou, atualize o registro DNS **A** do domínio.
-9. Entre no sistema, vá em **Configurações → Canais** e, depois de restaurar em servidor novo, **sempre** use **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório, mesmo que o canal mostre **Conectado**. As chaves de criptografia do WhatsApp ficam no volume `evolution_instances`, que o backup não copia: sem novo QR, as mensagens dos clientes não chegam.
+9. Entre no sistema, vá em **Ajustes › Canais** e, depois de restaurar em servidor novo, **sempre** use **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório, mesmo que o canal mostre **Conectado**. As chaves de criptografia do WhatsApp ficam no volume `evolution_instances`, que o backup não copia: sem novo QR, as mensagens dos clientes não chegam.
 10. Reative o cron do backup (seção 7) e a cópia fora do servidor (seção 7.1).
 
 ## 10. Checklist da virada
@@ -328,18 +328,20 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] "Importar do Umbler" ensaiado no ambiente de teste (seção 5, roteiro de aceite), relatório revisado e ambiente de teste apagado.
 - [ ] No dia da virada: Importar do Umbler na ordem da seção 5 (depois de conectar o número oficial e de o histórico do WhatsApp terminar).
 - [ ] Menu de triagem e mensagem de encerramento configurados.
-- [ ] Chatbot: em Configurações › Chatbots, clicar em **Criar a partir do modelo** e preencher:
+- [ ] Chatbot: em Ajustes › Chatbots, clicar em **Criar a partir do modelo** e preencher:
   - o nome do escritório;
   - o canal;
   - os três destinos (Atendimento, Financeiro e Processos), cada um com o seu setor e o seu atendente. O campo personalizado **CPF** é reaproveitado, ou criado se não existir.
 - [ ] Chatbot: abrir o **Fluxo do escritório** no editor e conferir os textos e o bloco **Horário** com o horário real do escritório. O modelo vem com seg–sex, 08:00–12:00 e 14:00–18:00, no horário de Cuiabá. Se mudar algo, clicar em **Salvar e publicar**.
 - [ ] Chatbot: clicar em **Ativar** na lista, porque o modelo é criado pausado. Com ele ativo, a triagem simples deixa de rodar nesse canal.
-- [ ] Configurações › Conversas: escolher o que acontece quando o atendente escreve com o chatbot rodando. O padrão é Perguntar.
+- [ ] Ajustes › Conversas: escolher o que acontece quando o atendente escreve com o chatbot rodando (o padrão é Perguntar) e o prazo do **Cliente que volta** (o padrão é ligado, 90 dias).
+- [ ] Ajustes › Compromissos: conferir o texto padrão dos lembretes.
+- [ ] Ajustes › Regras automáticas: religar as regras que o escritório usa **depois** da importação do Umbler (seção 5, passo 3).
 - [ ] Cron de backup rodando (`backup ok` no log) e cópia fora do servidor confirmada (seção 7.1).
 - [ ] `.env` guardado fora do servidor.
 - [ ] Ensaio de restauração feito (seção 8).
-- [ ] Admins: entrar nos setores em Configurações › Atendentes ou usar “Ver todos os setores” na caixa de entrada (por padrão o admin vê só os próprios setores).
-- [ ] Fotos: conferir a foto do cliente após a primeira mensagem e enviar a foto de cada atendente em Configurações › Perfil.
+- [ ] Admins: entrar nos setores em Ajustes › Atendentes ou usar “Ver todos os setores” na caixa de entrada (por padrão o admin vê só os próprios setores).
+- [ ] Fotos: conferir a foto do cliente após a primeira mensagem e enviar a foto de cada atendente em Ajustes › Perfil.
 - [ ] Ao atualizar o sistema com o sistema em uso, recarregar as abas que estavam abertas durante a atualização.
 
 **Teste manual com um número de teste, antes de conectar o número oficial:**
@@ -357,7 +359,7 @@ curl -fsS https://talk.jvo.adv.br/api/health
 - [ ] Triagem (com o chatbot pausado): o contato novo recebe o menu, escolhe uma opção e a conversa vai para o setor certo.
 - [ ] Chatbot (ativo): o [roteiro de aceite](superpowers/plans/2026-10-15-chatbot-fluxos-2a-aceite.md) passa inteiro, com todas as partes, de A a F, marcadas.
 - [ ] Anexo `.html` enviado pelo contato é baixado, não aberto no navegador.
-- [ ] Desconectar pelo celular → banner vermelho → **Gerar novo QR / Reconectar** volta a conectar.
+- [ ] Desconectar pelo celular → faixa "Canal X desconectado" → **Gerar novo QR / Reconectar** volta a conectar.
 
 **Virada:**
 

@@ -57,7 +57,7 @@ del .env.dev
 
 ## 4. Dia da mudança
 
-Combine um horário com a equipe. O atendimento fica fora do ar por cerca de 30 minutos. As mensagens de WhatsApp que chegarem nesse tempo aparecem quando o sistema volta.
+Combine um horário com a equipe e tenha o **celular do escritório** à mão: no servidor é preciso ler o QR de novo, porque as chaves de criptografia do WhatsApp não vão no backup. O atendimento fica fora do ar por cerca de 30 minutos. As mensagens que chegarem nesse tempo entram como histórico do WhatsApp, sem ficar como não lidas: depois da mudança, confira no celular quem escreveu nesse intervalo.
 
 **No computador antigo:**
 1. Pare o servidor e o túnel.
@@ -72,7 +72,7 @@ Combine um horário com a equipe. O atendimento fica fora do ar por cerca de 30 
    ```
    SERVIDOR_BACKUP_DIR=D:/TalkBackup
    ```
-4. Rode `npm run servidor`. Confira em Ajustes › Canais que o WhatsApp está conectado e mande o link para a equipe.
+4. Rode `npm run servidor`. Em Ajustes › Canais, clique em **Gerar novo QR / Reconectar** e leia o QR com o celular do escritório, **mesmo que o canal mostre Conectado**. Espere "Histórico importado…" e mande o link para a equipe.
 5. Depois de conferir, apague a cópia do pendrive.
 
 ## 5. Ligar sozinho
