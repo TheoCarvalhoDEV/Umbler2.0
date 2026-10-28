@@ -1,5 +1,6 @@
 // Backup da instalação local (docker-compose.dev.yml): os bancos talk + evolution, os arquivos e o .env.dev, numa
-// pasta de OUTRO disco. A sessão do WhatsApp está no banco evolution: restaurado, o canal volta sem ler o QR.
+// pasta de OUTRO disco. O banco evolution tem o login do WhatsApp, mas as chaves de criptografia ficam no volume
+// evolution_instances, fora do backup: num computador novo, leia o QR de novo.
 // Uso, na raiz do projeto:  npm run backup -- E:\TalkBackup
 // Restaurar ou mudar de computador: README.md › "Backup e mudança de computador".
 import { spawn } from 'node:child_process';
